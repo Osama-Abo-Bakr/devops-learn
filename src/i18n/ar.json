@@ -1,0 +1,91 @@
+{
+  "nav": {
+    "docker": "Docker",
+    "compose": "Compose",
+    "kubernetes": "Kubernetes",
+    "devops": "DevOps",
+    "playground": "ساحة التدريب",
+    "cheatsheet": "ورقة المراجعة",
+    "levelTest": "اختبار المستوى"
+  },
+  "hero": {
+    "title": "تعلّم DevOps بصرياً",
+    "subtitle": "أتقن Docker و Kubernetes و Docker Compose من خلال الرسوم التفاعلية والمحاكيات الطرفية والتحديات العملية. مجاني ومفتوح المصدر.",
+    "startLearning": "ابدأ التعلم",
+    "takeTest": "اختبار المستوى"
+  },
+  "paths": {
+    "title": "اختر مسارك"
+  },
+  "features": {
+    "title": "كيف يعمل",
+    "diagrams": {
+      "title": "رسوم تفاعلية",
+      "description": "استكشف البنية بصرياً. انقر على العقد، تابع تدفق البيانات، وشاهد كيف تتصل الحاويات."
+    },
+    "terminal": {
+      "title": "تحديات الطرفية",
+      "description": "تدرّب على الأوامر الحقيقية في محاكي طرفي. أكمل المهام لإثبات فهمك."
+    },
+    "quizzes": {
+      "title": "اختبارات",
+      "description": "اختبر معلوماتك باختبارات الاختيار من متعدد. احصل على شرح لكل إجابة."
+    }
+  },
+  "levels": {
+    "beginner": "مبتدئ",
+    "intermediate": "متوسط",
+    "advanced": "متقدم"
+  },
+  "lesson": {
+    "backToModule": "العودة إلى دروس {module}",
+    "progress": "التقدم",
+    "lessons": "دروس",
+    "allLessons": "جميع دروس {module}"
+  },
+  "progress": {
+    "title": "التقدم",
+    "notStarted": "لم يبدأ",
+    "inProgress": "قيد التقدم",
+    "completed": "مكتمل"
+  },
+  "quiz": {
+    "checkAnswer": "تحقق من الإجابة",
+    "nextQuestion": "السؤال التالي",
+    "finishQuiz": "إنهاء الاختبار",
+    "correct": "صحيح!",
+    "incorrect": "خطأ",
+    "complete": "مكتمل!"
+  },
+  "terminal": {
+    "title": "الطرفية",
+    "tasks": "مهام التحدي",
+    "completed": "مكتمل",
+    "allDone": "تم الكل!"
+  },
+  "placement": {
+    "title": "حدد مستواك",
+    "subtitle": "أجب عن هذا الاختبار السريع لمعرفة من أين يجب أن تبدأ.",
+    "startQuiz": "ابدأ الاختبار",
+    "resultTitle": "مستواك الموصى به",
+    "beginner": "أنت في البداية — ابدأ بالأساسيات!",
+    "intermediate": "أنت تعرف الأساسيات — انتقل إلى المواضيع المتوسطة!",
+    "advanced": "أنت مستعد للمفاهيم المتقدمة وأنماط الإنتاج!",
+    "retake": "إعادة الاختبار"
+  },
+  "playground": {
+    "title": "ساحة تدريب الطرفية",
+    "subtitle": "تدرّب على أوامر Docker و Kubernetes بحرية. لا تحديات، لا نقاط — فقط استكشاف."
+  },
+  "cheatsheet": {
+    "title": "مرجع سريع",
+    "subtitle": "أوامر Docker و Compose و Kubernetes الشائعة في لمحة.",
+    "search": "ابحث عن الأوامر...",
+    "docker": "Docker",
+    "compose": "Docker Compose",
+    "kubernetes": "Kubernetes"
+  },
+  "footer": {
+    "description": "DevOps Learn — تعلّم مجاني وبصري لـ Docker و Kubernetes والمزيد."
+  }
+}

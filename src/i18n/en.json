@@ -1,0 +1,91 @@
+{
+  "nav": {
+    "docker": "Docker",
+    "compose": "Compose",
+    "kubernetes": "Kubernetes",
+    "devops": "DevOps",
+    "playground": "Playground",
+    "cheatsheet": "Cheat Sheet",
+    "levelTest": "Level Test"
+  },
+  "hero": {
+    "title": "Learn DevOps, Visually",
+    "subtitle": "Master Docker, Kubernetes, and Docker Compose through interactive diagrams, simulated terminals, and hands-on challenges. Free and open source.",
+    "startLearning": "Start Learning",
+    "takeTest": "Take Level Test"
+  },
+  "paths": {
+    "title": "Choose Your Path"
+  },
+  "features": {
+    "title": "How It Works",
+    "diagrams": {
+      "title": "Interactive Diagrams",
+      "description": "Explore architecture visually. Click nodes, follow data flows, and see how containers connect."
+    },
+    "terminal": {
+      "title": "Terminal Challenges",
+      "description": "Practice real commands in a simulated terminal. Complete tasks to prove your understanding."
+    },
+    "quizzes": {
+      "title": "Quizzes",
+      "description": "Test your knowledge with multiple-choice quizzes. Get explanations for every answer."
+    }
+  },
+  "levels": {
+    "beginner": "Beginner",
+    "intermediate": "Intermediate",
+    "advanced": "Advanced"
+  },
+  "lesson": {
+    "backToModule": "Back to {module} lessons",
+    "progress": "Progress",
+    "lessons": "lessons",
+    "allLessons": "All {module} lessons"
+  },
+  "progress": {
+    "title": "Progress",
+    "notStarted": "Not started",
+    "inProgress": "In progress",
+    "completed": "Completed"
+  },
+  "quiz": {
+    "checkAnswer": "Check Answer",
+    "nextQuestion": "Next Question",
+    "finishQuiz": "Finish Quiz",
+    "correct": "Correct!",
+    "incorrect": "Incorrect",
+    "complete": "Complete!"
+  },
+  "terminal": {
+    "title": "Terminal",
+    "tasks": "Challenge Tasks",
+    "completed": "completed",
+    "allDone": "All done!"
+  },
+  "placement": {
+    "title": "Find Your Level",
+    "subtitle": "Take this quick quiz to find out where you should start.",
+    "startQuiz": "Start Quiz",
+    "resultTitle": "Your Recommended Level",
+    "beginner": "You're just getting started — begin with the fundamentals!",
+    "intermediate": "You know the basics — jump into intermediate topics!",
+    "advanced": "You're ready for advanced concepts and production patterns!",
+    "retake": "Retake Quiz"
+  },
+  "playground": {
+    "title": "Terminal Playground",
+    "subtitle": "Practice Docker and Kubernetes commands freely. No challenges, no scoring — just explore."
+  },
+  "cheatsheet": {
+    "title": "Quick Reference",
+    "subtitle": "Common Docker, Compose, and Kubernetes commands at a glance.",
+    "search": "Search commands...",
+    "docker": "Docker",
+    "compose": "Docker Compose",
+    "kubernetes": "Kubernetes"
+  },
+  "footer": {
+    "description": "DevOps Learn — Free, visual learning for Docker, Kubernetes & more."
+  }
+}
