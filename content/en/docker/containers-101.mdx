@@ -1,0 +1,66 @@
+---
+title: "Containers 101"
+module: docker
+level: beginner
+duration: "30 min"
+diagram: docker-container-basics
+challenge: docker-ps-challenge
+quiz: docker-basics-quiz
+description: "Understand what containers are, how they differ from VMs, and run your first container."
+order: 1
+---
+
+# What Are Containers?
+
+Containers are lightweight, standalone packages that include everything needed to run a piece of software — code, runtime, system tools, libraries, and settings. Unlike virtual machines, containers share the host operating system's kernel, making them much more efficient.
+
+## Containers vs. Virtual Machines
+
+| Feature | Containers | Virtual Machines |
+|---------|-----------|-----------------|
+| Startup | Seconds | Minutes |
+| Size | MBs | GBs |
+| Isolation | Process-level | Hardware-level |
+| OS | Share host kernel | Full guest OS |
+
+## Your First Container
+
+Let's start by running a simple Nginx web server:
+
+```bash
+docker run -d -p 8080:80 nginx
+```
+
+This command:
+- `docker run` — creates and starts a container
+- `-d` — runs in detached (background) mode
+- `-p 8080:80` — maps port 8080 on your machine to port 80 in the container
+- `nginx` — the image to use
+
+## Exploring the Container
+
+After running a container, you can:
+
+```bash
+docker ps              # List running containers
+docker logs <id>       # View container logs
+docker exec -it <id> sh  # Open a shell inside the container
+docker stop <id>       # Stop the container
+docker rm <id>         # Remove the container
+```
+
+## Interactive Diagram
+
+Explore how containers relate to the host machine and volumes:
+
+<Diagram config={dockerContainerBasics} />
+
+## Try It Yourself
+
+Practice the commands in the terminal below:
+
+<Terminal commands={dockerPsChallenge.commands} tasks={dockerPsChallenge.tasks} />
+
+## Test Your Knowledge
+
+<Quiz questions={dockerBasicsQuiz.questions} title="Docker Basics" />
