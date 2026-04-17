@@ -131,6 +131,8 @@ export interface CommandHandler {
   stateChange?: Record<string, string>;
   /** Optional: task IDs this command completes */
   completesTasks?: string[];
+  /** Optional: validate args before marking task as complete */
+  validateArgs?: (args: string[]) => boolean;
 }
 
 // -----------------------------------------------------------
