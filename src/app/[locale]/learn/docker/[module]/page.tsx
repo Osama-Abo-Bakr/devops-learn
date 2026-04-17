@@ -1,8 +1,6 @@
 import { notFound } from "next/navigation";
-import { getModule, getLesson } from "@/data/modules";
-import { getLessonContent } from "@/lib/content";
-import LessonLayout from "@/components/layout/LessonLayout";
-import { MdxContent } from "@/lib/mdx";
+import { getLesson } from "@/data/modules";
+import LessonContent from "@/components/lesson/LessonContent";
 
 interface PageProps {
   params: Promise<{ module: string; locale: string }>;
@@ -13,12 +11,5 @@ export default async function DockerLessonPage({ params }: PageProps) {
   const lesson = getLesson("docker", slug);
   if (!lesson) notFound();
 
-  const content = getLessonContent(locale as "en" | "ar", "docker", slug);
-  if (!content) notFound();
-
-  return (
-    <LessonLayout lesson={lesson} topic="docker">
-      <MdxContent source={content} />
-    </LessonLayout>
-  );
+  return <LessonContent lesson={lesson} topic="docker" locale={locale} />;
 }
