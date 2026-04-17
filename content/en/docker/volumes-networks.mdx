@@ -1,0 +1,56 @@
+---
+title: "Volumes and Networks"
+module: docker
+level: beginner
+duration: "40 min"
+diagram: docker-volumes-networks
+description: "Persist data with volumes and connect containers with Docker networks."
+order: 3
+---
+
+# Volumes and Networks
+
+By default, container data is ephemeral — when a container is removed, its data is lost. Volumes solve this. Networks let containers communicate securely.
+
+## Docker Volumes
+
+Volumes are the preferred way to persist data in Docker.
+
+```bash
+# Create a volume
+docker volume create my-data
+
+# Use a volume with a container
+docker run -d -v my-data:/data nginx
+
+# Mount a host directory
+docker run -d -v /host/path:/container/path nginx
+
+# List volumes
+docker volume ls
+```
+
+## Docker Networks
+
+Containers on the same network can communicate by container name.
+
+```bash
+# Create a network
+docker network create my-app-net
+
+# Run containers on the network
+docker run -d --name api --network my-app-net my-api
+docker run -d --name db --network my-app-net postgres
+```
+
+The `api` container can reach the database at hostname `db`.
+
+## Port Mapping
+
+```bash
+# Map host port 8080 to container port 80
+docker run -d -p 8080:80 nginx
+
+# Map to a specific host IP
+docker run -d -p 127.0.0.1:8080:80 nginx
+```

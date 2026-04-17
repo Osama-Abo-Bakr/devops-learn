@@ -1,0 +1,64 @@
+---
+title: "Compose YAML Basics"
+module: compose
+level: beginner
+duration: "25 min"
+description: "Write your first docker-compose.yml and understand the structure of Compose files."
+order: 1
+---
+
+# Compose YAML Basics
+
+Docker Compose lets you define multi-container applications in a single `docker-compose.yml` file.
+
+## A Simple Compose File
+
+```yaml
+version: "3.8"
+services:
+  web:
+    image: nginx:alpine
+    ports:
+      - "8080:80"
+    volumes:
+      - ./html:/usr/share/nginx/html
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_PASSWORD: secret
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+volumes:
+  db-data:
+```
+
+## Key Sections
+
+- `version` — Compose file format version
+- `services` — Container definitions
+- `volumes` — Named volume declarations
+- `networks` — Custom network definitions (optional)
+
+## Service Configuration
+
+Each service can define:
+
+| Key | Purpose |
+|-----|---------|
+| `image` | Image to use |
+| `build` | Build from a Dockerfile |
+| `ports` | Port mappings |
+| `volumes` | Mount paths |
+| `environment` | Environment variables |
+| `depends_on` | Service dependencies |
+| `restart` | Restart policy |
+
+## Running Compose
+
+```bash
+docker compose up -d      # Start in background
+docker compose down         # Stop and remove
+docker compose logs -f      # Follow logs
+docker compose ps           # List services
+```

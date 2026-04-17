@@ -1,0 +1,72 @@
+---
+title: "Pods and Deployments"
+module: kubernetes
+level: beginner
+duration: "40 min"
+diagram: k8s-pods-deployments
+description: "Understand the smallest deployable unit in Kubernetes and manage replicas with Deployments."
+order: 1
+---
+
+# Pods and Deployments
+
+A **Pod** is the smallest deployable unit in Kubernetes. It contains one or more containers that share storage and network.
+
+## What is a Pod?
+
+- Smallest unit in the Kubernetes object model
+- Contains one or more containers
+- Containers in a pod share: network namespace, storage volumes, IPC
+- Typically one container per pod (sidecar pattern is an exception)
+
+## Creating a Pod
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-pod
+spec:
+  containers:
+  - name: nginx
+    image: nginx:alpine
+    ports:
+    - containerPort: 80
+```
+
+## Deployments
+
+You rarely create Pods directly. Instead, use a **Deployment** to manage replicas:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx
+  template:
+    metadata:
+      labels:
+        app: nginx
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:alpine
+        ports:
+        - containerPort: 80
+```
+
+## Key Commands
+
+```bash
+kubectl get pods                    # List pods
+kubectl describe pod <name>         # Pod details
+kubectl logs <pod-name>             # View logs
+kubectl apply -f deployment.yaml   # Create/update deployment
+kubectl scale deployment/nginx --replicas=5  # Scale
+kubectl rollout status deployment/nginx      # Check rollout
+```
