@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, type KeyboardEvent } from "react";
-import { parseCommand, executeCommand, validateTask } from "./CommandParser";
+import { executeCommand, validateTask } from "./CommandParser";
 import type { CommandHandler, ChallengeTask } from "@/types";
 
 interface TerminalLine {
@@ -36,8 +36,7 @@ export default function TerminalSimulator({
     if (!input.trim()) return;
 
     const newLines: TerminalLine[] = [{ type: "input", content: `${prompt} ${input}` }];
-    const parsed = parseCommand(input);
-    const { output, newState } = executeCommand(parsed, commands, state);
+    const { output, newState } = executeCommand(input, commands, state);
 
     if (output) {
       newLines.push({ type: "output", content: output });
@@ -47,7 +46,7 @@ export default function TerminalSimulator({
     if (tasks.length > 0 && onTaskComplete) {
       for (const task of tasks) {
         if (completedTasks.has(task.id)) continue;
-        if (validateTask(task.id, parsed, commands)) {
+        if (validateTask(task.id, input, commands)) {
           setCompletedTasks((prev) => new Set(prev).add(task.id));
           onTaskComplete(task.id);
           newLines.push({

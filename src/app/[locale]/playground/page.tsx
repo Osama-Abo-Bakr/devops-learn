@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, type KeyboardEvent } from "react";
-import { parseCommand, executeCommand } from "@/components/terminal/CommandParser";
+import { executeCommand } from "@/components/terminal/CommandParser";
 import type { CommandHandler } from "@/types";
 
 const playgroundCommands: Record<string, CommandHandler> = {
@@ -75,8 +75,6 @@ export default function PlaygroundPage() {
     if (!input.trim()) return;
 
     const newLines: TerminalLine[] = [{ type: "input", content: `$ ${input}` }];
-    const parsed = parseCommand(input);
-
     if (input.trim().toLowerCase() === "clear") {
       setLines([]);
       setHistory((prev) => [...prev, input]);
@@ -85,7 +83,7 @@ export default function PlaygroundPage() {
       return;
     }
 
-    const { output } = executeCommand(parsed, playgroundCommands, {});
+    const { output } = executeCommand(input, playgroundCommands, {});
     if (output) {
       newLines.push({ type: "output", content: output });
     }

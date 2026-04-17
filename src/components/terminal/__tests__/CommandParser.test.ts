@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseCommand, executeCommand, validateTask } from "../CommandParser";
+import { parseCommand, executeCommand, validateTask, matchCommand } from "../CommandParser";
 import type { CommandHandler } from "@/types";
 
 describe("parseCommand", () => {
@@ -29,6 +29,39 @@ describe("parseCommand", () => {
   });
 });
 
+describe("matchCommand", () => {
+  const commands: Record<string, CommandHandler> = {
+    "docker ps": { output: "containers" },
+    "docker run": { output: "started" },
+    "docker compose up": { output: "running" },
+    ls: { output: "files" },
+  };
+
+  it("matches single-word command", () => {
+    const { command, args } = matchCommand("ls", commands);
+    expect(command).toBe("ls");
+    expect(args).toEqual([]);
+  });
+
+  it("matches two-word command", () => {
+    const { command, args } = matchCommand("docker ps -a", commands);
+    expect(command).toBe("docker ps");
+    expect(args).toEqual(["-a"]);
+  });
+
+  it("matches three-word command", () => {
+    const { command, args } = matchCommand("docker compose up -d", commands);
+    expect(command).toBe("docker compose up");
+    expect(args).toEqual(["-d"]);
+  });
+
+  it("falls back to first word for unknown commands", () => {
+    const { command, args } = matchCommand("unknown arg1 arg2", commands);
+    expect(command).toBe("unknown");
+    expect(args).toEqual(["arg1", "arg2"]);
+  });
+});
+
 describe("executeCommand", () => {
   const commands: Record<string, CommandHandler> = {
     ls: {
@@ -45,28 +78,24 @@ describe("executeCommand", () => {
   };
 
   it("executes a command with static output", () => {
-    const parsed = parseCommand("ls");
-    const { output, newState } = executeCommand(parsed, commands, {});
+    const { output, newState } = executeCommand("ls", commands, {});
     expect(output).toContain("CONTAINER_ID");
     expect(newState).toEqual({});
   });
 
   it("executes a command with function output", () => {
-    const parsed = parseCommand("run -d nginx");
-    const { output, newState } = executeCommand(parsed, commands, {});
+    const { output, newState } = executeCommand("run -d nginx", commands, {});
     expect(output).toContain("Running with args");
     expect(newState.runningContainer).toBe("true");
   });
 
   it("returns error for unknown command", () => {
-    const parsed = parseCommand("unknown");
-    const { output } = executeCommand(parsed, commands, {});
+    const { output } = executeCommand("unknown", commands, {});
     expect(output).toContain("command not found");
   });
 
   it("returns empty output for empty command", () => {
-    const parsed = parseCommand("");
-    const { output } = executeCommand(parsed, commands, {});
+    const { output } = executeCommand("", commands, {});
     expect(output).toBe("");
   });
 });
@@ -85,22 +114,18 @@ describe("validateTask", () => {
   };
 
   it("validates a task with matching command", () => {
-    const parsed = parseCommand("run -d nginx");
-    expect(validateTask("run-container", parsed, commands)).toBe(true);
+    expect(validateTask("run-container", "run -d nginx", commands)).toBe(true);
   });
 
   it("rejects task for wrong command", () => {
-    const parsed = parseCommand("run -d nginx");
-    expect(validateTask("stop-container", parsed, commands)).toBe(false);
+    expect(validateTask("stop-container", "run -d nginx", commands)).toBe(false);
   });
 
   it("validates args when validateArgs is provided", () => {
-    const parsed = parseCommand("stop nginx");
-    expect(validateTask("stop-container", parsed, commands)).toBe(true);
+    expect(validateTask("stop-container", "stop nginx", commands)).toBe(true);
   });
 
   it("rejects when validateArgs fails", () => {
-    const parsed = parseCommand("stop apache");
-    expect(validateTask("stop-container", parsed, commands)).toBe(false);
+    expect(validateTask("stop-container", "stop apache", commands)).toBe(false);
   });
 });
