@@ -169,6 +169,7 @@ export type DiagramEdgeType = "dataFlow" | "volumeMount" | "network";
 
 /** Data carried by a diagram edge */
 export interface DiagramEdgeData {
+  [key: string]: unknown;
   /** Edge type discriminator */
   type: DiagramEdgeType;
   /** Label shown on hover */
