@@ -1,5 +1,6 @@
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
+import { ProgressProvider } from "@/context/ProgressContext";
 
 export default function LocaleLayout({
   children,
@@ -7,10 +8,12 @@ export default function LocaleLayout({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-h-screen flex-col">
-      <Navbar />
-      <main className="flex flex-1">{children}</main>
-      <Footer />
-    </div>
+    <ProgressProvider>
+      <div className="flex min-h-screen flex-col">
+        <Navbar />
+        <main className="flex flex-1">{children}</main>
+        <Footer />
+      </div>
+    </ProgressProvider>
   );
 }
