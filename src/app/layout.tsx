@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "DevOps Visual Learn",
+  title: "DevOps Learn — Visual Learning Platform",
   description:
-    "A free, visual learning platform for Docker, Kubernetes, and Docker Compose with interactive diagrams, simulated terminals, and quizzes.",
+    "Free, visual learning platform for Docker, Kubernetes, and Docker Compose. Interactive diagrams, simulated terminals, and quizzes.",
 };
 
 export default function RootLayout({
@@ -24,10 +24,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
-      <body className="min-h-screen bg-background text-foreground antialiased">
-        {children}
-      </body>
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+    >
+      <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
 }
