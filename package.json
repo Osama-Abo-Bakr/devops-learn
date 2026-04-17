@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "^0.18.0",
     "@google/generative-ai": "^0.24.1",
     "@xyflow/react": "^12.10.2",
     "next": "16.2.4",
