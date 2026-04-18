@@ -3,6 +3,8 @@ import { getLessonContent, getContentBody } from "@/lib/content";
 import { MdxContent } from "@/lib/mdx";
 import LessonLayout from "@/components/layout/LessonLayout";
 import LessonInteractive from "@/components/lesson/LessonInteractive";
+import ResourcesSection from "@/components/lesson/ResourcesSection";
+import { getResourcesForTopic } from "@/data/resources";
 
 interface LessonContentProps {
   lesson: Lesson;
@@ -32,6 +34,7 @@ export default function LessonContent({
 }: LessonContentProps) {
   const rawContent = getLessonContent(locale as "en" | "ar", topic, lesson.slug);
   const textContent = rawContent ? stripInteractiveTags(rawContent) : "";
+  const resources = getResourcesForTopic(topic);
 
   return (
     <LessonLayout lesson={lesson} topic={topic}>
@@ -41,6 +44,7 @@ export default function LessonContent({
         challengeId={lesson.challenge}
         quizId={lesson.quiz}
       />
+      <ResourcesSection resources={resources} />
     </LessonLayout>
   );
 }
