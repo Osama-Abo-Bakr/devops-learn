@@ -38,7 +38,7 @@ export default function LessonContent({
   const resources = getResourcesForTopic(topic);
   return (
     <LessonLayout lesson={lesson} topic={topic}>
-      <LessonXPTracker />
+      <LessonXPTracker lessonSlug={lesson.slug} />
       {textContent && <MdxContent source={textContent} />}
       <LessonInteractive
         diagramId={lesson.diagram}

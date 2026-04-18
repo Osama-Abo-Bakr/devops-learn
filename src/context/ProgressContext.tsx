@@ -5,6 +5,7 @@ import {
   useContext,
   useState,
   useCallback,
+  useEffect,
   type ReactNode,
 } from "react";
 import type { LessonStatus, Level, ProgressState } from "@/types";
@@ -20,6 +21,7 @@ import { getLevelByXP } from "@/data/levels";
 
 interface ProgressContextValue {
   progress: ProgressState;
+  loaded: boolean;
   updateLessonStatus: (slug: string, status: LessonStatus) => void;
   updateQuizScore: (slug: string, score: number) => void;
   markChallengeCompleted: (slug: string) => void;
@@ -40,6 +42,8 @@ interface ProgressContextValue {
 
 const ProgressContext = createContext<ProgressContextValue | null>(null);
 
+const STORAGE_KEY = "devops-learn-progress";
+
 function getEmptyProgress(): ProgressState {
   return {
     lessons: {},
@@ -50,7 +54,7 @@ function getEmptyProgress(): ProgressState {
 function loadProgress(): ProgressState {
   if (typeof window === "undefined") return getEmptyProgress();
   try {
-    const raw = localStorage.getItem("devops-learn-progress");
+    const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return getEmptyProgress();
     return JSON.parse(raw) as ProgressState;
   } catch {
@@ -62,14 +66,24 @@ function saveProgress(progress: ProgressState): void {
   if (typeof window === "undefined") return;
   progress.lastUpdated = new Date().toISOString();
   try {
-    localStorage.setItem("devops-learn-progress", JSON.stringify(progress));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
   } catch {
-    // localStorage full — show toast in components
+    // localStorage full
   }
 }
 
 export function ProgressProvider({ children }: { children: ReactNode }) {
-  const [progress, setProgress] = useState<ProgressState>(loadProgress);
+  // Start with empty progress, then hydrate from localStorage in useEffect
+  // to avoid SSR/client mismatch
+  const [progress, setProgress] = useState<ProgressState>(getEmptyProgress);
+  const [loaded, setLoaded] = useState(false);
+
+  // Hydrate progress from localStorage after mount
+  useEffect(() => {
+    const stored = loadProgress();
+    setProgress(stored);
+    setLoaded(true);
+  }, []);
 
   const updateLessonStatus = useCallback(
     (slug: string, status: LessonStatus) => {
@@ -161,7 +175,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
   const addXP = useCallback((amount: number): number => {
     let xpGained = 0;
     setProgress((prev) => {
-      const result = addXPLogic({ ...prev }, amount);
+      const result = addXPLogic({ ...prev, lessons: { ...prev.lessons } }, amount);
       xpGained = result.xpGained;
       // Check for new badges
       const newBadges = checkBadges(result.progress);
@@ -179,7 +193,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
 
   const handleUpdateStreak = useCallback(() => {
     setProgress((prev) => {
-      const next = updateStreakLogic({ ...prev });
+      const next = updateStreakLogic({ ...prev, lessons: { ...prev.lessons } });
       // Check for streak badges
       const newBadges = checkBadges(next);
       if (newBadges.length > 0) {
@@ -211,6 +225,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     <ProgressContext.Provider
       value={{
         progress,
+        loaded,
         updateLessonStatus,
         updateQuizScore,
         markChallengeCompleted,

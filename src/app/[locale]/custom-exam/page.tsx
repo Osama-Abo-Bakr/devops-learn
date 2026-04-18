@@ -5,6 +5,7 @@ import type { ExamConfig, CustomExam, Topic, Level } from "@/types";
 import QuizComponent from "@/components/quiz/QuizComponent";
 import ExamResults from "@/components/quiz/ExamResults";
 import { addExamHistory } from "@/lib/exam-history";
+import { useProgress } from "@/context/ProgressContext";
 
 const TOPIC_OPTIONS: { value: Topic; label: string; icon: string }[] = [
   { value: "docker", label: "Docker", icon: "🐳" },
@@ -22,6 +23,7 @@ const LEVEL_OPTIONS: { value: Level; label: string }[] = [
 const COUNT_OPTIONS = [5, 10, 15, 20] as const;
 
 export default function CustomExamPage() {
+  const { addXP, updateStreak, getXPReward, loaded } = useProgress();
   const [phase, setPhase] = useState<
     "config" | "loading" | "exam" | "results"
   >("config");
@@ -130,6 +132,12 @@ export default function CustomExamPage() {
 
   function handleExamComplete(examScore: number) {
     setScore(examScore);
+
+    // Award XP for exam completion (per question)
+    if (exam && loaded) {
+      addXP(getXPReward("examQuestion") * exam.questions.length);
+      updateStreak();
+    }
 
     if (exam) {
       const correctCount = exam.questions.filter(

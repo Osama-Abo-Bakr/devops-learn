@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useRef, useCallback, type KeyboardEvent } from "react";
+import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from "react";
 import { executeCommand, validateTask } from "./CommandParser";
 import type { CommandHandler, ChallengeTask } from "@/types";
+import { useProgress } from "@/context/ProgressContext";
 
 interface TerminalLine {
   type: "input" | "output";
@@ -24,12 +25,28 @@ export default function TerminalSimulator({
   tasks = [],
   onTaskComplete,
 }: TerminalSimulatorProps) {
+  const { addXP, updateStreak, getXPReward, loaded } = useProgress();
   const [lines, setLines] = useState<TerminalLine[]>([]);
   const [input, setInput] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [state, setState] = useState(initialState);
   const [completedTasks, setCompletedTasks] = useState<Set<string>>(new Set());
+
+  // Award XP when all challenge tasks are completed
+  const hasAwardedXP = useRef(false);
+  useEffect(() => {
+    if (
+      loaded &&
+      tasks.length > 0 &&
+      completedTasks.size === tasks.length &&
+      !hasAwardedXP.current
+    ) {
+      hasAwardedXP.current = true;
+      addXP(getXPReward("challengeComplete"));
+      updateStreak();
+    }
+  }, [loaded, completedTasks.size, tasks.length, addXP, updateStreak, getXPReward]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleCommand = useCallback(() => {

@@ -3,17 +3,20 @@
 import { useEffect, useRef } from "react";
 import { useProgress } from "@/context/ProgressContext";
 
-export default function LessonXPTracker() {
-  const { addXP, updateStreak, getXPReward } = useProgress();
+interface LessonXPTrackerProps {
+  lessonSlug: string;
+}
+
+export default function LessonXPTracker({ lessonSlug }: LessonXPTrackerProps) {
+  const { addXP, updateStreak, getXPReward, loaded } = useProgress();
   const awarded = useRef(false);
 
   useEffect(() => {
-    if (!awarded.current) {
-      awarded.current = true;
-      addXP(getXPReward("lessonComplete"));
-      updateStreak();
-    }
-  }, [addXP, updateStreak, getXPReward]);
+    if (!loaded || awarded.current) return;
+    awarded.current = true;
+    addXP(getXPReward("lessonComplete"));
+    updateStreak();
+  }, [loaded, addXP, updateStreak, getXPReward, lessonSlug]);
 
   return null;
 }
