@@ -16,8 +16,8 @@ const resources: Record<string, Resource[]> = {
   docker: [
     // Videos
     {
-      title: "Docker Tutorial for Beginners — Full Course",
-      url: "https://www.youtube.com/watch?v=fqMOX6JJcbE",
+      title: "Docker Tutorial for Beginners — A Full DevOps Course",
+      url: "https://www.youtube.com/watch?v=fqMOX6JJhGo",
       type: "video",
       source: "FreeCodeCamp",
     },
@@ -34,10 +34,10 @@ const resources: Record<string, Resource[]> = {
       source: "TechWorld with Nana",
     },
     {
-      title: "Docker Networking — Deep Dive",
-      url: "https://www.youtube.com/watch?v=ue7lfh9Bjb0",
+      title: "Docker and Kubernetes — Full Course for Beginners",
+      url: "https://www.youtube.com/watch?v=Wf2eSG3owoA",
       type: "video",
-      source: "Bret Fisher",
+      source: "FreeCodeCamp",
     },
     // Articles
     {
@@ -81,10 +81,10 @@ const resources: Record<string, Resource[]> = {
       source: "Jake Wright",
     },
     {
-      title: "Docker Compose for Dev and Prod",
-      url: "https://www.youtube.com/watch?v=sY7yFFNBDxY",
+      title: "Docker Compose Tutorial for Beginners",
+      url: "https://www.youtube.com/watch?v=MVIcrmeV_6c",
       type: "video",
-      source: "Bret Fisher",
+      source: "TechWorld with Nana",
     },
     // Articles
     {
