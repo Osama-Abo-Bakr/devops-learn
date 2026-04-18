@@ -1,0 +1,116 @@
+---
+title: "HPA and Scaling"
+module: kubernetes
+level: intermediate
+duration: "30 min"
+description: "Automatically scale your workloads with the Horizontal Pod Autoscaler."
+order: 4
+---
+
+# HPA and Scaling
+
+The Horizontal Pod Autoscaler (HPA) automatically scales the number of Pod replicas based on observed metrics — typically CPU or memory usage, but custom metrics are also supported.
+
+## How HPA Works
+
+1. HPA checks metrics at regular intervals (default: 15s)
+2. It compares current metrics against target thresholds
+3. It adjusts replica count up or down to meet the target
+
+```
+        ┌──────────────────┐
+        │   HPA Controller  │
+        └────────┬─────────┘
+                 │ checks metrics
+        ┌────────▼─────────┐
+        │  Metrics Server   │
+        └────────┬─────────┘
+                 │
+        ┌────────▼─────────┐
+        │   Deployment      │
+        │  2 ──► 5 replicas │
+        └──────────────────┘
+```
+
+## Basic HPA
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+```
+
+This means: keep CPU under 70%. Scale between 2 and 10 replicas.
+
+## Prerequisites
+
+The Metrics Server must be running in your cluster:
+
+```bash
+# Install metrics-server
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+# Verify it's working
+kubectl top pods
+kubectl top nodes
+```
+
+## Multiple Metrics
+
+```yaml
+metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+```
+
+HPA uses the metric that would require the most replicas.
+
+## Scaling Behavior
+
+```yaml
+behavior:
+  scaleDown:
+    stabilizationWindowSeconds: 300  # Wait 5 min before scaling down
+    policies:
+      - type: Percent
+        value: 10       # Remove max 10% of pods per minute
+        periodSeconds: 60
+  scaleUp:
+    policies:
+      - type: Percent
+        value: 100      # Double pods if needed
+        periodSeconds: 60
+```
+
+## Commands
+
+```bash
+kubectl get hpa                          # List autoscalers
+kubectl describe hpa web-hpa            # Detailed status
+kubectl autoscale deployment web --min=2 --max=10 --cpu-percent=70
+```

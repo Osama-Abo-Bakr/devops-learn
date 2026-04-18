@@ -1,0 +1,122 @@
+---
+title: "Production Configs"
+module: compose
+level: advanced
+duration: "40 min"
+description: "Override files, health checks, and deployment strategies for production Compose stacks."
+order: 5
+---
+
+# Production Compose Configs
+
+Moving from development to production requires careful configuration of health checks, resource limits, logging, and restart policies.
+
+## The Override Pattern
+
+Use multiple Compose files layered together:
+
+```bash
+# Development
+docker compose up
+
+# Production
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+The production file **merges** with the base file, overriding and adding settings:
+
+```yaml
+# docker-compose.prod.yml
+services:
+  web:
+    build: .
+    image: registry.io/my-app:1.0.0   # Use pre-built image
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
+## Health Checks
+
+Every production service should have a health check:
+
+| Service | Health Check |
+|---------|-------------|
+| Web API | `curl -f http://localhost:3000/health` |
+| Postgres | `pg_isready -U $POSTGRES_USER` |
+| Redis | `redis-cli ping` |
+| Nginx | `curl -f http://localhost/` |
+
+## Resource Limits
+
+```yaml
+deploy:
+  resources:
+    limits:
+      cpus: "0.5"
+      memory: 256M
+    reservations:
+      cpus: "0.25"
+      memory: 128M
+```
+
+- **limits** — Hard ceiling (container is killed if exceeded)
+- **reservations** — Guaranteed minimum
+
+## Logging Configuration
+
+```yaml
+logging:
+  driver: json-file
+  options:
+    max-size: "10m"    # Rotate at 10 MB
+    max-file: "5"      # Keep 5 files
+    compress: "true"   # Compress rotated logs
+```
+
+## Secrets Management
+
+Never put secrets in Compose files. Use Docker secrets or external secret managers:
+
+```yaml
+services:
+  db:
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+
+secrets:
+  db_password:
+    external: true
+```
+
+```bash
+echo "mysecretpassword" | docker secret create db_password -
+```
+
+## Production Checklist
+
+- Use `restart: unless-stopped` or `always`
+- Set memory and CPU limits
+- Configure health checks
+- Rotate logs with `max-size` and `max-file`
+- Use override files for environment-specific config
+- Never hardcode secrets — use Docker secrets or env files
+- Pin image tags (avoid `latest`)

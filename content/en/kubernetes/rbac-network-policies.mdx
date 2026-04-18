@@ -1,0 +1,124 @@
+---
+title: "RBAC and Network Policies"
+module: kubernetes
+level: advanced
+duration: "45 min"
+description: "Control access with RBAC and restrict network traffic with NetworkPolicies."
+order: 5
+---
+
+# RBAC and Network Policies
+
+Security in Kubernetes has two dimensions: **who can do what** (RBAC) and **what can talk to what** (NetworkPolicies).
+
+## RBAC: Role-Based Access Control
+
+RBAC controls access to the Kubernetes API. Every `kubectl` command and controller action is subject to RBAC checks.
+
+### Core Concepts
+
+| Concept | Scope | Purpose |
+|---------|-------|---------|
+| Role | Namespace | Grant permissions within a namespace |
+| ClusterRole | Cluster-wide | Grant permissions across all namespaces |
+| RoleBinding | Namespace | Bind a Role to users/groups |
+| ClusterRoleBinding | Cluster-wide | Bind a ClusterRole to users/groups |
+
+### Example: Read-Only Access
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-reader
+  namespace: staging
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+```
+
+Bind it to a user:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: read-pods
+  namespace: staging
+subjects:
+  - kind: User
+    name: jane
+roleRef:
+  kind: Role
+  name: pod-reader
+  apiGroup: rbac.authorization.k8s.io
+```
+
+## NetworkPolicies
+
+By default, all Pods can communicate with all other Pods. NetworkPolicies restrict traffic at the IP/port level.
+
+### Deny all ingress
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: deny-all-ingress
+  namespace: my-app
+spec:
+  podSelector: {}    # Apply to all pods in namespace
+  policyTypes:
+    - Ingress
+  ingress: []        # No ingress allowed
+```
+
+### Allow specific traffic
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-api
+  namespace: my-app
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend
+      ports:
+        - port: 8080
+          protocol: TCP
+```
+
+## Common Patterns
+
+| Pattern | Effect |
+|---------|--------|
+| Deny all ingress | Lock down namespace by default |
+| Allow same-namespace | `from: [{podSelector: {}}]` |
+| Allow specific labels | `from: [{podSelector: {matchLabels: {app: web}}}]` |
+| Allow from another namespace | `from: [{namespaceSelector: {matchLabels: {env: prod}}}]` |
+
+## Commands
+
+```bash
+kubectl get roles -A                      # List all roles
+kubectl describe role pod-reader -n staging
+kubectl get networkpolicies -A             # List network policies
+kubectl auth can-i get pods --as=jane -n staging  # Check permissions
+```
+
+## Important Notes
+
+- NetworkPolicies require a CNI plugin that supports them (Calico, Cilium, Weave)
+- Default GKE/AKS/EKS setups support NetworkPolicies
+- RBAC is always enforced — no plugin required
+- Use `kubectl auth can-i` to test permissions

@@ -1,0 +1,118 @@
+---
+title: "Security Best Practices"
+module: devops
+level: advanced
+duration: "40 min"
+description: "Image signing, vulnerability scanning, runtime security, and supply chain hardening."
+order: 4
+---
+
+# Security Best Practices
+
+Container security is a chain — every link must hold. A vulnerability at any layer (image, registry, runtime, orchestrator) can compromise your entire system.
+
+## Defense in Depth
+
+| Layer | Threat | Defense |
+|-------|--------|---------|
+| Code | Dependencies with CVEs | `npm audit`, Dependabot |
+| Image | Base image vulnerabilities | Trivy, Docker Scout |
+| Build | Tampered build pipeline | Signed builds, reproducible builds |
+| Registry | Image substitution | Content trust, image signing |
+| Runtime | Privilege escalation | Non-root, seccomp, AppArmor |
+| Network | Lateral movement | NetworkPolicies, mTLS |
+| Orchestrator | Unauthorized access | RBAC, audit logs |
+
+## Image Signing
+
+Use **cosign** to sign images and verify them before deployment:
+
+```bash
+# Sign an image
+cosign sign --key cosign.key ghcr.io/my-app:v1.0.0
+
+# Verify before pulling
+cosign verify --key cosign.pub ghcr.io/my-app:v1.0.0
+```
+
+In CI, enforce verification:
+
+```yaml
+# Fail deployment if image is not signed
+- name: Verify image signature
+  run: cosign verify --key cosign.pub $IMAGE_REF
+```
+
+## Vulnerability Scanning
+
+Scan at multiple stages:
+
+```bash
+# During development
+trivy image my-app:latest
+
+# In CI pipeline (fail on critical)
+trivy image --exit-code 1 --severity CRITICAL my-app:$SHA
+
+# Periodic production scanning
+trivy image --severity HIGH,CRITICAL --ignore-unfixed my-app:production
+```
+
+## Supply Chain Security with SBOM
+
+A Software Bill of Materials lists every component in your image:
+
+```bash
+# Generate SBOM
+syft ghcr.io/my-app:v1.0.0 -o spdx-json > sbom.json
+
+# Scan SBOM for vulnerabilities
+grype sbom:sbom.json
+```
+
+## Runtime Security
+
+### Seccomp Profiles
+
+Restrict system calls a container can make:
+
+```json
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "syscalls": [
+    { "names": ["read", "write", "exit"], "action": "SCMP_ACT_ALLOW" }
+  ]
+}
+```
+
+### Read-only Root Filesystem
+
+```yaml
+# Kubernetes pod spec
+securityContext:
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 1000
+  capabilities:
+    drop: ["ALL"]
+```
+
+## Network Security
+
+- Use **NetworkPolicies** to restrict pod-to-pod traffic
+- Enable **mTLS** with a service mesh (Istio, Linkerd)
+- Use **Ingress** with TLS termination
+- Block egress to the internet where possible
+
+## Security Checklist
+
+- Run containers as non-root
+- Drop all Linux capabilities (`drop: ["ALL"]`)
+- Use read-only root filesystem
+- Scan images in CI and periodically
+- Sign and verify images with cosign
+- Generate and scan SBOMs
+- Use NetworkPolicies by default
+- Enable audit logging
+- Rotate secrets regularly
+- Keep base images updated

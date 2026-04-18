@@ -1,0 +1,93 @@
+---
+title: "Networks and Volumes"
+module: compose
+level: intermediate
+duration: "30 min"
+description: "Configure networks and volumes in Compose for service isolation and data persistence."
+order: 3
+---
+
+# Networks and Volumes in Compose
+
+Understanding how Compose handles networking and storage is essential for building secure, persistent multi-service applications.
+
+## Default Network
+
+When you run `docker compose up`, Compose creates a default network. All services are attached to it and can reach each other by service name.
+
+## Custom Networks
+
+Define separate networks for isolation:
+
+```yaml
+services:
+  web:
+    networks:
+      - frontend
+      - backend
+
+  api:
+    networks:
+      - backend
+
+  db:
+    networks:
+      - backend
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+    internal: true   # No external access
+```
+
+The `internal: true` flag prevents `backend` from reaching the internet — only inter-service communication is allowed.
+
+## Named Volumes
+
+Volumes persist data across container restarts and recreation:
+
+```yaml
+services:
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+volumes:
+  db-data:
+    driver: local
+```
+
+## Bind Mounts vs Named Volumes
+
+| Feature | Named Volume | Bind Mount |
+|---------|-------------|------------|
+| Managed by Docker | Yes | No |
+| Works across OSes | Yes | Path-dependent |
+| Good for development | No | Yes (live reload) |
+| Good for production | Yes | Use with caution |
+| Backup | `docker volume` commands | Manual |
+
+## Bind Mounts for Development
+
+```yaml
+services:
+  web:
+    build: .
+    volumes:
+      - ./src:/app/src          # Live code reload
+      - /app/node_modules       # Prevent overwrite
+```
+
+The `/app/node_modules` entry without a colon creates an **anonymous volume** — it prevents the host's `node_modules` from overwriting the container's.
+
+## Volume Lifecycle
+
+```bash
+docker compose down          # Stops containers, keeps volumes
+docker compose down -v       # Stops containers AND removes volumes
+docker volume ls             # List all volumes
+docker volume inspect name   # See volume details
+```

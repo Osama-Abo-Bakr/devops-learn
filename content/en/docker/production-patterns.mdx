@@ -1,0 +1,100 @@
+---
+title: "Production Patterns"
+module: docker
+level: advanced
+duration: "45 min"
+description: "Best practices for running containers in production: health checks, logging, and resource limits."
+order: 6
+---
+
+# Production Patterns
+
+Running containers in production is different from development. You need health checks, structured logging, graceful shutdown, and proper resource management.
+
+## Health Checks
+
+Docker can automatically check if your app is healthy:
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:3000/health || exit 1
+```
+
+Or at runtime:
+
+```bash
+docker run \
+  --health-cmd="curl -f http://localhost:3000/health" \
+  --health-interval=30s \
+  --health-retries=3 \
+  my-app
+```
+
+Docker marks the container as `unhealthy` after consecutive failures, allowing orchestrators to restart it.
+
+## Structured Logging
+
+Production apps should log in JSON for easy parsing:
+
+```bash
+# Configure Docker logging driver
+docker run \
+  --log-driver json-file \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
+  my-app
+```
+
+This prevents disk exhaustion from unbounded logs.
+
+## Graceful Shutdown
+
+Containers receive `SIGTERM` then `SIGKILL` after a grace period. Your app must handle it:
+
+```dockerfile
+# Set a proper stop signal and timeout
+STOPSIGNAL SIGTERM
+```
+
+```bash
+docker run --stop-timeout 30 my-app
+```
+
+Your application should:
+1. Stop accepting new requests
+2. Finish in-flight requests
+3. Close database connections
+4. Exit with code 0
+
+## Resource Management
+
+| Resource | Flag | Recommendation |
+|----------|------|----------------|
+| Memory | `--memory` | Always set — prevents OOM killing other containers |
+| CPU | `--cpus` | Limit to prevent CPU starvation |
+| PIDs | `--pids-limit` | Prevent fork bombs |
+| Restart | `--restart` | Use `unless-stopped` for services |
+
+## Restart Policies
+
+```bash
+# Always restart (even after daemon restart)
+docker run --restart always my-app
+
+# Restart unless manually stopped
+docker run --restart unless-stopped my-app
+
+# Restart on failure (up to 5 times)
+docker run --restart on-failure:5 my-app
+```
+
+## Production Dockerfile Checklist
+
+- Use multi-stage builds for small images
+- Run as non-root user
+- Include `HEALTHCHECK`
+- Set `STOPSIGNAL SIGTERM`
+- Pin base image digests
+- Use `.dockerignore`
+- Set resource limits at runtime
+- Configure log rotation

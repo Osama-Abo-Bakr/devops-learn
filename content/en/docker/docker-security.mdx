@@ -1,0 +1,83 @@
+---
+title: "Docker Security"
+module: docker
+level: intermediate
+duration: "35 min"
+description: "Secure your containers: least privilege, image scanning, and runtime protection."
+order: 5
+---
+
+# Docker Security
+
+Containers are not inherently secure — they share the host kernel. Security requires deliberate configuration at every layer: image, runtime, network, and host.
+
+## The Container Security Stack
+
+| Layer | Concern | Example |
+|-------|---------|---------|
+| Image | Vulnerabilities, secrets | `docker scout`, `.dockerignore` |
+| Runtime | Privilege escalation | `--user`, `--read-only` |
+| Network | Lateral movement | Custom networks, `--icc=false` |
+| Host | Kernel exploits | Seccomp, AppArmor |
+
+## Run as Non-Root
+
+By default, containers run as root. This is dangerous if an attacker breaks out.
+
+```dockerfile
+FROM node:20-alpine
+WORKDIR /app
+COPY --chown=node:node . .
+USER node
+CMD ["node", "server.js"]
+```
+
+Or at runtime:
+
+```bash
+docker run --user 1000:1000 my-app
+```
+
+## Read-Only Filesystem
+
+Prevent runtime writes to the filesystem:
+
+```bash
+docker run --read-only --tmpfs /tmp my-app
+```
+
+Use `--tmpfs` for directories that must be writable (like `/tmp`).
+
+## Image Scanning
+
+Scan images for known vulnerabilities before deploying:
+
+```bash
+# Using Docker Scout
+docker scout cves my-app:latest
+
+# Using Trivy
+trivy image my-app:latest
+```
+
+## Resource Limits
+
+Prevent denial-of-service by capping resources:
+
+```bash
+docker run \
+  --memory 512m \
+  --cpus 1.0 \
+  --pids-limit 100 \
+  my-app
+```
+
+## Security Checklist
+
+- Don't run as root (`USER` directive)
+- Use `--read-only` where possible
+- Scan images for CVEs regularly
+- Set resource limits (memory, CPU, PIDs)
+- Never store secrets in images — use Docker secrets or env vars from orchestrators
+- Pin image tags and verify digests (`image@sha256:...`)
+- Keep Docker and the host OS updated

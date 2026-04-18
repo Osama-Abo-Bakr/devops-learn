@@ -1,0 +1,73 @@
+---
+title: "Multi-Stage Builds"
+module: docker
+level: intermediate
+duration: "30 min"
+description: "Optimize images with multi-stage builds and reduce final image size."
+order: 4
+---
+
+# Multi-Stage Builds
+
+Multi-stage builds let you use multiple `FROM` statements in a single Dockerfile. Each `FROM` starts a new stage, and you can copy artifacts from one stage to another — discarding everything you don't need in the final image.
+
+## Why Multi-Stage?
+
+A typical Node.js build needs dev dependencies, a compiler, and build tools. But the **runtime** only needs `node` and your compiled output. Without multi-stage builds, your image carries hundreds of MB of unnecessary tools.
+
+| Approach | Image Size | Contains |
+|----------|-----------|----------|
+| Single-stage | ~1.2 GB | Build tools, dev deps, source |
+| Multi-stage | ~180 MB | Node runtime, compiled app |
+
+## Basic Pattern
+
+```dockerfile
+# Stage 1: Build
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Stage 2: Production
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+EXPOSE 3000
+CMD ["node", "dist/server.js"]
+```
+
+## Key Techniques
+
+- **`AS` keyword** — Name a stage so you can reference it with `--from=builder`
+- **`COPY --from=`** — Copy artifacts from a previous stage
+- **`docker build --target`** — Build only up to a specific stage for debugging
+
+## Real-World Example: Go
+
+```dockerfile
+# Build stage
+FROM golang:1.22 AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /server
+
+# Minimal runtime
+FROM scratch
+COPY --from=builder /server /server
+ENTRYPOINT ["/server"]
+```
+
+The `scratch` image has **zero OS overhead** — only your compiled binary.
+
+## Tips
+
+1. Order stages from heaviest (build) to lightest (runtime)
+2. Use `--target` to test intermediate stages: `docker build --target builder -t debug .`
+3. Combine with `.dockerignore` to keep build context small
+4. Pin base image tags — avoid `latest` in production

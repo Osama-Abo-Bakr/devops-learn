@@ -12,10 +12,32 @@ const ExcalidrawViewer = dynamic(
 );
 
 import dockerContainerBasicsScene from "@/data/excalidraw/docker-container-basics";
+import dockerImageLayersScene from "@/data/excalidraw/docker-image-layers";
+import dockerVolumesNetworksScene from "@/data/excalidraw/docker-volumes-networks";
+import dockerMultiStageBuildScene from "@/data/excalidraw/docker-multi-stage-build";
+import dockerSecurityScene from "@/data/excalidraw/docker-security";
+import dockerProductionPatternsScene from "@/data/excalidraw/docker-production-patterns";
+import composeMultiServiceScene from "@/data/excalidraw/compose-multi-service";
+import composeNetworksVolumesScene from "@/data/excalidraw/compose-networks-volumes";
+import k8sPodsDeploymentsScene from "@/data/excalidraw/k8s-pods-deployments";
+import k8sServicesIngressScene from "@/data/excalidraw/k8s-services-ingress";
+import k8sConfigmapsSecretsScene from "@/data/excalidraw/k8s-configmaps-secrets";
+import devopsCicdPipelineScene from "@/data/excalidraw/devops-cicd-pipeline";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const excalidrawScenes: Record<string, any> = {
   "docker-container-basics": dockerContainerBasicsScene,
+  "docker-image-layers": dockerImageLayersScene,
+  "docker-volumes-networks": dockerVolumesNetworksScene,
+  "docker-multi-stage-build": dockerMultiStageBuildScene,
+  "docker-security": dockerSecurityScene,
+  "docker-production-patterns": dockerProductionPatternsScene,
+  "compose-multi-service": composeMultiServiceScene,
+  "compose-networks-volumes": composeNetworksVolumesScene,
+  "k8s-pods-deployments": k8sPodsDeploymentsScene,
+  "k8s-services-ingress": k8sServicesIngressScene,
+  "k8s-configmaps-secrets": k8sConfigmapsSecretsScene,
+  "devops-cicd-pipeline": devopsCicdPipelineScene,
 };
 
 interface LessonInteractiveProps {

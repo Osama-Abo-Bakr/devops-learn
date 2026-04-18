@@ -1,0 +1,121 @@
+---
+title: "Monitoring and Observability"
+module: devops
+level: advanced
+duration: "45 min"
+description: "Set up Prometheus metrics, Grafana dashboards, and distributed tracing."
+order: 3
+---
+
+# Monitoring and Observability
+
+Observability is the ability to understand what's happening inside your systems from their external outputs. The three pillars: **metrics**, **logs**, and **traces**.
+
+## The Three Pillars
+
+| Pillar | Answers | Tool Example |
+|--------|---------|-------------|
+| Metrics | How much? How fast? | Prometheus |
+| Logs | What happened? | Loki, ELK |
+| Traces | Where did time go? | Jaeger, Tempo |
+
+## Prometheus
+
+Prometheus scrapes metrics endpoints at regular intervals and stores time-series data.
+
+### Expose metrics from your app
+
+```go
+var httpRequests = prometheus.NewCounterVec(
+    prometheus.CounterOpts{
+        Name: "http_requests_total",
+        Help: "Total HTTP requests",
+    },
+    []string{"method", "path", "status"},
+)
+
+http.Handle("/metrics", promhttp.Handler())
+```
+
+### Scrape config
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'my-app'
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: my-app
+```
+
+## Grafana Dashboards
+
+Grafana visualizes Prometheus metrics. Deploy with Compose for local testing:
+
+```yaml
+# docker-compose.monitoring.yml
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+```
+
+## Key Metrics to Track
+
+| Metric | Type | Alert Threshold |
+|--------|------|-----------------|
+| Request rate | Counter | — |
+| Error rate | Counter | > 1% |
+| Latency (p99) | Histogram | > 500ms |
+| CPU usage | Gauge | > 80% |
+| Memory usage | Gauge | > 90% |
+| Pod restarts | Counter | > 3 in 5 min |
+
+## Alerting Rules
+
+```yaml
+# alerts.yml
+groups:
+  - name: my-app
+    rules:
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Error rate above 1%"
+```
+
+## Distributed Tracing
+
+Traces show the path of a request across services:
+
+```
+[Client] ──► [API Gateway] ──► [User Service] ──► [DB]
+                  │
+                  └────────► [Order Service] ──► [Cache]
+```
+
+Each span records timing, making bottlenecks visible.
+
+## Commands
+
+```bash
+kubectl port-forward svc/prometheus 9090:9090   # Access Prometheus
+kubectl port-forward svc/grafana 3000:3000       # Access Grafana
+kubectl top pods                                 # Quick metrics check
+```

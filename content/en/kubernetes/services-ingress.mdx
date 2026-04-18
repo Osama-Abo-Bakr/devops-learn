@@ -1,0 +1,102 @@
+---
+title: "Services and Ingress"
+module: kubernetes
+level: beginner
+duration: "35 min"
+diagram: k8s-services-ingress
+description: "Expose your applications with Services and route external traffic with Ingress."
+order: 2
+---
+
+# Services and Ingress
+
+Pods are ephemeral — they get new IPs when recreated. Services provide stable networking, and Ingress routes external HTTP traffic to your services.
+
+## Why Services?
+
+Without a Service, you'd need to track every Pod IP and update configurations whenever Pods are recreated. A Service gives you:
+
+- A **stable virtual IP** (ClusterIP)
+- A **DNS name** (`my-service.my-namespace.svc.cluster.local`)
+- **Load balancing** across healthy Pods
+
+## Service Types
+
+| Type | Scope | Use Case |
+|------|-------|----------|
+| ClusterIP | Internal only | Service-to-service communication |
+| NodePort | External via `<NodeIP>:<Port>` | Dev/test access |
+| LoadBalancer | External via cloud LB | Production external access |
+| ExternalName | DNS CNAME | Alias to an external service |
+
+## ClusterIP Service
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-service
+spec:
+  selector:
+    app: web
+  ports:
+    - port: 80          # Service port
+      targetPort: 3000  # Pod port
+  type: ClusterIP
+```
+
+## NodePort Service
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-service
+spec:
+  selector:
+    app: web
+  ports:
+    - port: 80
+      targetPort: 3000
+      nodePort: 30080   # Port on each node (30000-32767)
+  type: NodePort
+```
+
+## Ingress
+
+Ingress is a higher-level HTTP router — it handles host-based and path-based routing:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web-ingress
+spec:
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web-service
+                port:
+                  number: 80
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api-service
+                port:
+                  number: 80
+```
+
+## Common Commands
+
+```bash
+kubectl get svc                    # List services
+kubectl describe svc web-service  # Service details
+kubectl get ingress               # List ingress rules
+kubectl port-forward svc/web 8080:80  # Local access
+```

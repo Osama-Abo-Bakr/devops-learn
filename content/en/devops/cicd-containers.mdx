@@ -1,0 +1,97 @@
+---
+title: "CI/CD with Containers"
+module: devops
+level: intermediate
+duration: "40 min"
+description: "Build and deploy container images in CI/CD pipelines with GitHub Actions and GitLab CI."
+order: 1
+---
+
+# CI/CD with Containers
+
+A CI/CD pipeline automates building, testing, and deploying your container images. Every code push triggers a consistent, repeatable process.
+
+## The Pipeline Flow
+
+```
+Push ──► Build Image ──► Run Tests ──► Scan CVEs ──► Push to Registry ──► Deploy
+```
+
+## GitHub Actions Example
+
+```yaml
+# .github/workflows/docker-build.yml
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+```
+
+## GitLab CI Example
+
+```yaml
+# .gitlab-ci.yml
+docker-build:
+  stage: build
+  image: docker:24
+  services:
+    - docker:24-dind
+  before_script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+  script:
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+```
+
+## Image Tagging Strategy
+
+| Tag | When | Purpose |
+|-----|------|---------|
+| `sha-<commit>` | Every build | Exact reproducible version |
+| `latest` | Main branch | Current production |
+| `v1.2.3` | Git tag | Release version |
+| `canary` | Staging | Pre-release testing |
+
+## Security Scanning in CI
+
+```yaml
+# Add to GitHub Actions
+- name: Scan image
+  uses: aquasecurity/trivy-action@master
+  with:
+    image-ref: ghcr.io/my-app:${{ github.sha }}
+    severity: "CRITICAL,HIGH"
+    exit-code: "1"   # Fail pipeline on critical CVEs
+```
+
+## Best Practices
+
+- Build images in CI, not locally
+- Tag every image with the commit SHA
+- Scan for vulnerabilities before pushing
+- Use `--cache-from` to speed up builds
+- Keep the Dockerfile in the same repo as the code
+- Never push `latest` to production — use explicit versions

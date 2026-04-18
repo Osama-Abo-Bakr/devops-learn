@@ -1,0 +1,109 @@
+---
+title: "Env Vars and Scaling"
+module: compose
+level: intermediate
+duration: "30 min"
+description: "Use .env files, variable substitution, and scale services horizontally."
+order: 4
+---
+
+# Environment Variables and Scaling
+
+Environment variables configure your services without rebuilding images. Scaling lets you run multiple instances of a service for load distribution.
+
+## .env File
+
+Create a `.env` file in your project root:
+
+```bash
+# .env
+POSTGRES_USER=myuser
+POSTGRES_PASSWORD=secretpass
+APP_PORT=3000
+NODE_ENV=production
+```
+
+Compose automatically loads `.env` — reference variables with `${VAR}`:
+
+```yaml
+services:
+  web:
+    image: my-app:latest
+    ports:
+      - "${APP_PORT}:3000"
+    environment:
+      NODE_ENV: ${NODE_ENV}
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/mydb
+```
+
+## Environment Precedence
+
+From lowest to highest priority:
+
+1. `Dockerfile` `ENV`
+2. Compose `environment` key
+3. Compose `env_file`
+4. Shell environment variables
+5. `.env` file
+6. `docker compose run -e`
+
+Higher priority **overrides** lower.
+
+## Multiple env_files
+
+```yaml
+services:
+  web:
+    env_file:
+      - .env           # Shared defaults
+      - .env.local      # Local overrides (gitignored)
+```
+
+## Scaling Services
+
+```bash
+# Scale web to 3 instances
+docker compose up -d --scale web=3
+```
+
+This creates `web-1`, `web-2`, `web-3`. But you need a load balancer or reverse proxy to distribute traffic.
+
+## Scaling with Port Conflicts
+
+If your service maps a fixed host port, scaling fails — only one container can bind port 3000. Solution: use a reverse proxy or dynamic port range:
+
+```yaml
+services:
+  web:
+    image: my-app:latest
+    # Don't map fixed ports — let a proxy handle it
+    expose:
+      - "3000"
+  
+  proxy:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    depends_on:
+      - web
+```
+
+## Override Files
+
+```bash
+# Use production overrides
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+```yaml
+# docker-compose.prod.yml
+services:
+  web:
+    environment:
+      NODE_ENV: production
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 512M
+```

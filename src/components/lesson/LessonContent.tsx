@@ -18,6 +18,10 @@ function stripInteractiveTags(raw: string): string {
   body = body.replace(/<Diagram[\s\S]*?<\/Diagram>/g, "");
   body = body.replace(/<Terminal[\s\S]*?<\/Terminal>/g, "");
   body = body.replace(/<Quiz[\s\S]*?<\/Quiz>/g, "");
+  // Remove orphaned section headings for interactive components
+  body = body.replace(/^##\s*(Interactive Diagram|Try It Yourself|Test Your Knowledge)\s*\n/gm, "");
+  // Remove introductory lines that precede the removed tags
+  body = body.replace(/^(Explore how containers relate.*|Practice the commands in the terminal below.*|Test your understanding.*)\n/gm, "");
   return body.trim();
 }
 

@@ -1,0 +1,98 @@
+---
+title: "Multi-Service Stacks"
+module: compose
+level: beginner
+duration: "35 min"
+diagram: compose-multi-service
+description: "Connect multiple services: web app, database, and cache in a single stack."
+order: 2
+---
+
+# Multi-Service Stacks
+
+Real applications need multiple services — a web server, a database, maybe a cache. Docker Compose lets you define and connect them all in one file.
+
+## A Full-Stack Application
+
+```yaml
+version: "3.8"
+services:
+  web:
+    build: ./web
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgres://user:pass@db:5432/mydb
+      - REDIS_URL=redis://cache:6379
+    depends_on:
+      - db
+      - cache
+
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: mydb
+
+  cache:
+    image: redis:7-alpine
+    volumes:
+      - cache-data:/data
+
+volumes:
+  db-data:
+  cache-data:
+```
+
+## Service Discovery
+
+Containers on the same Compose network communicate using **service names as hostnames**:
+
+| From | To | URL |
+|------|----|-----|
+| web | db | `db:5432` |
+| web | cache | `cache:6379` |
+
+No IP addresses needed — Docker's embedded DNS handles resolution.
+
+## depends_on
+
+The `depends_on` key controls startup order:
+
+```yaml
+depends_on:
+  db:
+    condition: service_healthy
+  cache:
+    condition: service_started
+```
+
+- `service_started` — wait until the container starts
+- `service_healthy` — wait until the health check passes (requires `healthcheck`)
+
+## Health Checks in Compose
+
+```yaml
+db:
+  image: postgres:16-alpine
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U user"]
+    interval: 5s
+    timeout: 5s
+    retries: 5
+```
+
+This ensures `web` doesn't start until `db` is actually ready to accept connections.
+
+## Common Commands
+
+```bash
+docker compose up -d           # Start everything
+docker compose logs -f web     # Follow web logs
+docker compose exec db psql    # Open a database shell
+docker compose restart web     # Restart one service
+docker compose down -v         # Stop and remove volumes
+```

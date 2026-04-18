@@ -1,0 +1,111 @@
+---
+title: "Helm Charts"
+module: devops
+level: intermediate
+duration: "35 min"
+description: "Package, template, and deploy Kubernetes applications with Helm."
+order: 2
+---
+
+# Helm Charts
+
+Helm is the package manager for Kubernetes. It templates your YAML manifests, packages them into charts, and manages releases — install, upgrade, rollback.
+
+## Why Helm?
+
+| Without Helm | With Helm |
+|-------------|----------|
+| Many raw YAML files | One `values.yaml` per environment |
+| Manual `kubectl apply` | `helm install` one command |
+| No rollback | `helm rollback` |
+| No versioning | Semantic versioning per chart |
+| Hard to share | Publish to chart repositories |
+
+## Chart Structure
+
+```
+my-chart/
+├── Chart.yaml          # Chart metadata
+├── values.yaml         # Default configuration
+├── templates/
+│   ├── deployment.yaml  # Kubernetes manifests (templated)
+│   ├── service.yaml
+│   ├── ingress.yaml
+│   └── _helpers.tpl    # Reusable template snippets
+└── .helmignore
+```
+
+## Chart.yaml
+
+```yaml
+apiVersion: v2
+name: my-app
+description: A web application
+type: application
+version: 1.0.0           # Chart version
+appVersion: "2.1.0"      # App version
+```
+
+## values.yaml
+
+```yaml
+replicaCount: 2
+
+image:
+  repository: ghcr.io/my-app
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+```
+
+## Templated Manifest
+
+```yaml
+# templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Chart.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}
+  template:
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+```
+
+## Common Commands
+
+```bash
+helm install my-app ./my-chart              # Install chart
+helm upgrade my-app ./my-chart              # Upgrade release
+helm rollback my-app 1                      # Rollback to revision 1
+helm list                                   # List releases
+helm uninstall my-app                       # Remove release
+helm template ./my-chart                    # Render templates locally
+helm install my-app ./my-chart -f prod.yaml # Override values
+```
+
+## Override Values Per Environment
+
+```bash
+# Dev
+helm install my-app ./my-chart -f values-dev.yaml
+
+# Prod
+helm install my-app ./my-chart -f values-prod.yaml
+```

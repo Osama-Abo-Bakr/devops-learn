@@ -50,6 +50,7 @@ const modules: Record<Topic, Module> = {
         module: "docker",
         level: "intermediate",
         duration: "30 min",
+        diagram: "docker-multi-stage-build",
         description:
           "Optimize images with multi-stage builds and reduce final image size.",
         order: 4,
@@ -60,6 +61,7 @@ const modules: Record<Topic, Module> = {
         module: "docker",
         level: "intermediate",
         duration: "35 min",
+        diagram: "docker-security",
         description:
           "Secure your containers: least privilege, image scanning, and runtime protection.",
         order: 5,
@@ -70,6 +72,7 @@ const modules: Record<Topic, Module> = {
         module: "docker",
         level: "advanced",
         duration: "45 min",
+        diagram: "docker-production-patterns",
         description:
           "Best practices for running containers in production: health checks, logging, and resource limits.",
         order: 6,
@@ -112,6 +115,7 @@ const modules: Record<Topic, Module> = {
         module: "compose",
         level: "intermediate",
         duration: "30 min",
+        diagram: "compose-networks-volumes",
         description:
           "Configure networks and volumes in Compose for service isolation and data persistence.",
         order: 3,
@@ -175,6 +179,7 @@ const modules: Record<Topic, Module> = {
         module: "kubernetes",
         level: "intermediate",
         duration: "30 min",
+        diagram: "k8s-configmaps-secrets",
         description:
           "Decouple configuration from images and manage sensitive data with Secrets.",
         order: 3,
@@ -216,6 +221,7 @@ const modules: Record<Topic, Module> = {
         module: "devops",
         level: "intermediate",
         duration: "40 min",
+        diagram: "devops-cicd-pipeline",
         description:
           "Build and deploy container images in CI/CD pipelines with GitHub Actions and GitLab CI.",
         order: 1,
