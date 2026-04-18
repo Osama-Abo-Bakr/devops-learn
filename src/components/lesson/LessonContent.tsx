@@ -5,6 +5,7 @@ import LessonLayout from "@/components/layout/LessonLayout";
 import LessonInteractive from "@/components/lesson/LessonInteractive";
 import ResourcesSection from "@/components/lesson/ResourcesSection";
 import { getResourcesForTopic } from "@/data/resources";
+import LessonXPTracker from "@/components/lesson/LessonXPTracker";
 
 interface LessonContentProps {
   lesson: Lesson;
@@ -35,9 +36,9 @@ export default function LessonContent({
   const rawContent = getLessonContent(locale as "en" | "ar", topic, lesson.slug);
   const textContent = rawContent ? stripInteractiveTags(rawContent) : "";
   const resources = getResourcesForTopic(topic);
-
   return (
     <LessonLayout lesson={lesson} topic={topic}>
+      <LessonXPTracker />
       {textContent && <MdxContent source={textContent} />}
       <LessonInteractive
         diagramId={lesson.diagram}
