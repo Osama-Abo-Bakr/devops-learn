@@ -11,6 +11,7 @@ const navLinks = [
   { href: "/learn/devops", label: "DevOps", icon: "🚀" },
   { href: "/playground", label: "Playground", icon: "💻" },
   { href: "/cheatsheet", label: "Cheat Sheet", icon: "📋" },
+  { href: "/custom-exam", label: "Custom Exam", icon: "📝" },
 ];
 
 export default function Navbar() {
@@ -45,6 +46,12 @@ export default function Navbar() {
         </div>
 
         <div className="flex items-center gap-2">
+          <Link
+            href="/custom-exam"
+            className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500"
+          >
+            Custom Exam
+          </Link>
           <Link
             href="/level-test"
             className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-300 transition-colors hover:border-blue-500 hover:text-white"

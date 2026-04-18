@@ -29,6 +29,7 @@ const modules: Record<Topic, Module> = {
         level: "beginner",
         duration: "35 min",
         diagram: "docker-image-layers",
+        quiz: "dockerfile-quiz",
         description:
           "Learn to write Dockerfiles, understand layer caching, and build custom images.",
         order: 2,
@@ -40,6 +41,7 @@ const modules: Record<Topic, Module> = {
         level: "beginner",
         duration: "40 min",
         diagram: "docker-volumes-networks",
+        quiz: "volumes-networks-quiz",
         description:
           "Persist data with volumes and connect containers with Docker networks.",
         order: 3,
@@ -51,6 +53,7 @@ const modules: Record<Topic, Module> = {
         level: "intermediate",
         duration: "30 min",
         diagram: "docker-multi-stage-build",
+        quiz: "multi-stage-quiz",
         description:
           "Optimize images with multi-stage builds and reduce final image size.",
         order: 4,
@@ -62,6 +65,7 @@ const modules: Record<Topic, Module> = {
         level: "intermediate",
         duration: "35 min",
         diagram: "docker-security",
+        quiz: "docker-security-quiz",
         description:
           "Secure your containers: least privilege, image scanning, and runtime protection.",
         order: 5,
@@ -73,6 +77,7 @@ const modules: Record<Topic, Module> = {
         level: "advanced",
         duration: "45 min",
         diagram: "docker-production-patterns",
+        quiz: "production-patterns-quiz",
         description:
           "Best practices for running containers in production: health checks, logging, and resource limits.",
         order: 6,
@@ -95,6 +100,7 @@ const modules: Record<Topic, Module> = {
         level: "beginner",
         duration: "25 min",
         diagram: "yaml-basics",
+        quiz: "yaml-basics-quiz",
         description:
           "Write your first docker-compose.yml and understand the structure of Compose files.",
         order: 1,
@@ -106,6 +112,7 @@ const modules: Record<Topic, Module> = {
         level: "beginner",
         duration: "35 min",
         diagram: "compose-multi-service",
+        quiz: "multi-service-quiz",
         description:
           "Connect multiple services: web app, database, and cache in a single stack.",
         order: 2,
@@ -117,6 +124,7 @@ const modules: Record<Topic, Module> = {
         level: "intermediate",
         duration: "30 min",
         diagram: "compose-networks-volumes",
+        quiz: "compose-networks-volumes-quiz",
         description:
           "Configure networks and volumes in Compose for service isolation and data persistence.",
         order: 3,
@@ -128,6 +136,7 @@ const modules: Record<Topic, Module> = {
         level: "intermediate",
         duration: "30 min",
         diagram: "compose-env-scaling",
+        quiz: "compose-env-scaling-quiz",
         description:
           "Use .env files, variable substitution, and scale services horizontally.",
         order: 4,
@@ -139,6 +148,7 @@ const modules: Record<Topic, Module> = {
         level: "advanced",
         duration: "40 min",
         diagram: "compose-production",
+        quiz: "compose-production-quiz",
         description:
           "Override files, health checks, and deployment strategies for production Compose stacks.",
         order: 5,
@@ -161,6 +171,7 @@ const modules: Record<Topic, Module> = {
         level: "beginner",
         duration: "40 min",
         diagram: "k8s-pods-deployments",
+        quiz: "k8s-pods-deployments-quiz",
         description:
           "Understand the smallest deployable unit in Kubernetes and manage replicas with Deployments.",
         order: 1,
@@ -172,6 +183,7 @@ const modules: Record<Topic, Module> = {
         level: "beginner",
         duration: "35 min",
         diagram: "k8s-services-ingress",
+        quiz: "k8s-services-ingress-quiz",
         description:
           "Expose your applications with Services and route external traffic with Ingress.",
         order: 2,
@@ -183,6 +195,7 @@ const modules: Record<Topic, Module> = {
         level: "intermediate",
         duration: "30 min",
         diagram: "k8s-configmaps-secrets",
+        quiz: "k8s-configmaps-secrets-quiz",
         description:
           "Decouple configuration from images and manage sensitive data with Secrets.",
         order: 3,
@@ -194,6 +207,7 @@ const modules: Record<Topic, Module> = {
         level: "intermediate",
         duration: "30 min",
         diagram: "hpa-scaling",
+        quiz: "hpa-scaling-quiz",
         description:
           "Automatically scale your workloads with the Horizontal Pod Autoscaler.",
         order: 4,
@@ -205,6 +219,7 @@ const modules: Record<Topic, Module> = {
         level: "advanced",
         duration: "45 min",
         diagram: "rbac-network-policies",
+        quiz: "rbac-network-policies-quiz",
         description:
           "Control access with RBAC and restrict network traffic with NetworkPolicies.",
         order: 5,
@@ -227,6 +242,7 @@ const modules: Record<Topic, Module> = {
         level: "intermediate",
         duration: "40 min",
         diagram: "devops-cicd-pipeline",
+        quiz: "cicd-quiz",
         description:
           "Build and deploy container images in CI/CD pipelines with GitHub Actions and GitLab CI.",
         order: 1,
@@ -238,6 +254,7 @@ const modules: Record<Topic, Module> = {
         level: "intermediate",
         duration: "35 min",
         diagram: "helm-charts",
+        quiz: "helm-quiz",
         description:
           "Package, template, and deploy Kubernetes applications with Helm.",
         order: 2,
@@ -249,6 +266,7 @@ const modules: Record<Topic, Module> = {
         level: "advanced",
         duration: "45 min",
         diagram: "monitoring-observability",
+        quiz: "monitoring-quiz",
         description:
           "Set up Prometheus metrics, Grafana dashboards, and distributed tracing.",
         order: 3,
@@ -260,6 +278,7 @@ const modules: Record<Topic, Module> = {
         level: "advanced",
         duration: "40 min",
         diagram: "security-best-practices",
+        quiz: "security-best-practices-quiz",
         description:
           "Image signing, vulnerability scanning, runtime security, and supply chain hardening.",
         order: 4,

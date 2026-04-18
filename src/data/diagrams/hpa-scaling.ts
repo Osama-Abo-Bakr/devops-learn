@@ -7,7 +7,7 @@ export const hpaScaling: DiagramConfig = {
   nodes: [
     {
       id: "metrics-server",
-      position: { x: 0, y: 0 },
+      position: { x: 100, y: 50 },
       data: {
         type: "service",
         label: "metrics-server",
@@ -19,7 +19,7 @@ export const hpaScaling: DiagramConfig = {
     },
     {
       id: "hpa",
-      position: { x: 300, y: 0 },
+      position: { x: 350, y: 50 },
       data: {
         type: "pod",
         label: "HPA Controller",
@@ -35,7 +35,7 @@ export const hpaScaling: DiagramConfig = {
     },
     {
       id: "pod-1",
-      position: { x: 100, y: 180 },
+      position: { x: 100, y: 210 },
       data: {
         type: "pod",
         label: "app-pod-1",
@@ -48,7 +48,7 @@ export const hpaScaling: DiagramConfig = {
     },
     {
       id: "pod-2",
-      position: { x: 350, y: 180 },
+      position: { x: 300, y: 210 },
       data: {
         type: "pod",
         label: "app-pod-2",
@@ -61,7 +61,7 @@ export const hpaScaling: DiagramConfig = {
     },
     {
       id: "pod-3",
-      position: { x: 600, y: 180 },
+      position: { x: 500, y: 210 },
       data: {
         type: "pod",
         label: "app-pod-3",

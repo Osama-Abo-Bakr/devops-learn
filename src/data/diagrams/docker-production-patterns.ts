@@ -3,11 +3,11 @@ import type { DiagramConfig } from "@/types";
 export const dockerProductionPatterns: DiagramConfig = {
   id: "docker-production-patterns",
   title: "Docker Production Patterns",
-  viewport: { x: 0, y: 0, zoom: 0.7 },
+  viewport: { x: 0, y: 0, zoom: 0.75 },
   nodes: [
     {
       id: "prod-app",
-      position: { x: 300, y: 150 },
+      position: { x: 300, y: 210 },
       data: {
         type: "container",
         label: "Production App",
@@ -20,7 +20,7 @@ export const dockerProductionPatterns: DiagramConfig = {
     },
     {
       id: "health-check",
-      position: { x: 0, y: 0 },
+      position: { x: 100, y: 50 },
       data: {
         type: "container",
         label: "Health Check",
@@ -36,7 +36,7 @@ export const dockerProductionPatterns: DiagramConfig = {
     },
     {
       id: "log-rotation",
-      position: { x: 300, y: 0 },
+      position: { x: 300, y: 50 },
       data: {
         type: "container",
         label: "Log Rotation",
@@ -51,7 +51,7 @@ export const dockerProductionPatterns: DiagramConfig = {
     },
     {
       id: "resource-limits",
-      position: { x: 600, y: 0 },
+      position: { x: 500, y: 50 },
       data: {
         type: "container",
         label: "Resource Limits",
@@ -66,7 +66,7 @@ export const dockerProductionPatterns: DiagramConfig = {
     },
     {
       id: "graceful-shutdown",
-      position: { x: 300, y: 320 },
+      position: { x: 300, y: 370 },
       data: {
         type: "container",
         label: "Graceful Shutdown",

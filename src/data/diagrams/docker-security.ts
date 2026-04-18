@@ -3,11 +3,11 @@ import type { DiagramConfig } from "@/types";
 export const dockerSecurity: DiagramConfig = {
   id: "docker-security",
   title: "Docker Security — Defense in Depth",
-  viewport: { x: 0, y: 0, zoom: 0.7 },
+  viewport: { x: 0, y: 0, zoom: 0.75 },
   nodes: [
     {
       id: "l1-kernel",
-      position: { x: 100, y: 0 },
+      position: { x: 150, y: 50 },
       data: {
         type: "security",
         label: "L1: Kernel",
@@ -19,7 +19,7 @@ export const dockerSecurity: DiagramConfig = {
     },
     {
       id: "l2-network",
-      position: { x: 100, y: 130 },
+      position: { x: 150, y: 210 },
       data: {
         type: "security",
         label: "L2: Network",
@@ -31,7 +31,7 @@ export const dockerSecurity: DiagramConfig = {
     },
     {
       id: "l3-image",
-      position: { x: 100, y: 260 },
+      position: { x: 150, y: 370 },
       data: {
         type: "security",
         label: "L3: Image",
@@ -43,7 +43,7 @@ export const dockerSecurity: DiagramConfig = {
     },
     {
       id: "l4-runtime",
-      position: { x: 100, y: 390 },
+      position: { x: 150, y: 530 },
       data: {
         type: "security",
         label: "L4: Runtime",
@@ -55,7 +55,7 @@ export const dockerSecurity: DiagramConfig = {
     },
     {
       id: "app",
-      position: { x: 450, y: 195 },
+      position: { x: 450, y: 290 },
       data: {
         type: "container",
         label: "Your App",

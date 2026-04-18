@@ -3,11 +3,11 @@ import type { DiagramConfig } from "@/types";
 export const dockerContainerBasics: DiagramConfig = {
   id: "docker-container-basics",
   title: "Docker Container Basics",
-  viewport: { x: 0, y: 0, zoom: 0.8 },
+  viewport: { x: 0, y: 0, zoom: 0.75 },
   nodes: [
     {
       id: "host",
-      position: { x: 300, y: 0 },
+      position: { x: 300, y: 50 },
       data: {
         type: "container",
         label: "Host Machine",
@@ -18,7 +18,7 @@ export const dockerContainerBasics: DiagramConfig = {
     },
     {
       id: "docker-engine",
-      position: { x: 300, y: 140 },
+      position: { x: 300, y: 210 },
       data: {
         type: "network",
         label: "Docker Engine",
@@ -29,7 +29,7 @@ export const dockerContainerBasics: DiagramConfig = {
     },
     {
       id: "nginx-container",
-      position: { x: 100, y: 300 },
+      position: { x: 150, y: 370 },
       data: {
         type: "container",
         label: "nginx",
@@ -43,7 +43,7 @@ export const dockerContainerBasics: DiagramConfig = {
     },
     {
       id: "alpine-container",
-      position: { x: 400, y: 300 },
+      position: { x: 450, y: 370 },
       data: {
         type: "container",
         label: "alpine",
@@ -55,7 +55,7 @@ export const dockerContainerBasics: DiagramConfig = {
     },
     {
       id: "bridge-net",
-      position: { x: 250, y: 460 },
+      position: { x: 300, y: 530 },
       data: {
         type: "network",
         label: "bridge-net",
@@ -66,7 +66,7 @@ export const dockerContainerBasics: DiagramConfig = {
     },
     {
       id: "data-vol",
-      position: { x: 100, y: 460 },
+      position: { x: 100, y: 530 },
       data: {
         type: "volume",
         label: "html-data",

@@ -279,3 +279,45 @@ export interface ProgressState {
   /** ISO timestamp of last progress update */
   lastUpdated: string;
 }
+
+// -----------------------------------------------------------
+// Custom Exam
+// -----------------------------------------------------------
+
+/** Configuration for generating a custom exam */
+export interface ExamConfig {
+  /** Which topics to include */
+  topics: Topic[];
+  /** Difficulty level */
+  level: Level;
+  /** Number of questions total */
+  questionCount: 5 | 10 | 15 | 20;
+}
+
+/** A generated custom exam with mixed curated + AI questions */
+export interface CustomExam {
+  /** Unique exam ID for history tracking */
+  id: string;
+  /** Display title */
+  title: string;
+  /** The config used to generate this exam */
+  config: ExamConfig;
+  /** All questions, curated + AI, shuffled */
+  questions: QuizQuestion[];
+  /** Per-question source tracking for results display */
+  sources: ("curated" | "ai")[];
+  /** ISO timestamp of generation */
+  createdAt: string;
+}
+
+/** A completed exam result stored in history */
+export interface ExamHistoryEntry {
+  /** The exam that was taken */
+  exam: CustomExam;
+  /** User's selected answer index per question (null = skipped) */
+  answers: (number | null)[];
+  /** Score as percentage 0-100 */
+  score: number;
+  /** ISO timestamp of completion */
+  completedAt: string;
+}

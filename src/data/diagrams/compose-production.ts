@@ -7,7 +7,7 @@ export const composeProduction: DiagramConfig = {
   nodes: [
     {
       id: "base-file",
-      position: { x: 0, y: 100 },
+      position: { x: 100, y: 50 },
       data: {
         type: "config",
         label: "docker-compose.yml",
@@ -24,7 +24,7 @@ export const composeProduction: DiagramConfig = {
     },
     {
       id: "override-file",
-      position: { x: 300, y: 0 },
+      position: { x: 350, y: 50 },
       data: {
         type: "config",
         label: "docker-compose.override.yml",
@@ -41,7 +41,7 @@ export const composeProduction: DiagramConfig = {
     },
     {
       id: "prod-file",
-      position: { x: 300, y: 200 },
+      position: { x: 350, y: 290 },
       data: {
         type: "config",
         label: "docker-compose.prod.yml",
@@ -58,7 +58,7 @@ export const composeProduction: DiagramConfig = {
     },
     {
       id: "merged-config",
-      position: { x: 600, y: 100 },
+      position: { x: 600, y: 170 },
       data: {
         type: "container",
         label: "Merged Config",

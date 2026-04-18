@@ -3,11 +3,11 @@ import type { DiagramConfig } from "@/types";
 export const securityBestPractices: DiagramConfig = {
   id: "security-best-practices",
   title: "Security Best Practices",
-  viewport: { x: 0, y: 0, zoom: 0.7 },
+  viewport: { x: 0, y: 0, zoom: 0.75 },
   nodes: [
     {
       id: "source-code",
-      position: { x: 0, y: 100 },
+      position: { x: 50, y: 130 },
       data: {
         type: "container",
         label: "Source Code",
@@ -18,7 +18,7 @@ export const securityBestPractices: DiagramConfig = {
     },
     {
       id: "image-scanner",
-      position: { x: 200, y: 100 },
+      position: { x: 250, y: 130 },
       data: {
         type: "container",
         label: "Image Scanner",
@@ -33,7 +33,7 @@ export const securityBestPractices: DiagramConfig = {
     },
     {
       id: "image-signer",
-      position: { x: 400, y: 100 },
+      position: { x: 450, y: 130 },
       data: {
         type: "container",
         label: "Image Signer",
@@ -48,7 +48,7 @@ export const securityBestPractices: DiagramConfig = {
     },
     {
       id: "registry",
-      position: { x: 600, y: 100 },
+      position: { x: 650, y: 130 },
       data: {
         type: "container",
         label: "Registry",
@@ -63,7 +63,7 @@ export const securityBestPractices: DiagramConfig = {
     },
     {
       id: "runtime",
-      position: { x: 600, y: 280 },
+      position: { x: 650, y: 310 },
       data: {
         type: "security",
         label: "Runtime Protection",

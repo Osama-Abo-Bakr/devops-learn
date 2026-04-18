@@ -7,7 +7,7 @@ export const yamlBasics: DiagramConfig = {
   nodes: [
     {
       id: "compose-file",
-      position: { x: 250, y: 0 },
+      position: { x: 300, y: 50 },
       data: {
         type: "container",
         label: "docker-compose.yml",
@@ -18,7 +18,7 @@ export const yamlBasics: DiagramConfig = {
     },
     {
       id: "services",
-      position: { x: 50, y: 160 },
+      position: { x: 100, y: 210 },
       data: {
         type: "container",
         label: "services:",
@@ -33,7 +33,7 @@ export const yamlBasics: DiagramConfig = {
     },
     {
       id: "volumes",
-      position: { x: 250, y: 160 },
+      position: { x: 300, y: 210 },
       data: {
         type: "container",
         label: "volumes:",
@@ -48,7 +48,7 @@ export const yamlBasics: DiagramConfig = {
     },
     {
       id: "networks",
-      position: { x: 450, y: 160 },
+      position: { x: 500, y: 210 },
       data: {
         type: "container",
         label: "networks:",
@@ -63,7 +63,7 @@ export const yamlBasics: DiagramConfig = {
     },
     {
       id: "configs",
-      position: { x: 250, y: 320 },
+      position: { x: 300, y: 370 },
       data: {
         type: "config",
         label: "configs: / secrets:",

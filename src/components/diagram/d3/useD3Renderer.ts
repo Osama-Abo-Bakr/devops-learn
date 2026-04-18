@@ -2,7 +2,7 @@ import { useRef, useEffect, type RefObject } from "react";
 import * as d3 from "d3";
 
 interface UseD3RendererOptions {
-  svgRef: RefObject<SVGSVGElement>;
+  svgRef: RefObject<SVGSVGElement | null>;
   renderFn: (
     selection: d3.Selection<SVGSVGElement, unknown, null, undefined>,
     width: number,

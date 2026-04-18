@@ -3,11 +3,11 @@ import type { DiagramConfig } from "@/types";
 export const devopsCicdPipeline: DiagramConfig = {
   id: "devops-cicd-pipeline",
   title: "CI/CD Pipeline with Containers",
-  viewport: { x: 0, y: 0, zoom: 0.7 },
+  viewport: { x: 0, y: 0, zoom: 0.75 },
   nodes: [
     {
       id: "stage-push",
-      position: { x: 0, y: 100 },
+      position: { x: 50, y: 150 },
       data: {
         type: "pipeline",
         label: "Code Push",
@@ -19,7 +19,7 @@ export const devopsCicdPipeline: DiagramConfig = {
     },
     {
       id: "stage-build",
-      position: { x: 200, y: 100 },
+      position: { x: 230, y: 150 },
       data: {
         type: "pipeline",
         label: "Build Image",
@@ -31,7 +31,7 @@ export const devopsCicdPipeline: DiagramConfig = {
     },
     {
       id: "stage-test",
-      position: { x: 400, y: 100 },
+      position: { x: 410, y: 150 },
       data: {
         type: "pipeline",
         label: "Run Tests",
@@ -43,7 +43,7 @@ export const devopsCicdPipeline: DiagramConfig = {
     },
     {
       id: "stage-scan",
-      position: { x: 600, y: 100 },
+      position: { x: 590, y: 150 },
       data: {
         type: "pipeline",
         label: "Scan CVEs",
@@ -55,7 +55,7 @@ export const devopsCicdPipeline: DiagramConfig = {
     },
     {
       id: "stage-registry",
-      position: { x: 800, y: 100 },
+      position: { x: 770, y: 150 },
       data: {
         type: "pipeline",
         label: "Push Registry",
@@ -67,7 +67,7 @@ export const devopsCicdPipeline: DiagramConfig = {
     },
     {
       id: "stage-deploy",
-      position: { x: 1000, y: 100 },
+      position: { x: 950, y: 150 },
       data: {
         type: "pipeline",
         label: "Deploy",

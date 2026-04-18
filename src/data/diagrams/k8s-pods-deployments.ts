@@ -3,11 +3,11 @@ import type { DiagramConfig } from "@/types";
 export const k8sPodsDeployments: DiagramConfig = {
   id: "k8s-pods-deployments",
   title: "Kubernetes Pods and Deployments",
-  viewport: { x: 0, y: 0, zoom: 0.8 },
+  viewport: { x: 0, y: 0, zoom: 0.75 },
   nodes: [
     {
       id: "deployment",
-      position: { x: 250, y: 0 },
+      position: { x: 300, y: 50 },
       data: {
         type: "pod",
         label: "Deployment",
@@ -18,7 +18,7 @@ export const k8sPodsDeployments: DiagramConfig = {
     },
     {
       id: "replicaset",
-      position: { x: 250, y: 150 },
+      position: { x: 300, y: 210 },
       data: {
         type: "pod",
         label: "ReplicaSet",
@@ -30,7 +30,7 @@ export const k8sPodsDeployments: DiagramConfig = {
     },
     {
       id: "pod-1",
-      position: { x: 50, y: 320 },
+      position: { x: 100, y: 370 },
       data: {
         type: "pod",
         label: "nginx-pod-1",
@@ -43,7 +43,7 @@ export const k8sPodsDeployments: DiagramConfig = {
     },
     {
       id: "pod-2",
-      position: { x: 250, y: 320 },
+      position: { x: 300, y: 370 },
       data: {
         type: "pod",
         label: "nginx-pod-2",
@@ -56,7 +56,7 @@ export const k8sPodsDeployments: DiagramConfig = {
     },
     {
       id: "pod-3",
-      position: { x: 450, y: 320 },
+      position: { x: 500, y: 370 },
       data: {
         type: "pod",
         label: "nginx-pod-3",

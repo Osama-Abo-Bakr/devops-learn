@@ -7,7 +7,7 @@ export const composeEnvScaling: DiagramConfig = {
   nodes: [
     {
       id: "env-file",
-      position: { x: 0, y: 100 },
+      position: { x: 100, y: 130 },
       data: {
         type: "config",
         label: ".env file",
@@ -24,7 +24,7 @@ export const composeEnvScaling: DiagramConfig = {
     },
     {
       id: "web-app",
-      position: { x: 300, y: 100 },
+      position: { x: 350, y: 130 },
       data: {
         type: "container",
         label: "web-app",
@@ -38,7 +38,7 @@ export const composeEnvScaling: DiagramConfig = {
     },
     {
       id: "replica-1",
-      position: { x: 300, y: 280 },
+      position: { x: 150, y: 290 },
       data: {
         type: "container",
         label: "web-replica-1",
@@ -51,7 +51,7 @@ export const composeEnvScaling: DiagramConfig = {
     },
     {
       id: "replica-2",
-      position: { x: 500, y: 280 },
+      position: { x: 350, y: 290 },
       data: {
         type: "container",
         label: "web-replica-2",
@@ -64,7 +64,7 @@ export const composeEnvScaling: DiagramConfig = {
     },
     {
       id: "replica-3",
-      position: { x: 700, y: 280 },
+      position: { x: 550, y: 290 },
       data: {
         type: "container",
         label: "web-replica-3",

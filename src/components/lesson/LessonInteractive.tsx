@@ -5,6 +5,10 @@ import { getDiagram, getChallenge, getQuiz } from "@/data";
 import DiagramCanvas from "@/components/diagram/DiagramCanvas";
 import DiagramStepBuilder from "@/components/diagram/DiagramStepBuilder";
 import DiagramViewToggle from "@/components/diagram/DiagramViewToggle";
+import D3LayerStack from "@/components/diagram/d3/D3LayerStack";
+import D3ForceGraph from "@/components/diagram/d3/D3ForceGraph";
+import D3TreeLayout from "@/components/diagram/d3/D3TreeLayout";
+import D3PipelineFlow from "@/components/diagram/d3/D3PipelineFlow";
 import TerminalSimulator from "@/components/terminal/TerminalSimulator";
 import QuizComponent from "@/components/quiz/QuizComponent";
 
@@ -61,9 +65,12 @@ export default function LessonInteractive({
               <DiagramCanvas config={diagramConfig} />
             )
           ) : (
-            <div className="flex h-[500px] items-center justify-center rounded-lg border border-gray-700 bg-gray-900 text-gray-400">
-              D3 view coming soon
-            </div>
+            <>
+              {diagramConfig.d3Variant === "layerStack" && <D3LayerStack config={diagramConfig} />}
+              {diagramConfig.d3Variant === "forceGraph" && <D3ForceGraph config={diagramConfig} />}
+              {diagramConfig.d3Variant === "tree" && <D3TreeLayout config={diagramConfig} />}
+              {diagramConfig.d3Variant === "pipeline" && <D3PipelineFlow config={diagramConfig} />}
+            </>
           )}
         </section>
       )}

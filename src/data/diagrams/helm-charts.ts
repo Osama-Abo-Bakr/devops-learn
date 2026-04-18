@@ -7,7 +7,7 @@ export const helmCharts: DiagramConfig = {
   nodes: [
     {
       id: "helm-chart",
-      position: { x: 250, y: 0 },
+      position: { x: 300, y: 50 },
       data: {
         type: "container",
         label: "Helm Chart",
@@ -18,7 +18,7 @@ export const helmCharts: DiagramConfig = {
     },
     {
       id: "chart-yaml",
-      position: { x: 0, y: 160 },
+      position: { x: 100, y: 210 },
       data: {
         type: "config",
         label: "Chart.yaml",
@@ -35,7 +35,7 @@ export const helmCharts: DiagramConfig = {
     },
     {
       id: "values-yaml",
-      position: { x: 250, y: 160 },
+      position: { x: 300, y: 210 },
       data: {
         type: "config",
         label: "values.yaml",
@@ -52,7 +52,7 @@ export const helmCharts: DiagramConfig = {
     },
     {
       id: "templates",
-      position: { x: 500, y: 160 },
+      position: { x: 500, y: 210 },
       data: {
         type: "config",
         label: "templates/",
@@ -69,7 +69,7 @@ export const helmCharts: DiagramConfig = {
     },
     {
       id: "release",
-      position: { x: 250, y: 340 },
+      position: { x: 300, y: 370 },
       data: {
         type: "container",
         label: "Release",

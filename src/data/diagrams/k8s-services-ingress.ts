@@ -3,11 +3,11 @@ import type { DiagramConfig } from "@/types";
 export const k8sServicesIngress: DiagramConfig = {
   id: "k8s-services-ingress",
   title: "Kubernetes Services and Ingress",
-  viewport: { x: 0, y: 0, zoom: 0.7 },
+  viewport: { x: 0, y: 0, zoom: 0.75 },
   nodes: [
     {
       id: "internet",
-      position: { x: 250, y: 0 },
+      position: { x: 300, y: 50 },
       data: {
         type: "container",
         label: "Internet / Traffic",
@@ -18,7 +18,7 @@ export const k8sServicesIngress: DiagramConfig = {
     },
     {
       id: "ingress-ctrl",
-      position: { x: 250, y: 150 },
+      position: { x: 300, y: 210 },
       data: {
         type: "ingress",
         label: "Ingress Controller",
@@ -34,7 +34,7 @@ export const k8sServicesIngress: DiagramConfig = {
     },
     {
       id: "web-svc",
-      position: { x: 100, y: 310 },
+      position: { x: 150, y: 370 },
       data: {
         type: "service",
         label: "web-svc (ClusterIP)",
@@ -46,7 +46,7 @@ export const k8sServicesIngress: DiagramConfig = {
     },
     {
       id: "api-svc",
-      position: { x: 450, y: 310 },
+      position: { x: 450, y: 370 },
       data: {
         type: "service",
         label: "api-svc (ClusterIP)",
@@ -58,7 +58,7 @@ export const k8sServicesIngress: DiagramConfig = {
     },
     {
       id: "web-pod-1",
-      position: { x: 30, y: 460 },
+      position: { x: 80, y: 530 },
       data: {
         type: "pod",
         label: "web-pod-1",
@@ -70,7 +70,7 @@ export const k8sServicesIngress: DiagramConfig = {
     },
     {
       id: "web-pod-2",
-      position: { x: 180, y: 460 },
+      position: { x: 220, y: 530 },
       data: {
         type: "pod",
         label: "web-pod-2",
@@ -82,7 +82,7 @@ export const k8sServicesIngress: DiagramConfig = {
     },
     {
       id: "api-pod-1",
-      position: { x: 450, y: 460 },
+      position: { x: 450, y: 530 },
       data: {
         type: "pod",
         label: "api-pod-1",

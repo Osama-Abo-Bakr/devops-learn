@@ -3,11 +3,11 @@ import type { DiagramConfig } from "@/types";
 export const composeMultiService: DiagramConfig = {
   id: "compose-multi-service",
   title: "Docker Compose Multi-Service",
-  viewport: { x: 0, y: 0, zoom: 0.7 },
+  viewport: { x: 0, y: 0, zoom: 0.75 },
   nodes: [
     {
       id: "web",
-      position: { x: 300, y: 0 },
+      position: { x: 300, y: 50 },
       data: {
         type: "container",
         label: "web",
@@ -20,7 +20,7 @@ export const composeMultiService: DiagramConfig = {
     },
     {
       id: "api",
-      position: { x: 300, y: 160 },
+      position: { x: 300, y: 210 },
       data: {
         type: "container",
         label: "api",
@@ -33,7 +33,7 @@ export const composeMultiService: DiagramConfig = {
     },
     {
       id: "db",
-      position: { x: 100, y: 320 },
+      position: { x: 150, y: 370 },
       data: {
         type: "container",
         label: "postgres",
@@ -46,7 +46,7 @@ export const composeMultiService: DiagramConfig = {
     },
     {
       id: "redis",
-      position: { x: 500, y: 320 },
+      position: { x: 450, y: 370 },
       data: {
         type: "container",
         label: "redis",
@@ -58,7 +58,7 @@ export const composeMultiService: DiagramConfig = {
     },
     {
       id: "db-data",
-      position: { x: 100, y: 480 },
+      position: { x: 150, y: 530 },
       data: {
         type: "volume",
         label: "db-data",
@@ -69,7 +69,7 @@ export const composeMultiService: DiagramConfig = {
     },
     {
       id: "app-net",
-      position: { x: 300, y: 480 },
+      position: { x: 300, y: 530 },
       data: {
         type: "network",
         label: "app-net",

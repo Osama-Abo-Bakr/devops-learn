@@ -3,11 +3,11 @@ import type { DiagramConfig } from "@/types";
 export const dockerVolumesNetworks: DiagramConfig = {
   id: "docker-volumes-networks",
   title: "Docker Volumes and Networks",
-  viewport: { x: 0, y: 0, zoom: 0.8 },
+  viewport: { x: 0, y: 0, zoom: 0.75 },
   nodes: [
     {
       id: "web-app",
-      position: { x: 100, y: 100 },
+      position: { x: 150, y: 210 },
       data: {
         type: "container",
         label: "web-app",
@@ -20,7 +20,7 @@ export const dockerVolumesNetworks: DiagramConfig = {
     },
     {
       id: "postgres",
-      position: { x: 500, y: 100 },
+      position: { x: 450, y: 210 },
       data: {
         type: "container",
         label: "postgres",
@@ -33,7 +33,7 @@ export const dockerVolumesNetworks: DiagramConfig = {
     },
     {
       id: "app-data",
-      position: { x: 500, y: 280 },
+      position: { x: 450, y: 370 },
       data: {
         type: "volume",
         label: "app-data",
@@ -44,7 +44,7 @@ export const dockerVolumesNetworks: DiagramConfig = {
     },
     {
       id: "bind-mount",
-      position: { x: 100, y: 280 },
+      position: { x: 150, y: 370 },
       data: {
         type: "volume",
         label: "bind-mount",
@@ -55,7 +55,7 @@ export const dockerVolumesNetworks: DiagramConfig = {
     },
     {
       id: "app-net",
-      position: { x: 300, y: 0 },
+      position: { x: 300, y: 50 },
       data: {
         type: "network",
         label: "app-net",

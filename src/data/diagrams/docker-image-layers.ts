@@ -3,11 +3,11 @@ import type { DiagramConfig } from "@/types";
 export const dockerImageLayers: DiagramConfig = {
   id: "docker-image-layers",
   title: "Docker Image Layers",
-  viewport: { x: 0, y: 0, zoom: 0.8 },
+  viewport: { x: 0, y: 0, zoom: 0.75 },
   nodes: [
     {
       id: "base-os",
-      position: { x: 200, y: 0 },
+      position: { x: 250, y: 50 },
       data: {
         type: "layer",
         label: "Base OS (alpine:3.19)",
@@ -19,7 +19,7 @@ export const dockerImageLayers: DiagramConfig = {
     },
     {
       id: "sys-libs",
-      position: { x: 200, y: 130 },
+      position: { x: 250, y: 210 },
       data: {
         type: "layer",
         label: "System Libraries",
@@ -31,7 +31,7 @@ export const dockerImageLayers: DiagramConfig = {
     },
     {
       id: "app-deps",
-      position: { x: 200, y: 260 },
+      position: { x: 250, y: 370 },
       data: {
         type: "layer",
         label: "App Dependencies",
@@ -43,7 +43,7 @@ export const dockerImageLayers: DiagramConfig = {
     },
     {
       id: "app-code",
-      position: { x: 200, y: 390 },
+      position: { x: 250, y: 530 },
       data: {
         type: "layer",
         label: "App Code",

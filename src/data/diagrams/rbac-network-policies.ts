@@ -3,11 +3,11 @@ import type { DiagramConfig } from "@/types";
 export const rbacNetworkPolicies: DiagramConfig = {
   id: "rbac-network-policies",
   title: "RBAC and Network Policies",
-  viewport: { x: 0, y: 0, zoom: 0.7 },
+  viewport: { x: 0, y: 0, zoom: 0.75 },
   nodes: [
     {
       id: "user",
-      position: { x: 250, y: 0 },
+      position: { x: 300, y: 50 },
       data: {
         type: "container",
         label: "User / SA",
@@ -18,7 +18,7 @@ export const rbacNetworkPolicies: DiagramConfig = {
     },
     {
       id: "role",
-      position: { x: 50, y: 150 },
+      position: { x: 100, y: 210 },
       data: {
         type: "pod",
         label: "Role",
@@ -33,7 +33,7 @@ export const rbacNetworkPolicies: DiagramConfig = {
     },
     {
       id: "rolebinding",
-      position: { x: 450, y: 150 },
+      position: { x: 500, y: 210 },
       data: {
         type: "pod",
         label: "RoleBinding",
@@ -48,7 +48,7 @@ export const rbacNetworkPolicies: DiagramConfig = {
     },
     {
       id: "netpol",
-      position: { x: 250, y: 300 },
+      position: { x: 300, y: 370 },
       data: {
         type: "pod",
         label: "NetworkPolicy",
@@ -63,7 +63,7 @@ export const rbacNetworkPolicies: DiagramConfig = {
     },
     {
       id: "frontend-pod",
-      position: { x: 50, y: 450 },
+      position: { x: 100, y: 530 },
       data: {
         type: "container",
         label: "frontend-pod",
@@ -76,7 +76,7 @@ export const rbacNetworkPolicies: DiagramConfig = {
     },
     {
       id: "backend-pod",
-      position: { x: 450, y: 450 },
+      position: { x: 500, y: 530 },
       data: {
         type: "container",
         label: "backend-pod",

@@ -3,11 +3,11 @@ import type { DiagramConfig } from "@/types";
 export const composeNetworksVolumes: DiagramConfig = {
   id: "compose-networks-volumes",
   title: "Compose Networks and Volumes",
-  viewport: { x: 0, y: 0, zoom: 0.65 },
+  viewport: { x: 0, y: 0, zoom: 0.75 },
   nodes: [
     {
       id: "frontend-net",
-      position: { x: 0, y: 0 },
+      position: { x: 100, y: 50 },
       data: {
         type: "groupZone",
         label: "frontend-net",
@@ -18,7 +18,7 @@ export const composeNetworksVolumes: DiagramConfig = {
     },
     {
       id: "backend-net",
-      position: { x: 0, y: 280 },
+      position: { x: 100, y: 370 },
       data: {
         type: "groupZone",
         label: "backend-net",
@@ -29,7 +29,7 @@ export const composeNetworksVolumes: DiagramConfig = {
     },
     {
       id: "web",
-      position: { x: 200, y: 60 },
+      position: { x: 300, y: 130 },
       data: {
         type: "container",
         label: "web",
@@ -43,7 +43,7 @@ export const composeNetworksVolumes: DiagramConfig = {
     },
     {
       id: "api",
-      position: { x: 100, y: 340 },
+      position: { x: 250, y: 450 },
       data: {
         type: "container",
         label: "api",
@@ -56,7 +56,7 @@ export const composeNetworksVolumes: DiagramConfig = {
     },
     {
       id: "db",
-      position: { x: 350, y: 340 },
+      position: { x: 450, y: 450 },
       data: {
         type: "container",
         label: "postgres",
@@ -68,7 +68,7 @@ export const composeNetworksVolumes: DiagramConfig = {
     },
     {
       id: "redis",
-      position: { x: 550, y: 340 },
+      position: { x: 650, y: 450 },
       data: {
         type: "container",
         label: "redis",
@@ -80,7 +80,7 @@ export const composeNetworksVolumes: DiagramConfig = {
     },
     {
       id: "db-data",
-      position: { x: 350, y: 490 },
+      position: { x: 450, y: 610 },
       data: {
         type: "volume",
         label: "db-data",

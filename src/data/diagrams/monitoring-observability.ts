@@ -3,11 +3,11 @@ import type { DiagramConfig } from "@/types";
 export const monitoringObservability: DiagramConfig = {
   id: "monitoring-observability",
   title: "Monitoring and Observability",
-  viewport: { x: 0, y: 0, zoom: 0.65 },
+  viewport: { x: 0, y: 0, zoom: 0.75 },
   nodes: [
     {
       id: "app",
-      position: { x: 0, y: 100 },
+      position: { x: 50, y: 210 },
       data: {
         type: "container",
         label: "Your App",
@@ -20,7 +20,7 @@ export const monitoringObservability: DiagramConfig = {
     },
     {
       id: "prometheus",
-      position: { x: 250, y: 100 },
+      position: { x: 300, y: 210 },
       data: {
         type: "container",
         label: "Prometheus",
@@ -33,7 +33,7 @@ export const monitoringObservability: DiagramConfig = {
     },
     {
       id: "grafana",
-      position: { x: 250, y: 0 },
+      position: { x: 150, y: 50 },
       data: {
         type: "container",
         label: "Grafana",
@@ -46,7 +46,7 @@ export const monitoringObservability: DiagramConfig = {
     },
     {
       id: "alertmanager",
-      position: { x: 500, y: 0 },
+      position: { x: 450, y: 50 },
       data: {
         type: "container",
         label: "Alertmanager",
@@ -59,7 +59,7 @@ export const monitoringObservability: DiagramConfig = {
     },
     {
       id: "loki",
-      position: { x: 500, y: 200 },
+      position: { x: 550, y: 210 },
       data: {
         type: "container",
         label: "Loki",
@@ -72,7 +72,7 @@ export const monitoringObservability: DiagramConfig = {
     },
     {
       id: "jaeger",
-      position: { x: 250, y: 300 },
+      position: { x: 300, y: 370 },
       data: {
         type: "container",
         label: "Jaeger",

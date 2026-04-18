@@ -3,11 +3,11 @@ import type { DiagramConfig } from "@/types";
 export const dockerMultiStageBuild: DiagramConfig = {
   id: "docker-multi-stage-build",
   title: "Docker Multi-Stage Build",
-  viewport: { x: 0, y: 0, zoom: 0.7 },
+  viewport: { x: 0, y: 0, zoom: 0.75 },
   nodes: [
     {
       id: "build-stage",
-      position: { x: 0, y: 0 },
+      position: { x: 150, y: 50 },
       data: {
         type: "stage",
         label: "Build Stage",
@@ -24,7 +24,7 @@ export const dockerMultiStageBuild: DiagramConfig = {
     },
     {
       id: "runtime-stage",
-      position: { x: 400, y: 0 },
+      position: { x: 450, y: 50 },
       data: {
         type: "stage",
         label: "Runtime Stage",
@@ -41,7 +41,7 @@ export const dockerMultiStageBuild: DiagramConfig = {
     },
     {
       id: "final-image",
-      position: { x: 400, y: 200 },
+      position: { x: 300, y: 210 },
       data: {
         type: "container",
         label: "Final Image: 45MB",

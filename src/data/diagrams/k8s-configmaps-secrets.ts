@@ -7,7 +7,7 @@ export const k8sConfigmapsSecrets: DiagramConfig = {
   nodes: [
     {
       id: "app-pod",
-      position: { x: 300, y: 150 },
+      position: { x: 300, y: 210 },
       data: {
         type: "pod",
         label: "app-pod",
@@ -20,7 +20,7 @@ export const k8sConfigmapsSecrets: DiagramConfig = {
     },
     {
       id: "app-config",
-      position: { x: 50, y: 0 },
+      position: { x: 100, y: 50 },
       data: {
         type: "config",
         label: "app-config",
@@ -37,7 +37,7 @@ export const k8sConfigmapsSecrets: DiagramConfig = {
     },
     {
       id: "db-creds",
-      position: { x: 550, y: 0 },
+      position: { x: 500, y: 50 },
       data: {
         type: "config",
         label: "db-creds",
@@ -54,7 +54,7 @@ export const k8sConfigmapsSecrets: DiagramConfig = {
     },
     {
       id: "config-volume",
-      position: { x: 50, y: 320 },
+      position: { x: 100, y: 370 },
       data: {
         type: "volume",
         label: "config-volume",
