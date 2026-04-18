@@ -8,6 +8,15 @@ import {
   type ReactNode,
 } from "react";
 import type { LessonStatus, Level, ProgressState } from "@/types";
+import {
+  addXP as addXPLogic,
+  updateStreak as updateStreakLogic,
+  checkBadges,
+  XP_REWARDS,
+  getCurrentLevel,
+  XP_THRESHOLDS,
+} from "@/lib/xp";
+import { getLevelByXP } from "@/data/levels";
 
 interface ProgressContextValue {
   progress: ProgressState;
@@ -16,6 +25,17 @@ interface ProgressContextValue {
   markChallengeCompleted: (slug: string) => void;
   setPlacementLevel: (level: Level) => void;
   getCompletionPercentage: (slugs: string[]) => number;
+  addXP: (amount: number) => number;
+  updateStreak: () => void;
+  getLevel: () => ReturnType<typeof getLevelByXP>;
+  getXPInfo: () => {
+    current: ReturnType<typeof getLevelByXP>;
+    xp: number;
+    xpForNextLevel: number;
+    progressInLevel: number;
+  };
+  getBadges: () => string[];
+  getXPReward: (key: keyof typeof XP_REWARDS) => number;
 }
 
 const ProgressContext = createContext<ProgressContextValue | null>(null);
@@ -41,7 +61,11 @@ function loadProgress(): ProgressState {
 function saveProgress(progress: ProgressState): void {
   if (typeof window === "undefined") return;
   progress.lastUpdated = new Date().toISOString();
-  localStorage.setItem("devops-learn-progress", JSON.stringify(progress));
+  try {
+    localStorage.setItem("devops-learn-progress", JSON.stringify(progress));
+  } catch {
+    // localStorage full — show toast in components
+  }
 }
 
 export function ProgressProvider({ children }: { children: ReactNode }) {
@@ -134,6 +158,55 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     [progress],
   );
 
+  const addXP = useCallback((amount: number): number => {
+    let xpGained = 0;
+    setProgress((prev) => {
+      const result = addXPLogic({ ...prev }, amount);
+      xpGained = result.xpGained;
+      // Check for new badges
+      const newBadges = checkBadges(result.progress);
+      if (newBadges.length > 0) {
+        result.progress.badges = [
+          ...(result.progress.badges ?? []),
+          ...newBadges,
+        ];
+      }
+      saveProgress(result.progress);
+      return result.progress;
+    });
+    return xpGained;
+  }, []);
+
+  const handleUpdateStreak = useCallback(() => {
+    setProgress((prev) => {
+      const next = updateStreakLogic({ ...prev });
+      // Check for streak badges
+      const newBadges = checkBadges(next);
+      if (newBadges.length > 0) {
+        next.badges = [...(next.badges ?? []), ...newBadges];
+      }
+      saveProgress(next);
+      return next;
+    });
+  }, []);
+
+  const getLevel = useCallback(() => {
+    const xp = progress.xp ?? 0;
+    return getLevelByXP(xp);
+  }, [progress.xp]);
+
+  const getXPInfo = useCallback(() => {
+    return getCurrentLevel(progress);
+  }, [progress]);
+
+  const getBadges = useCallback(() => {
+    return progress.badges ?? [];
+  }, [progress.badges]);
+
+  const getXPReward = useCallback((key: keyof typeof XP_REWARDS) => {
+    return XP_REWARDS[key];
+  }, []);
+
   return (
     <ProgressContext.Provider
       value={{
@@ -143,6 +216,12 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
         markChallengeCompleted,
         setPlacementLevel,
         getCompletionPercentage,
+        addXP,
+        updateStreak: handleUpdateStreak,
+        getLevel,
+        getXPInfo,
+        getBadges,
+        getXPReward,
       }}
     >
       {children}
@@ -157,3 +236,5 @@ export function useProgress() {
   }
   return context;
 }
+
+export { XP_REWARDS, XP_THRESHOLDS };

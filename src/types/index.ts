@@ -270,12 +270,26 @@ export interface LessonProgress {
   updatedAt: string;
 }
 
+/** Streak tracking data */
+export interface StreakData {
+  /** Current consecutive day count */
+  count: number;
+  /** Last date with activity (YYYY-MM-DD) */
+  lastActionDate: string | null;
+}
+
 /** Overall progress state stored in localStorage */
 export interface ProgressState {
   /** Per-lesson progress, keyed by lesson slug */
   lessons: Record<string, LessonProgress>;
   /** Result of the placement quiz, if taken */
   placementLevel?: Level;
+  /** Total XP earned */
+  xp?: number;
+  /** Current streak data */
+  streak?: StreakData;
+  /** Badge IDs that have been earned */
+  badges?: string[];
   /** ISO timestamp of last progress update */
   lastUpdated: string;
 }
