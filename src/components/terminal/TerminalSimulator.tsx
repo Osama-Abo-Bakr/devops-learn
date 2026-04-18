@@ -124,11 +124,11 @@ export default function TerminalSimulator({
         {lines.map((line, i) => (
           <div
             key={i}
-            className={`whitespace-pre-wrap ${
+            className={`whitespace-pre ${
               line.type === "input" ? "text-green-400" : "text-gray-300"
             }`}
           >
-            {line.content}
+            {line.content.replace(/\t/g, "    ")}
           </div>
         ))}
 
