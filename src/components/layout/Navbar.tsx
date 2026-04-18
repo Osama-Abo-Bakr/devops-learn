@@ -17,11 +17,14 @@ export default function Navbar() {
   const pathname = usePathname();
 
   return (
-    <nav className="sticky top-0 z-50 border-b border-gray-800 bg-gray-950/95 backdrop-blur">
+    <nav className="sticky top-0 z-50 border-b border-gray-800/30 bg-gradient-to-b from-gray-950/95 to-gray-950/80 shadow-lg shadow-gray-950/50 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        <Link href="/" className="flex items-center gap-2 text-xl font-bold text-white">
-          <SiDocker className="h-7 w-7 text-blue-400" />
-          <span className="hidden sm:inline">DevOps Learn</span>
+        <Link href="/" className="group flex items-center gap-2 text-xl font-bold text-white transition-all">
+          <div className="relative">
+            <SiDocker className="h-7 w-7 text-blue-400 transition-transform group-hover:scale-110" />
+            <div className="absolute inset-0 rounded-full bg-blue-400/30 blur-lg opacity-0 group-hover:opacity-100 transition-opacity"></div>
+          </div>
+          <span className="hidden sm:inline bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">DevOps Learn</span>
         </Link>
 
         <div className="flex items-center gap-1 overflow-x-auto">
@@ -31,29 +34,35 @@ export default function Navbar() {
               <Link
                 key={link.href}
                 href={link.href}
-                className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                className={`relative rounded-lg px-4 py-2 text-sm font-medium transition-all duration-300 ${
                   isActive
-                    ? "bg-blue-600/20 text-blue-400"
-                    : "text-gray-400 hover:bg-gray-800 hover:text-white"
+                    ? "bg-gradient-to-r from-blue-600/30 to-cyan-600/20 text-blue-300 shadow-lg shadow-blue-600/10"
+                    : "text-gray-400 hover:text-white hover:bg-gray-800/50"
                 }`}
               >
-                <span className="mr-1 hidden sm:inline">{link.icon}</span>
+                <span className="mr-1.5 hidden sm:inline">{link.icon}</span>
                 {link.label}
+                {isActive && (
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-400 to-cyan-400"></div>
+                )}
               </Link>
             );
           })}
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <Link
             href="/custom-exam"
-            className="rounded-lg bg-blue-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-blue-500"
+            className="group relative inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 px-4 py-2 text-sm font-medium text-white transition-all duration-300 shadow-lg shadow-blue-600/20 hover:shadow-xl hover:shadow-blue-600/40 hover:scale-105 hidden sm:flex"
           >
-            Custom Exam
+            <span>Custom Exam</span>
+            <svg className="h-4 w-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+            </svg>
           </Link>
           <Link
             href="/level-test"
-            className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-300 transition-colors hover:border-blue-500 hover:text-white"
+            className="rounded-lg border border-gray-600/50 bg-gray-900/50 px-4 py-2 text-sm font-medium text-gray-300 transition-all duration-300 backdrop-blur hover:border-cyan-500/50 hover:bg-gray-800/50 hover:text-white hover:shadow-lg hover:shadow-cyan-600/10"
           >
             Level Test
           </Link>

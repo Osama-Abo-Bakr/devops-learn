@@ -1,10 +1,24 @@
 import type { Level } from "@/types";
 
-const levelStyles: Record<Level, string> = {
-  beginner: "bg-green-600/20 text-green-400 border-green-600/30",
-  intermediate:
-    "bg-yellow-600/20 text-yellow-400 border-yellow-600/30",
-  advanced: "bg-red-600/20 text-red-400 border-red-600/30",
+const levelStyles: Record<Level, { bg: string; text: string; border: string; icon: string }> = {
+  beginner: {
+    bg: "bg-emerald-600/15",
+    text: "text-emerald-300",
+    border: "border-emerald-600/30",
+    icon: "🌱",
+  },
+  intermediate: {
+    bg: "bg-amber-600/15",
+    text: "text-amber-300",
+    border: "border-amber-600/30",
+    icon: "📈",
+  },
+  advanced: {
+    bg: "bg-rose-600/15",
+    text: "text-rose-300",
+    border: "border-rose-600/30",
+    icon: "🚀",
+  },
 };
 
 const levelLabels: Record<Level, string> = {
@@ -16,13 +30,17 @@ const levelLabels: Record<Level, string> = {
 interface LevelBadgeProps {
   level: Level;
   className?: string;
+  showIcon?: boolean;
 }
 
-export default function LevelBadge({ level, className = "" }: LevelBadgeProps) {
+export default function LevelBadge({ level, className = "", showIcon = true }: LevelBadgeProps) {
+  const styles = levelStyles[level];
+  
   return (
     <span
-      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${levelStyles[level]} ${className}`}
+      className={`inline-flex items-center gap-1.5 rounded-full border backdrop-blur px-3 py-1 text-xs font-semibold transition-all duration-300 hover:shadow-lg ${styles.bg} ${styles.text} ${styles.border} border ${className}`}
     >
+      {showIcon && <span className="text-sm">{styles.icon}</span>}
       {levelLabels[level]}
     </span>
   );

@@ -10,9 +10,9 @@ export default function LocaleLayout({
 }) {
   return (
     <ProgressProvider>
-      <div className="flex min-h-screen flex-col">
+      <div className="flex min-h-screen flex-col bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950">
         <Navbar />
-        <main className="flex flex-1">{children}</main>
+        <main className="flex flex-1 flex-col">{children}</main>
         <Footer />
         <AiChat />
       </div>
