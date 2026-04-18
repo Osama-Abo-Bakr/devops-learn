@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { Module } from "@/types";
 import LevelBadge from "./LevelBadge";
 import ProgressBar from "./ProgressBar";
+import { motion } from "framer-motion";
 
 const moduleIcons: Record<string, string> = {
   docker: "🐳",
@@ -30,14 +31,19 @@ export default function ModuleCard({
   const colors = moduleColors[module.slug] || moduleColors.docker;
 
   return (
-    <Link
-      href={`/learn/${module.slug}`}
-      className={`group relative flex flex-col overflow-hidden rounded-2xl border border-gray-800/50 bg-gradient-to-br ${colors.bg} bg-gray-900 p-6 transition-all duration-300 ${colors.border} hover:bg-gray-800/50 hover:shadow-xl hover:shadow-blue-600/10`}
+    <motion.div
+      whileHover={{ y: -5, boxShadow: "0 20px 40px rgba(59, 130, 246, 0.2)" }}
+      whileTap={{ scale: 0.98 }}
+      transition={{ type: "spring", stiffness: 300, damping: 30 }}
     >
-      {/* Hover gradient effect */}
-      <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-white/0 to-white/0 opacity-0 transition-opacity duration-300 group-hover:opacity-5"></div>
+      <Link
+        href={`/learn/${module.slug}`}
+        className={`group relative flex flex-col overflow-hidden rounded-2xl border border-gray-800/50 bg-gradient-to-br ${colors.bg} bg-gray-900 p-6 transition-all duration-300 ${colors.border} hover:bg-gray-800/50`}
+      >
+        {/* Hover gradient effect */}
+        <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-white/0 to-white/0 opacity-0 transition-opacity duration-300 group-hover:opacity-5"></div>
 
-      <div className="relative">
+        <div className="relative">
         <div className="mb-4 flex items-start justify-between">
           <div className={`rounded-lg ${colors.icon} p-3 text-3xl`}>
             {moduleIcons[module.slug] ?? "📚"}
@@ -68,6 +74,7 @@ export default function ModuleCard({
           <ProgressBar percentage={completionPercentage} />
         </div>
       </div>
-    </Link>
+      </Link>
+    </motion.div>
   );
 }

@@ -1,6 +1,7 @@
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
 import AiChat from "@/components/chat/AiChat";
+import PageTransition from "@/components/animations/PageTransition";
 import { ProgressProvider } from "@/context/ProgressContext";
 
 export default function LocaleLayout({
@@ -12,7 +13,9 @@ export default function LocaleLayout({
     <ProgressProvider>
       <div className="flex min-h-screen flex-col bg-gradient-to-b from-gray-950 via-gray-900 to-gray-950">
         <Navbar />
-        <main className="flex flex-1 flex-col">{children}</main>
+        <main className="flex flex-1 flex-col">
+          <PageTransition>{children}</PageTransition>
+        </main>
         <Footer />
         <AiChat />
       </div>

@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { motion } from "framer-motion";
 import { SiDocker } from "react-icons/si";
+import RippleEffect from "@/components/animations/RippleEffect";
 
 const navLinks = [
   { href: "/learn/docker", label: "Docker", icon: "🐳" },
@@ -51,21 +53,40 @@ export default function Navbar() {
         </div>
 
         <div className="flex items-center gap-3">
-          <Link
-            href="/custom-exam"
-            className="group relative inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 px-4 py-2 text-sm font-medium text-white transition-all duration-300 shadow-lg shadow-blue-600/20 hover:shadow-xl hover:shadow-blue-600/40 hover:scale-105 hidden sm:flex"
+          <RippleEffect className="hidden sm:flex">
+            <motion.div
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <Link
+                href="/custom-exam"
+                className="group relative inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 px-4 py-2 text-sm font-medium text-white shadow-lg shadow-blue-600/20"
+              >
+                <span>Custom Exam</span>
+                <motion.svg
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                  animate={{ x: [0, 3, 0] }}
+                  transition={{ duration: 1.5, repeat: Infinity }}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                </motion.svg>
+              </Link>
+            </motion.div>
+          </RippleEffect>
+          <motion.div
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
           >
-            <span>Custom Exam</span>
-            <svg className="h-4 w-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
-            </svg>
-          </Link>
-          <Link
-            href="/level-test"
-            className="rounded-lg border border-gray-600/50 bg-gray-900/50 px-4 py-2 text-sm font-medium text-gray-300 transition-all duration-300 backdrop-blur hover:border-cyan-500/50 hover:bg-gray-800/50 hover:text-white hover:shadow-lg hover:shadow-cyan-600/10"
-          >
-            Level Test
-          </Link>
+            <Link
+              href="/level-test"
+              className="rounded-lg border border-gray-600/50 bg-gray-900/50 px-4 py-2 text-sm font-medium text-gray-300 backdrop-blur transition-all duration-300 hover:border-cyan-500/50 hover:bg-gray-800/50 hover:text-white hover:shadow-lg hover:shadow-cyan-600/10"
+            >
+              Level Test
+            </Link>
+          </motion.div>
         </div>
       </div>
     </nav>
