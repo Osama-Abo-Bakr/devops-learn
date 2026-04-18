@@ -2,99 +2,489 @@
 title: "Production Patterns"
 module: docker
 level: advanced
-duration: "45 min"
-description: "Best practices for running containers in production: health checks, logging, and resource limits."
+duration: "40 min"
+diagram: docker-production-patterns
+description: "Production-ready patterns: health checks, logging, restart policies, and resource limits."
 order: 6
 ---
 
-# Production Patterns
+# Production Patterns: From "It Runs" to "It Runs Reliably"
 
-Running containers in production is different from development. You need health checks, structured logging, graceful shutdown, and proper resource management.
+There's a big difference between a container that works on your laptop and one that can survive a full day in production. On your laptop, if a container crashes, you restart it manually. In production, at 3 AM, when traffic spikes and your container runs out of memory, nobody is there to click restart. Your containers need to be self-healing, observable, and well-behaved citizens on the host.
 
-## Health Checks
+This lesson covers the patterns and configurations that transform a development container into a production-ready service. These aren't optional extras — they're the difference between a system that survives real-world conditions and one that quietly falls over.
 
-Docker can automatically check if your app is healthy:
+## Why Does It Matter?
+
+- **Containers crash in production** — Memory leaks, unhandled exceptions, and dependency failures are inevitable. Without health checks and restart policies, a crashed container stays crashed until a human notices.
+- **Unbounded resources kill neighbors** — A container with no memory limit can consume all host RAM, causing the OOM killer to terminate other containers. Resource limits protect the entire host.
+- **Logs fill disks** — Without log rotation, a chatty application can fill the host's disk in hours, taking down everything on that machine.
+- **Shutdown must be graceful** — When a container stops, it might be in the middle of processing a request or writing to a database. Abrupt kills cause data corruption and lost work.
+- **Orchestrators expect these patterns** — Kubernetes, ECS, and Swarm all rely on health checks and resource limits. Without them, the orchestrator can't make intelligent scheduling decisions.
+
+## Health Checks: Is Your Application Actually Working?
+
+A container being "running" doesn't mean your application is functioning. The process might be alive but stuck in a deadlock, unable to connect to its database, or returning errors. Health checks tell Docker (and orchestrators) whether the application is actually healthy.
+
+### HEALTHCHECK in the Dockerfile
 
 ```dockerfile
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:3000/health || exit 1
 ```
 
-Or at runtime:
+Let's break down every parameter:
+
+- **`--interval=30s`** — How often to run the health check. Every 30 seconds, Docker pings the health endpoint.
+- **`--timeout=5s`** — How long to wait for a response before considering the check failed. If `/health` doesn't respond in 5 seconds, it's a failure.
+- **`--start-period=10s`** — Grace period after container start. During these 10 seconds, health check failures don't count against the retry limit. This gives slow-starting applications time to initialize.
+- **`--retries=3`** — Number of consecutive failures before marking the container as `unhealthy`. A single failed check doesn't trigger an unhealthy state — it takes 3 in a row.
+
+**What happens with health statuses:**
+
+| Status | Meaning | What Docker Does |
+|--------|---------|-----------------|
+| `starting` | Initial grace period (during start-period) | Nothing — waiting for app to initialize |
+| `healthy` | Health check passes | Nothing — everything is fine |
+| `unhealthy` | Health check failed `retries` times consecutively | Marks container as unhealthy; orchestrators can restart it |
+
+### Health Check at Runtime
+
+If you can't modify the image, you can add a health check at runtime:
 
 ```bash
-docker run \
+docker run -d \
+  --name my-app \
   --health-cmd="curl -f http://localhost:3000/health" \
   --health-interval=30s \
+  --health-timeout=5s \
   --health-retries=3 \
+  --health-start-period=10s \
+  my-app:1.0
+```
+
+### Checking Health Status
+
+```bash
+docker ps
+# Shows health status in the STATUS column
+
+docker inspect --format='{{.State.Health.Status}}' my-app
+# Output: healthy (or unhealthy, or starting)
+
+docker inspect --format='{{json .State.Health}}' my-app | python3 -m json.tool
+# Full health check history with timestamps and exit codes
+```
+
+### Designing a Good Health Endpoint
+
+A proper `/health` endpoint should check more than just "is the process alive":
+
+```javascript
+// A meaningful health check for a Node.js app
+app.get('/health', async (req, res) => {
+  const checks = {
+    server: 'ok',
+    database: 'unknown',
+    cache: 'unknown'
+  };
+
+  try {
+    // Can we reach the database?
+    await db.query('SELECT 1');
+    checks.database = 'ok';
+  } catch {
+    checks.database = 'error';
+  }
+
+  try {
+    // Can we reach the cache?
+    await cache.ping();
+    checks.cache = 'ok';
+  } catch {
+    checks.cache = 'error';
+  }
+
+  const isHealthy = checks.database === 'ok' && checks.cache === 'ok';
+  res.status(isHealthy ? 200 : 503).json(checks);
+});
+```
+
+**The key principle:** A health check should verify that the application can do its job, not just that the process exists. If your app needs a database to function, the health check should verify the database connection.
+
+## Restart Policies: Self-Healing Containers
+
+Restart policies tell Docker what to do when a container exits. Without a restart policy, a crashed container stays stopped forever.
+
+| Policy | Behavior | When to Use |
+|--------|----------|-------------|
+| `no` | Never restart (default) | One-off tasks, batch jobs |
+| `always` | Always restart, regardless of exit code | Critical services that must always run |
+| `unless-stopped` | Like `always`, but doesn't restart after daemon restart if you manually stopped it | Most production services |
+| `on-failure[:max]` | Restart only on non-zero exit code, with optional max retry count | Services that should restart on errors but not on clean exits |
+
+### always vs. unless-stopped
+
+This distinction trips people up:
+
+```bash
+# With --restart always:
+docker run -d --restart always my-app
+
+# You manually stop it: docker stop my-app
+# Then the Docker daemon restarts (e.g., host reboot)
+# Result: the container RESTARTS automatically
+
+# With --restart unless-stopped:
+docker run -d --restart unless-stopped my-app
+
+# You manually stop it: docker stop my-app
+# Then the Docker daemon restarts
+# Result: the container stays STOPPED — Docker remembers your intent
+```
+
+**Recommendation:** Use `unless-stopped` for most services. It respects your intentional stops while still recovering from crashes.
+
+### on-failure with Retry Limits
+
+```bash
+docker run -d --restart on-failure:5 my-app
+```
+
+This restarts the container up to 5 times only if it exits with an error code. After 5 failures, Docker gives up. This prevents infinite restart loops for applications with persistent problems.
+
+## Resource Limits: Being a Good Neighbor
+
+Without resource limits, a single container can consume all CPU and memory on the host, starving every other container. This is especially dangerous in shared hosting environments.
+
+### Memory Limits
+
+```bash
+docker run -d \
+  --memory 512m \
+  --memory-swap 1g \
+  --memory-reservation 256m \
   my-app
 ```
 
-Docker marks the container as `unhealthy` after consecutive failures, allowing orchestrators to restart it.
+- **`--memory 512m`** — Hard limit. The container can never use more than 512MB. If it tries, the OOM killer terminates it.
+- **`--memory-swap 1g`** — Total memory + swap limit. With `512m` memory and `1g` swap, the container can use 512MB swap (1g total - 512m memory).
+- **`--memory-reservation 256m`** — Soft limit. Docker warns when the container exceeds this but doesn't kill it. It's a signal, not a wall.
 
-## Structured Logging
+**Memory limit guidelines:**
 
-Production apps should log in JSON for easy parsing:
+| Application Type | Recommended Memory | Why |
+|----------------|-------------------|-----|
+| Static web server | 64-128 MB | Nginx serving static files needs very little |
+| Node.js API | 256-512 MB | V8 garbage collection works best with consistent heap sizes |
+| Java application | 512MB - 2 GB | JVM needs generous heap; set `-Xmx` to match your limit |
+| PostgreSQL | 1-4 GB | Depends on `shared_buffers` and workload |
+| Redis | 256 MB - 4 GB | Set `maxmemory` in Redis config to match Docker limit |
+
+### CPU Limits
 
 ```bash
-# Configure Docker logging driver
-docker run \
+docker run -d \
+  --cpus 1.5 \
+  --cpuset-cpus 0,1 \
+  my-app
+```
+
+- **`--cpus 1.5`** — The container can use up to 1.5 CPU cores worth of CPU time. This is a relative limit across all available cores.
+- **`--cpuset-cpus 0,1`** — Pin the container to specific CPU cores (0 and 1). Useful for performance-critical applications that benefit from CPU cache locality.
+
+**CPU limit guidelines:**
+
+| Scenario | CPU Allocation | Reasoning |
+|----------|---------------|-----------|
+| API server (low traffic) | 0.5 - 1.0 | Most time is waiting for I/O |
+| API server (high traffic) | 2.0 - 4.0 | CPU-bound request processing |
+| Background worker | 1.0 | Moderate, consistent usage |
+| ML inference | 2.0 - 8.0 | CPU-intensive computation |
+
+### Process Limits
+
+```bash
+docker run -d --pids-limit 100 my-app
+```
+
+`--pids-limit` caps the number of processes and threads a container can create. This prevents fork bombs — malicious or accidental code that spawns processes until the host runs out of PIDs.
+
+A limit of 100 is reasonable for most web services. Node.js typically uses 10-30 PIDs, and Python/Java apps might use 50-100. If your app needs more, increase the limit, but always set one.
+
+## Logging: Seeing What Happens
+
+In production, you need to know what your containers are doing. Docker captures everything a container writes to stdout and stderr, but the default configuration is dangerous — logs grow without bound.
+
+### The Default: json-file Driver
+
+By default, Docker uses the `json-file` log driver. Each log line is stored as a JSON object in a file on disk. Without limits, these files grow forever.
+
+```bash
+# Check how much disk space Docker logs are using
+docker system df -v
+# Look for "Local Volumes" and "Containers" space usage
+```
+
+### Configure Log Rotation
+
+Always set log rotation to prevent disk exhaustion:
+
+```bash
+docker run -d \
   --log-driver json-file \
   --log-opt max-size=10m \
   --log-opt max-file=3 \
   my-app
 ```
 
-This prevents disk exhaustion from unbounded logs.
+- **`--log-driver json-file`** — Explicit driver selection (default, but good to be explicit)
+- **`--log-opt max-size=10m`** — Each log file can grow to 10MB maximum. When it hits this size, Docker rotates it.
+- **`--log-opt max-file=3`** — Keep at most 3 log files. When a 4th is created, the oldest is deleted.
 
-## Graceful Shutdown
+**Total disk usage:** `max-size * max-file = 10MB * 3 = 30MB` maximum per container.
 
-Containers receive `SIGTERM` then `SIGKILL` after a grace period. Your app must handle it:
+### Set Log Rotation Globally
+
+Instead of configuring log rotation per container, set it in the Docker daemon configuration (`/etc/docker/daemon.json`):
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+```
+
+This applies to all containers by default. No need to remember the flags on every `docker run`.
+
+### Other Log Drivers
+
+| Driver | Description | When to Use |
+|--------|-------------|-------------|
+| `json-file` | Local JSON files (default) | Single-host setups, debugging |
+| `local` | Optimized local storage, less disk usage | Production with local logging |
+| `syslog` | Forward to syslog daemon | Centralized logging with syslog infrastructure |
+| `journald` | Forward to systemd journal | Systems using systemd |
+| `fluentd` | Forward to Fluentd | Centralized logging with Fluentd/ELK stack |
+| `awslogs` | Forward to CloudWatch Logs | AWS deployments |
+| `gcplogs` | Forward to Google Cloud Logging | GCP deployments |
+
+## Graceful Shutdown: Don't Kill Mid-Request
+
+When you stop a container, Docker sends a `SIGTERM` signal. Your application should catch this signal, finish processing current requests, close database connections, and then exit. If it doesn't exit within the timeout, Docker sends `SIGKILL` — an uncatchable, instant termination.
+
+### The Shutdown Sequence
+
+```
+docker stop → SIGTERM sent → Grace period (default: 10s) → SIGKILL if still running
+```
+
+### STOPSIGNAL in the Dockerfile
 
 ```dockerfile
-# Set a proper stop signal and timeout
 STOPSIGNAL SIGTERM
 ```
 
+This ensures Docker sends `SIGTERM` instead of the default signal when stopping the container. Most applications handle `SIGTERM` correctly, but some expect `SIGINT` (Ctrl+C) or `SIGQUIT`. Set `STOPSIGNAL` to match what your application expects.
+
+### Configure the Timeout
+
 ```bash
-docker run --stop-timeout 30 my-app
+# Give the application 30 seconds to shut down gracefully
+docker run -d --stop-timeout 30 my-app
 ```
 
-Your application should:
-1. Stop accepting new requests
-2. Finish in-flight requests
+The default is 10 seconds. Some applications (especially those with long-running requests or large database connection pools) need more time. Set the timeout based on your slowest request duration plus a safety margin.
+
+### Graceful Shutdown in Code
+
+Your application must handle the signal. Here's a Node.js example:
+
+```javascript
+const server = app.listen(3000);
+
+// Graceful shutdown handler
+function shutdown() {
+  console.log('Shutting down gracefully...');
+
+  // Stop accepting new connections
+  server.close(() => {
+    console.log('All connections closed');
+
+    // Close database connections
+    db.end().then(() => {
+      console.log('Database connections closed');
+      process.exit(0);
+    });
+  });
+
+  // Force exit after timeout (backup in case something hangs)
+  setTimeout(() => {
+    console.error('Forced shutdown after timeout');
+    process.exit(1);
+  }, 25000);
+}
+
+// Listen for Docker's stop signal
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+```
+
+**The shutdown sequence in the code:**
+
+1. Stop accepting new connections (`server.close()`)
+2. Wait for in-flight requests to complete
 3. Close database connections
-4. Exit with code 0
+4. Exit with code 0 (success)
+5. If anything hangs, force exit after 25 seconds (before Docker's 30-second `SIGKILL`)
 
-## Resource Management
+## The Init Process: Solving the PID 1 Problem
 
-| Resource | Flag | Recommendation |
-|----------|------|----------------|
-| Memory | `--memory` | Always set — prevents OOM killing other containers |
-| CPU | `--cpus` | Limit to prevent CPU starvation |
-| PIDs | `--pids-limit` | Prevent fork bombs |
-| Restart | `--restart` | Use `unless-stopped` for services |
+In Linux, the process with PID 1 has special responsibilities: it reaps zombie processes and forwards signals. In a Docker container, your application is typically PID 1. But most applications aren't designed to be PID 1 — they don't reap zombies, and they may not forward signals to child processes.
 
-## Restart Policies
+This can cause:
+- **Zombie process accumulation** — Child processes that exit aren't cleaned up, eventually exhausting PIDs
+- **Signal handling failures** — `SIGTERM` sent to PID 1 might not reach child processes
 
-```bash
-# Always restart (even after daemon restart)
-docker run --restart always my-app
+**Solution: Use an init system.**
 
-# Restart unless manually stopped
-docker run --restart unless-stopped my-app
+```dockerfile
+# Add tini as the init process
+FROM node:20-alpine
+RUN apk add --no-cache tini
+WORKDIR /app
+COPY . .
+USER node
+EXPOSE 3000
 
-# Restart on failure (up to 5 times)
-docker run --restart on-failure:5 my-app
+# tini becomes PID 1, your app becomes a child process
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "server.js"]
 ```
 
-## Production Dockerfile Checklist
+Or at runtime:
 
-- Use multi-stage builds for small images
-- Run as non-root user
-- Include `HEALTHCHECK`
-- Set `STOPSIGNAL SIGTERM`
-- Pin base image digests
-- Use `.dockerignore`
-- Set resource limits at runtime
-- Configure log rotation
+```bash
+docker run -d --init my-app
+```
+
+The `--init` flag uses Docker's built-in tini init process. It handles zombie reaping and signal forwarding so your application doesn't have to.
+
+## Practical Example: A Complete Production Dockerfile
+
+Let's combine everything from this lesson into a single, production-hardened Dockerfile for a Node.js application:
+
+```dockerfile
+# ==============================
+# Stage 1: Build
+# ==============================
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# ==============================
+# Stage 2: Production Runtime
+# ==============================
+FROM node:20-alpine
+
+# Install tini for proper init handling
+RUN apk add --no-cache tini
+
+# Apply security updates
+RUN apk update && apk upgrade --no-cache && rm -rf /var/cache/apk/*
+
+WORKDIR /app
+
+# Install only production dependencies
+COPY package*.json ./
+RUN npm ci --only=production && npm cache clean --force
+
+# Copy built application
+COPY --from=builder /app/dist ./dist
+
+# Create and switch to non-root user
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+COPY --chown=appuser:appgroup . .
+USER appuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1) })"
+
+# Proper signal handling
+STOPSIGNAL SIGTERM
+
+EXPOSE 3000
+
+# tini as PID 1 for zombie reaping and signal forwarding
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "dist/server.js"]
+```
+
+**Run it with production flags:**
+
+```bash
+docker run -d \
+  --name production-app \
+  --restart unless-stopped \
+  --memory 512m \
+  --memory-swap 512m \
+  --cpus 1.0 \
+  --pids-limit 100 \
+  --stop-timeout 30 \
+  --log-driver json-file \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
+  --read-only \
+  --tmpfs /tmp \
+  -p 3000:3000 \
+  my-production-app:1.0
+```
+
+## Production Checklist
+
+Before deploying any container to production, verify every item on this list:
+
+- **Multi-stage build** — Final image contains only runtime dependencies
+- **Non-root user** — `USER` directive in the Dockerfile, or `--user` at runtime
+- **Health check** — `HEALTHCHECK` in the Dockerfile verifying actual application health
+- **STOPSIGNAL** — Set to match your application's expected shutdown signal
+- **Init process** — `--init` flag or `tini` in the ENTRYPOINT for zombie reaping
+- **Resource limits** — `--memory`, `--cpus`, and `--pids-limit` always set
+- **Restart policy** — `--restart unless-stopped` for long-running services
+- **Log rotation** — `max-size` and `max-file` configured
+- **Read-only filesystem** — `--read-only` with `--tmpfs` for required writable paths
+- **No secrets in image** — All secrets passed at runtime or from secrets managers
+- **Image scanning** — Integrated into CI/CD pipeline
+- **Pinned base images** — Specific versions, not `latest`
+- **`.dockerignore`** — Excludes unnecessary files from the build context
+
+## Common Pitfalls & Tips
+
+- **Health checks that always return 200** — A health check that just returns "ok" without verifying anything is worse than no health check. It gives false confidence. Check database connections, cache availability, and any critical dependencies.
+
+- **Forgetting stop-timeout** — The default 10-second timeout might not be enough for applications with long-running requests or slow shutdown sequences. Measure your actual shutdown time and set the timeout accordingly.
+
+- **Setting memory limits too low** — If you set `--memory 64m` for a Java application, the JVM will be OOM-killed immediately. Test with realistic workloads before setting limits, and always leave a safety margin (set the limit 20-30% above observed peak usage).
+
+- **Not handling SIGTERM** — If your application doesn't catch `SIGTERM`, Docker's `SIGKILL` (after the timeout) forces termination. This means in-flight requests are dropped, database connections are severed mid-transaction, and temporary files aren't cleaned up.
+
+- **Ignoring zombie processes** — Without an init process, zombie child processes accumulate in long-running containers. Use `--init` or add `tini` to your image. This is especially important for Node.js and Python applications that spawn child processes.
+
+- **Log files filling the disk** — Always configure `max-size` and `max-file` for log rotation. Set this globally in `daemon.json` so you can't forget it.
+
+- **Using `--restart always` for batch jobs** — Batch jobs that exit with code 0 on completion will be restarted indefinitely with `--restart always`. Use `on-failure` for batch jobs, or `unless-stopped` for services.
+
+- **Not testing restart behavior** — Before going to production, simulate a crash (`docker kill -s SIGSEGV <container>`) and verify the restart policy works as expected. Also test that `docker stop` triggers your graceful shutdown correctly.
+
+## Interactive Diagram
+
+Explore how production patterns work together:
+
+<Diagram config={dockerProductionPatterns} />

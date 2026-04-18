@@ -3,26 +3,62 @@ title: "CI/CD with Containers"
 module: devops
 level: intermediate
 duration: "40 min"
+diagram: devops-cicd-pipeline
 description: "Build and deploy container images in CI/CD pipelines with GitHub Actions and GitLab CI."
 order: 1
 ---
 
 # CI/CD with Containers
 
-A CI/CD pipeline automates building, testing, and deploying your container images. Every code push triggers a consistent, repeatable process.
+Think of a factory assembly line. Raw materials come in one end, machines shape and test them at every station, and finished products roll out the other end — consistent, inspected, and ready to ship. That is exactly what CI/CD does for your container images. Every time you push code, an automated pipeline takes over: it builds your image, tests it, scans it for vulnerabilities, pushes it to a registry, and deploys it. No manual steps, no "it works on my machine," no surprises in production.
 
-## The Pipeline Flow
+If you have ever manually built a Docker image, pushed it to a registry, and then updated your deployment YAML by hand, you already know how error-prone that process is. CI/CD eliminates that friction and makes every release repeatable, auditable, and safe.
+
+## What is CI/CD for Containers?
+
+**CI (Continuous Integration)** means every code change is automatically built and tested. For containers, that means building a new image from your Dockerfile on every push and running your test suite inside that image.
+
+**CD (Continuous Delivery/Deployment)** means those tested images are automatically pushed to a registry and deployed to your target environment — staging, production, or both.
+
+Together, CI/CD gives you a pipeline that turns source code into a running container with zero manual intervention.
+
+## Why Does It Matter?
+
+- **Consistency** — Every image is built the same way, in the same clean environment. No more "but it worked on my laptop."
+- **Speed** — A push to main triggers the full pipeline in minutes. Manual builds and deploys take hours and introduce delays.
+- **Safety** — Automated security scanning catches vulnerabilities *before* they reach production. You cannot forget to scan when the machine does it for you.
+- **Auditability** — Every image is tagged with a commit SHA. You always know exactly which code is running in any environment, and you can roll back to any version instantly.
+- **Collaboration** — Multiple developers can push code confidently, knowing the pipeline will validate their changes before anything goes live.
+
+## Core Concepts
+
+### The Full Pipeline Flow
+
+A production-grade CI/CD pipeline for containers has five stages. Each one is a gate — if anything fails, the pipeline stops and the image never reaches your users.
 
 ```
-Push ──► Build Image ──► Run Tests ──► Scan CVEs ──► Push to Registry ──► Deploy
+Push ──► Build ──► Test ──► Scan ──► Push ──► Deploy
+           │         │        │        │
+           ▼         ▼        ▼        ▼
+        Docker    Unit &   Trivy    Registry
+        build     integ.   Grype   (GHCR/ECR)
 ```
 
-## GitHub Actions Example
+1. **Build** — Docker builds the image from your Dockerfile. This is where multi-stage builds and layer caching matter most.
+2. **Test** — Run unit tests, integration tests, and linting inside the freshly built image. If the tests fail, the image is discarded.
+3. **Scan** — Security tools scan the image layers for known vulnerabilities (CVEs). Critical findings block the pipeline.
+4. **Push** — The validated image is tagged and pushed to a container registry like GHCR, Docker Hub, or AWS ECR.
+5. **Deploy** — The pipeline updates your Kubernetes deployment, Docker Compose stack, or cloud service to use the new image.
+
+### GitHub Actions — Line by Line
+
+GitHub Actions is the most popular CI/CD platform for open-source and many commercial projects. Here is a complete pipeline that builds, scans, and pushes a Docker image.
 
 ```yaml
 # .github/workflows/docker-build.yml
 name: Build and Push Docker Image
 
+# Trigger: run this pipeline on every push to main
 on:
   push:
     branches: [main]
@@ -30,16 +66,43 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
+    # Grant the workflow permission to push to GHCR
+    permissions:
+      contents: read
+      packages: write
+
     steps:
+      # Step 1: Check out your repository code
+      # This pulls your code into the runner so Docker can access the Dockerfile
       - uses: actions/checkout@v4
 
-      - name: Log in to registry
+      # Step 2: Set up Docker Buildx for advanced build features
+      # Buildx enables caching, multi-platform builds, and better layer reuse
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Step 3: Log in to GitHub Container Registry
+      # Uses the built-in GITHUB_TOKEN — no secrets to manage
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Step 4: Scan the image for vulnerabilities BEFORE pushing
+      # If CRITICAL or HIGH CVEs are found, exit-code: 1 fails the pipeline
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+      # Step 5: Build and push the image
+      # Two tags: the commit SHA (exact version) and latest (current HEAD)
+      # cache-from and cache-to reuse layers from previous builds — huge speedup
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
@@ -48,50 +111,244 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository }}:latest
             ghcr.io/${{ github.repository }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 ```
 
-## GitLab CI Example
+**Key details to understand:**
+
+- `permissions: packages:write` — GitHub Actions needs explicit permission to push images to GHCR. Without this, the push step fails with a 403 error.
+- `${{ github.sha }}` — This is the Git commit hash. Tagging images with the SHA means every build is uniquely identifiable and reproducible.
+- `cache-from: type=gha` — This uses the GitHub Actions cache backend. Previous build layers are reused, cutting build times from minutes to seconds on subsequent runs.
+- `exit-code: "1"` in the Trivy step — This is what makes security scanning a *gate*, not just a report. The pipeline fails if critical vulnerabilities are found.
+
+### GitLab CI — Line by Line
+
+GitLab CI is built directly into GitLab and uses a `.gitlab-ci.yml` file at the repository root. Here is an equivalent pipeline:
 
 ```yaml
 # .gitlab-ci.yml
+stages:
+  - build
+  - test
+  - scan
+  - deploy
+
+# Build the Docker image
 docker-build:
   stage: build
   image: docker:24
   services:
-    - docker:24-dind
+    - docker:24-dind    # Docker-in-Docker: lets us run Docker inside the CI runner
   before_script:
+    # Log in to the GitLab Container Registry
+    # CI_REGISTRY_PASSWORD is a built-in CI variable — no manual secrets needed
     - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
   script:
+    # Build the image, tagged with the commit SHA
     - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    # Push to the GitLab registry
     - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+
+# Run tests inside the built image
+docker-test:
+  stage: test
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    # Run the image and execute the test command inside it
+    - docker run --rm $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA npm test
+
+# Security scanning with Trivy
+docker-scan:
+  stage: scan
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    # Install Trivy scanner
+    - apk add --no-cache curl
+    - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+    # Scan and fail on CRITICAL findings
+    - trivy image --exit-code 1 --severity CRITICAL $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
 ```
 
-## Image Tagging Strategy
+**Key differences from GitHub Actions:**
 
-| Tag | When | Purpose |
-|-----|------|---------|
-| `sha-<commit>` | Every build | Exact reproducible version |
-| `latest` | Main branch | Current production |
-| `v1.2.3` | Git tag | Release version |
-| `canary` | Staging | Pre-release testing |
+| Feature | GitHub Actions | GitLab CI |
+|---------|---------------|-----------|
+| Runner environment | GitHub-hosted VMs | Self-hosted or shared runners |
+| Docker-in-Docker | Not needed (Buildx) | Required via `services: docker:24-dind` |
+| Registry auth | `GITHUB_TOKEN` (automatic) | `CI_REGISTRY_*` (built-in variables) |
+| Caching | GHA cache backend | Manual or registry cache |
+| Secret management | Repository Secrets | CI/CD Variables |
 
-## Security Scanning in CI
+### Image Tagging Strategy
+
+Tagging is how you identify and track images. A good tagging strategy is not optional — it is how you answer the question "what code is running in production right now?"
+
+| Tag | When Applied | Purpose | Example |
+|-----|-------------|---------|---------|
+| `sha-abc1234` | Every build | Exact, reproducible version tied to a commit | `my-app:sha-a1b2c3d` |
+| `latest` | Main branch push | Points to the most recent main build | `my-app:latest` |
+| `v1.2.3` | Git tag (release) | Semantic version for production releases | `my-app:v1.2.3` |
+| `canary` | Staging deploy | Pre-release candidate for canary testing | `my-app:canary` |
+| `pr-42` | Pull request | Temporary image for testing a PR | `my-app:pr-42` |
+
+**Best practice:** Never deploy `latest` to production. Always use a specific version tag or commit SHA. `latest` is a moving target — it can change between deploys, making rollbacks impossible.
+
+### Caching Strategies
+
+Docker builds can be slow — downloading base images, installing packages, compiling code. Caching reuses layers from previous builds to skip work that has not changed.
 
 ```yaml
-# Add to GitHub Actions
-- name: Scan image
-  uses: aquasecurity/trivy-action@master
+# GitHub Actions — use the GHA cache backend
+- name: Build and push
+  uses: docker/build-push-action@v5
   with:
-    image-ref: ghcr.io/my-app:${{ github.sha }}
-    severity: "CRITICAL,HIGH"
-    exit-code: "1"   # Fail pipeline on critical CVEs
+    context: .
+    push: true
+    cache-from: type=gha      # Pull cached layers from GitHub's cache
+    cache-to: type=gha,mode=max  # Save ALL layers (not just final) to cache
 ```
 
-## Best Practices
+```dockerfile
+# Dockerfile — order layers from least to most frequently changed
+FROM node:20-alpine AS builder
 
-- Build images in CI, not locally
-- Tag every image with the commit SHA
-- Scan for vulnerabilities before pushing
-- Use `--cache-from` to speed up builds
-- Keep the Dockerfile in the same repo as the code
-- Never push `latest` to production — use explicit versions
+# Copy package files FIRST — this layer is cached unless dependencies change
+COPY package*.json ./
+RUN npm ci
+
+# Copy source code LAST — this changes every build
+COPY . .
+RUN npm run build
+```
+
+The trick is layer ordering. Put things that change rarely (base image, dependency installation) early in the Dockerfile, and things that change often (your source code) late. Docker caches each layer independently, so only layers after a changed layer need to be rebuilt.
+
+## Practical Example — A Complete CI/CD Pipeline
+
+Let us build a real pipeline for a Node.js API. Here is the project structure:
+
+```
+my-api/
+├── .github/
+│   └── workflows/
+│       └── ci.yml          # The CI/CD pipeline
+├── Dockerfile               # Multi-stage production build
+├── package.json             # Dependencies
+├── src/
+│   └── index.js             # Application code
+└── tests/
+    └── api.test.js          # Integration tests
+```
+
+**Dockerfile** — a production-ready multi-stage build:
+
+```dockerfile
+# Stage 1: Install dependencies
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Stage 2: Build the application
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Stage 3: Production image — minimal, no build tools
+FROM node:20-alpine AS runner
+WORKDIR /app
+RUN addgroup -g 1001 appgroup && adduser -u 1001 -G appgroup -s /bin/sh -D appuser
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+USER appuser
+EXPOSE 3000
+CMD ["node", "dist/index.js"]
+```
+
+**Pipeline** — the full CI/CD workflow:
+
+```yaml
+# .github/workflows/ci.yml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm test
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+```
+
+**What happens when you push to main:**
+
+1. The `test` job runs first — `npm test` must pass.
+2. Only then does `build-and-push` start (because of `needs: test`).
+3. Trivy scans the image — any CRITICAL or HIGH CVE fails the build.
+4. Docker builds the image with layer caching and pushes it to GHCR.
+5. The image is tagged with both the commit SHA and `latest`.
+6. On pull requests, the image is built and scanned but **not pushed** (controlled by `push: ${{ github.ref == 'refs/heads/main' }}`).
+
+## Common Pitfalls and Tips
+
+- **Pitfall: Pushing `latest` to production** — `latest` is not a version, it is a pointer. If someone pushes a broken image to `latest`, your next deployment pulls the broken one. **Tip:** Always deploy with a commit SHA or semantic version tag.
+
+- **Pitfall: Forgetting `packages: write` permission** — GitHub Actions defaults to read-only permissions. Your push step will fail with a mysterious 403 error. **Tip:** Always set `permissions: packages: write` in your workflow.
+
+- **Pitfall: Security scanning that does not block** — Running Trivy without `exit-code: 1` just prints a report. The pipeline keeps going and pushes a vulnerable image. **Tip:** Always set `exit-code: 1` on your scan step.
+
+- **Pitfall: Slow builds** — Rebuilding all layers from scratch on every push wastes time. **Tip:** Order your Dockerfile from least to most frequently changed layers, and enable build caching (`cache-from`/`cache-to`).
+
+- **Pitfall: Docker-in-Docker overhead** — GitLab CI requires Docker-in-Docker, which adds significant overhead. **Tip:** Use the Kaniko build tool for GitLab CI — it builds images without requiring Docker daemon, making builds faster and more secure.
+
+- **Tip: Use multi-stage builds** — Your production image should not contain compilers, dev dependencies, or source code. A multi-stage build copies only the runtime artifacts into a minimal final image, reducing attack surface and image size.
+
+- **Tip: Pin your action versions** — Use `@v3` or `@sha256:...` for GitHub Actions, not `@master`. Unpinned actions can change without warning and break your pipeline.
+
+<Diagram config={devopsCicdPipeline} />

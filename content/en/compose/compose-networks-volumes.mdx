@@ -3,91 +3,375 @@ title: "Networks and Volumes"
 module: compose
 level: intermediate
 duration: "30 min"
-description: "Configure networks and volumes in Compose for service isolation and data persistence."
+diagram: compose-networks-volumes
+description: "Custom networks, named volumes, and bind mounts in Compose files."
 order: 3
 ---
 
-# Networks and Volumes in Compose
+# Networks and Volumes — Isolation and Persistence
 
-Understanding how Compose handles networking and storage is essential for building secure, persistent multi-service applications.
+Imagine you are setting up an office building. You would not put the server room next to the lobby — you would separate them with locked doors and different hallways. And you would not store important documents on a whiteboard that gets erased every night — you would put them in a filing cabinet. Docker networks are the locked doors and hallways. Docker volumes are the filing cabinets. Together, they give your containers isolation and persistence, the two things that turn a demo into a production-ready application.
 
-## Default Network
+## What Are Networks and Volumes in Compose?
 
-When you run `docker compose up`, Compose creates a default network. All services are attached to it and can reach each other by service name.
+**Networks** define how containers communicate with each other and the outside world. By default, all Compose services share one network, but real applications often need isolation — your database should not be accessible from the internet, and your internal API should not be on the same network as your public-facing frontend.
 
-## Custom Networks
+**Volumes** define how data is stored and survives beyond the life of a container. Containers are ephemeral — when they are removed, their filesystem is gone. Volumes give you a way to persist database files, uploaded assets, logs, and any other data that must survive restarts, rebuilds, and even hardware failures.
 
-Define separate networks for isolation:
+## Why Does It Matter?
+
+- **Data loss is the worst kind of bug** — without volumes, your database resets every time you recreate its container. Users lose data, and you lose trust.
+- **Flat networks are a security risk** — if every service can reach every other service, a compromised frontend container can directly access your database. Custom networks enforce the principle of least privilege.
+- **Development and production have different needs** — bind mounts give you live code reload in development; named volumes give you safe persistence in production. Understanding both lets you work faster and deploy safer.
+- **Volume management prevents disk bloat** — without limits and cleanup, Docker volumes will eventually fill your disk. Knowing the lifecycle helps you stay in control.
+- **Network isolation simplifies debugging** — when services are on separate networks, you immediately know which ones can communicate and which cannot. No guessing.
+
+## Core Concepts
+
+### The Default Network — What Happens Without Configuration
+
+When you run `docker compose up` without defining any networks, Compose creates a single bridge network named `<project>_default` and attaches every service to it. This means every service can reach every other service by name.
 
 ```yaml
 services:
   web:
-    networks:
-      - frontend
-      - backend
-
-  api:
-    networks:
-      - backend
-
+    image: nginx          # Can reach db and cache
   db:
+    image: postgres       # Can reach web and cache
+  cache:
+    image: redis          # Can reach web and db
+```
+
+In this setup, all three services share one network. For a simple project, this is fine. But as your stack grows, it becomes a problem — the web container should not be able to ping the database directly.
+
+### Custom Networks — Isolation by Design
+
+Custom networks let you control exactly which services can talk to each other. Think of it like giving different teams different office floors. The frontend team and backend team can meet in the lobby, but the security team has its own floor with restricted access.
+
+```yaml
+services:
+  # Public-facing — sits on both networks
+  web:
+    image: nginx:alpine
     networks:
-      - backend
+      - frontend           # Serves traffic from the internet
+      - backend            # Talks to the API
+
+  # Internal API — only on the backend network
+  api:
+    image: my-api:latest
+    networks:
+      - backend            # Talks to web and db, but not directly to the internet
+
+  # Database — only on the backend network, isolated from the world
+  db:
+    image: postgres:16-alpine
+    networks:
+      - backend            # Only the API can reach it
 
 networks:
   frontend:
-    driver: bridge
+    driver: bridge         # Standard bridge network for external traffic
   backend:
     driver: bridge
-    internal: true   # No external access
+    internal: true         # No outbound internet access — locked down
 ```
 
-The `internal: true` flag prevents `backend` from reaching the internet — only inter-service communication is allowed.
+**Line by line:**
 
-## Named Volumes
+- `web: networks: [frontend, backend]` — the web server sits on both networks. It receives requests from the internet (frontend) and forwards API calls to the backend.
+- `api: networks: [backend]` — the API is only on the backend network. It can talk to `web` (they share `backend`) and `db` (also on `backend`), but it is not directly accessible from the internet.
+- `db: networks: [backend]` — the database is locked down on the backend network. Only services on `backend` can reach it. The web server cannot directly query the database because they do not share a network.
+- `frontend: driver: bridge` — a standard Docker bridge network. Containers on this network can communicate with each other and reach the outside internet.
+- `backend: internal: true` — the `internal` flag creates a network with **no external routing**. Containers on this network can talk to each other, but they cannot reach the internet, and the internet cannot reach them. This is critical for databases and internal services.
 
-Volumes persist data across container restarts and recreation:
+**Communication matrix for this setup:**
+
+| From | To | Can communicate? | Why |
+|---|---|---|---|
+| web | api | Yes | Both on `backend` |
+| web | db | No | They share `backend`, but `web` is also on `frontend` — actually, yes they can. Both on `backend`. |
+| api | db | Yes | Both on `backend` |
+| api | internet | No | `backend` is `internal: true` |
+| db | internet | No | `backend` is `internal: true` |
+| web | internet | Yes | `web` is on `frontend` (not internal) |
+
+### Named Volumes — Data That Survives
+
+Named volumes are Docker-managed storage locations that persist independently of containers. When you mount a named volume into a container, the data lives on the host filesystem in Docker's storage directory (`/var/lib/docker/volumes/` on Linux). Even if you delete and recreate the container, the volume and its data remain.
 
 ```yaml
 services:
   db:
     image: postgres:16-alpine
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - db-data:/var/lib/postgresql/data   # Mount the named volume at Postgres' data directory
+    environment:
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: secretpass
 
 volumes:
-  db-data:
-    driver: local
+  db-data:                          # Declare the named volume
+    driver: local                   # Use the local storage driver (default)
 ```
 
-## Bind Mounts vs Named Volumes
+**Line by line:**
 
-| Feature | Named Volume | Bind Mount |
-|---------|-------------|------------|
-| Managed by Docker | Yes | No |
-| Works across OSes | Yes | Path-dependent |
-| Good for development | No | Yes (live reload) |
-| Good for production | Yes | Use with caution |
-| Backup | `docker volume` commands | Manual |
+- `db-data:/var/lib/postgresql/data` — the left side (`db-data`) is the volume name declared at the bottom. The right side is the path inside the container where Postgres stores its data files.
+- `volumes: db-data: driver: local` — declares the named volume and tells Docker to store it on the local filesystem. The `local` driver is the default, so you could omit it.
 
-## Bind Mounts for Development
+**What happens:** when Postgres writes to `/var/lib/postgresql/data`, it is actually writing to the `db-data` volume on the host. When you run `docker compose down`, the containers are removed, but `db-data` stays. Next time you run `docker compose up`, Postgres picks up right where it left off.
+
+### Bind Mounts — Live Development with Real Files
+
+Bind mounts map a specific directory on your host machine to a directory inside the container. Unlike named volumes, you control exactly where the data lives on the host. This is essential for development because it enables live code reload — you edit a file on your laptop, and the change is instantly reflected inside the container.
 
 ```yaml
 services:
   web:
     build: .
     volumes:
-      - ./src:/app/src          # Live code reload
-      - /app/node_modules       # Prevent overwrite
+      - ./src:/app/src              # Mount local source code into the container
+      - ./public:/app/public       # Mount static assets
+      - /app/node_modules          # Anonymous volume — protect container's node_modules
 ```
 
-The `/app/node_modules` entry without a colon creates an **anonymous volume** — it prevents the host's `node_modules` from overwriting the container's.
+**Line by line:**
 
-## Volume Lifecycle
+- `./src:/app/src` — the left side is a **relative path** on the host (relative to the Compose file). The right side is the path inside the container. Changes to files in `./src` are instantly visible inside the container at `/app/src`.
+- `./public:/app/public` — same pattern for static assets.
+- `/app/node_modules` — this looks strange, but it is a critical trick. It creates an **anonymous volume** at `/app/node_modules` inside the container. This prevents the bind mount from overwriting the container's `node_modules` directory with the host's (which might be missing or incompatible). Without this, your container's npm packages would disappear.
+
+### Named Volumes vs Bind Mounts
+
+| Feature | Named Volume | Bind Mount |
+|---|---|---|
+| Storage location | Docker-managed (`/var/lib/docker/volumes/`) | Any path on the host |
+| Works across OSes | Yes — Docker handles path differences | Path-dependent — `./src` on Linux vs Windows |
+| Good for development | No — you cannot easily edit files in a named volume | Yes — live code reload |
+| Good for production | Yes — portable, managed, easy to back up | Use with caution — host-dependent |
+| Performance | Good — Docker optimizes I/O | Varies — slow on macOS/Windows (use Mutagen or VirtioFS) |
+| Backup | `docker volume` commands or `docker compose down` | Manual — you know the host path |
+| Anonymous cleanup | No — persists until explicitly removed | N/A |
+
+### The Dev vs Prod Strategy
+
+The best practice is to use **different volume strategies for different environments**. This is so common that Compose has built-in support for it through override files.
+
+**Development (docker-compose.yml):**
+
+```yaml
+services:
+  web:
+    build: .
+    volumes:
+      - ./src:/app/src            # Bind mount: live code reload
+      - /app/node_modules         # Anonymous volume: protect deps
+    environment:
+      NODE_ENV: development
+```
+
+**Production (docker-compose.prod.yml):**
+
+```yaml
+services:
+  web:
+    image: my-registry/my-app:1.0.0  # Pre-built image, no build context
+    volumes:
+      - app-data:/app/data          # Named volume: persistent, portable
+    environment:
+      NODE_ENV: production
+```
+
+Run production with:
 
 ```bash
-docker compose down          # Stops containers, keeps volumes
-docker compose down -v       # Stops containers AND removes volumes
-docker volume ls             # List all volumes
-docker volume inspect name   # See volume details
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
+
+The production override replaces the bind mounts with a named volume, switches from `build:` to a pre-built `image:`, and sets the environment to production.
+
+## Practical Example — Database with a Web App
+
+Let's put it all together with a project that uses custom networks, named volumes, and bind mounts. We will build a Node.js web app backed by Postgres, with proper network isolation.
+
+**Project structure:**
+
+```
+notes-app/
+  docker-compose.yml
+  web/
+    Dockerfile
+    package.json
+    src/
+      index.js
+```
+
+**docker-compose.yml:**
+
+```yaml
+services:
+  web:
+    build: ./web
+    ports:
+      - "3000:3000"                # Expose on the frontend network only
+    networks:
+      - frontend                   # Receives external traffic
+      - backend                    # Connects to the database
+    volumes:
+      - ./web/src:/app/src         # Bind mount for live code reload
+      - /app/node_modules          # Protect container dependencies
+    environment:
+      DATABASE_URL: "postgres://appuser:secretpass@db:5432/notesdb"
+      NODE_ENV: development
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    networks:
+      - backend                    # Only accessible from backend services
+    volumes:
+      - db-data:/var/lib/postgresql/data  # Named volume for persistence
+    environment:
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: secretpass
+      POSTGRES_DB: notesdb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+networks:
+  frontend:
+    driver: bridge                 # External access allowed
+  backend:
+    driver: bridge
+    internal: true                 # No internet access — locked down
+
+volumes:
+  db-data:                         # Persist database data
+```
+
+**Step-by-step:**
+
+1. Create the project:
+
+```bash
+mkdir -p notes-app/web/src
+cd notes-app
+```
+
+2. Create the files above. For the web app, a minimal `package.json` and `index.js` that connects to Postgres is sufficient.
+
+3. Start the stack:
+
+```bash
+docker compose up -d --build
+```
+
+**Expected output:**
+
+```
+[+] Running 4/4
+ ✔ Network notes-app_frontend   Created
+ ✔ Network notes-app_backend    Created
+ ✔ Container notes-app-db-1     Started (healthy)
+ ✔ Container notes-app-web-1    Started
+```
+
+4. Verify the network setup:
+
+```bash
+docker network ls | grep notes-app
+```
+
+**Expected output:**
+
+```
+bridge    notes-app_frontend
+bridge    notes-app_backend
+```
+
+5. Verify the volume was created:
+
+```bash
+docker volume ls | grep notes-app
+```
+
+**Expected output:**
+
+```
+local     notes-app_db-data
+```
+
+6. Test that the database persists:
+
+```bash
+# Write some data, then recreate the container
+docker compose exec db psql -U appuser -c "CREATE TABLE test (id int);"
+docker compose down                  # Stop containers (volumes survive)
+docker compose up -d                 # Restart — data is still there
+docker compose exec db psql -U appuser -c "\dt"   # List tables — "test" still exists
+```
+
+7. Test network isolation — the web container should not be able to reach the internet from the backend network:
+
+```bash
+docker compose exec web sh -c "wget -q --spider http://google.com && echo 'Can reach internet' || echo 'Cannot reach internet'"
+```
+
+The web container can reach the internet because it is on `frontend` (not internal). But the `db` container cannot:
+
+```bash
+docker compose exec db sh -c "wget -q --spider http://google.com && echo 'Can reach internet' || echo 'Cannot reach internet'"
+# Expected: "Cannot reach internet" — because db is only on backend (internal: true)
+```
+
+8. Clean up everything including volumes:
+
+```bash
+docker compose down -v
+```
+
+## Volume Lifecycle — Know When Data Survives
+
+Understanding when volumes are kept versus deleted is critical:
+
+| Command | Containers | Networks | Volumes | Images |
+|---|---|---|---|---|
+| `docker compose stop` | Stopped (not removed) | Kept | Kept | Kept |
+| `docker compose down` | Removed | Removed | **Kept** | Kept |
+| `docker compose down -v` | Removed | Removed | **Removed** | Kept |
+| `docker compose down --rmi all` | Removed | Removed | Kept | Removed |
+
+**Key insight:** `docker compose down` keeps your volumes safe by default. You have to explicitly say `-v` to delete them. This is a deliberate design choice — accidentally deleting a production database would be catastrophic.
+
+**Inspecting a volume:**
+
+```bash
+docker volume inspect notes-app_db-data
+```
+
+This shows the volume's mount point on the host, its driver, and labels. Useful for debugging and backup planning.
+
+## Common Pitfalls and Tips
+
+- **Anonymous volumes pile up** — every time you use a bare path like `/app/node_modules` without a colon, Docker creates a new anonymous volume. Over time, these fill up disk space. Run `docker volume prune` periodically to clean up unused anonymous volumes.
+
+- **Bind mount performance on macOS and Windows** — bind mounts are significantly slower on macOS and Windows than on Linux because Docker is running in a VM. Use Docker Desktop's VirtioFS feature (Settings > General > "Use VirtioFS for shared file systems") for much better performance.
+
+- **Overwriting container files with bind mounts** — when you bind mount a host directory into a container, it completely replaces the container directory. If your Dockerfile copies files into `/app`, and you bind mount `./src:/app`, the container's `/app` is now your host's `src/` directory. Any files that were in the container's `/app` (like `node_modules` installed during the build) are hidden. Use anonymous volumes to protect critical directories.
+
+- **Forgetting to declare named volumes** — if you reference `db-data` in a service's `volumes` section but forget to declare it under the top-level `volumes:` key, Compose will still create it as a named volume. But it is better practice to declare it explicitly — it makes the file self-documenting and lets you configure the volume driver.
+
+- **Using `internal: true` with ports** — if you mark a network as `internal: true`, any service on that network cannot publish ports. A service that needs both internet access and port publishing should be on a separate, non-internal network.
+
+- **Named volume empty on first run** — when a named volume is first created and mounted at a path where the container already has files (like Postgres' data directory), Docker copies the container's existing files into the volume. This only happens on first run. Subsequent runs use the volume's existing data.
+
+<Diagram config={composeNetworksVolumes} />

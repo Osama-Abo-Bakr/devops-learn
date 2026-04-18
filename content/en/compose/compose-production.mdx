@@ -1,122 +1,568 @@
 ---
-title: "Production Configs"
+title: "Production Compose"
 module: compose
 level: advanced
-duration: "40 min"
-description: "Override files, health checks, and deployment strategies for production Compose stacks."
+duration: "35 min"
+description: "Hardening Compose for production: resource limits, restart policies, logging, and monitoring."
 order: 5
 ---
 
-# Production Compose Configs
+# Production Compose — From Demo to Deployment
 
-Moving from development to production requires careful configuration of health checks, resource limits, logging, and restart policies.
+Imagine you have been test-driving a car on a closed track. The engine runs great, the handling is sharp, and everything feels perfect. Now imagine driving that same car across the country in January — you will need winter tires, an emergency kit, and a plan for when things go wrong. Taking a Compose stack to production is the same transition. Your development setup works beautifully on your laptop, but production demands resource limits (so one greedy service does not starve the others), restart policies (so your app recovers from crashes), log rotation (so your disk does not fill up), and health checks (so you know when something is wrong before your users tell you).
 
-## The Override Pattern
+This lesson teaches you how to harden a Compose stack for real-world deployment.
 
-Use multiple Compose files layered together:
+## Why Use Compose in Production?
 
-```bash
-# Development
-docker compose up
+You might be wondering: "Is not Compose just for development? Should not I use Kubernetes for production?" It is a fair question. The answer depends on your scale.
 
-# Production
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-```
+| Factor | Docker Compose | Kubernetes |
+|---|---|---|
+| Team size | Small teams (1-10) | Large teams (10+) |
+| Service count | 2-15 services | 15+ services |
+| Infrastructure | Single host or a few hosts | Cluster of many hosts |
+| Learning curve | Low — YAML and Docker | High — pods, deployments, services, etc. |
+| Auto-scaling | Manual (`--scale`) | Automatic (HPA, VPA) |
+| Self-healing | Basic (restart policies) | Advanced (self-healing, rolling deploys) |
+| Setup time | Minutes | Hours to days |
+| Best for | Simple stacks, small teams, side projects, internal tools | Large-scale distributed systems, enterprise |
 
-The production file **merges** with the base file, overriding and adding settings:
+**Compose in production is the right choice when:**
+
+- You are a small team managing a handful of services on one or two servers.
+- Your stack is relatively static — you are not adding new services every week.
+- You want the simplicity of a single YAML file instead of a sprawling K8s manifest directory.
+- You are deploying internal tools, staging environments, or proof-of-concept projects.
+
+Even if you eventually migrate to Kubernetes, starting with Compose in production lets you ship faster while you learn.
+
+## Why Does It Matter?
+
+- **Unbounded containers will crash your server** — without resource limits, one memory leak in your API can consume all available RAM, causing every other service to crash via OOM (Out of Memory) kills.
+- **Without restart policies, downtime is manual** — if your app crashes at 3 AM and there is no restart policy, it stays down until someone wakes up and restarts it. `restart: unless-stopped` means it recovers automatically.
+- **Unrotated logs fill disks** — Docker's default log driver writes to a single file that grows forever. After a few weeks of heavy traffic, your disk is full and everything stops.
+- **Health checks enable smart dependencies** — without health checks, Compose only knows if a container process is running, not if the service is actually functional. A database that is running but not accepting connections is worse than one that is not running at all.
+- **Separation of dev and prod config** — your development Compose file should have bind mounts, debug flags, and hot reload. Your production file should have resource limits, log rotation, and minimal permissions. Mixing them leads to security holes and performance problems.
+
+## Core Concepts
+
+### Resource Limits — Keeping Greedy Containers in Check
+
+Resource limits tell Docker the maximum amount of CPU and memory a container can use. Without limits, a single container can consume all the host's resources, starving other services and potentially crashing the entire server.
 
 ```yaml
-# docker-compose.prod.yml
+services:
+  api:
+    image: my-api:1.0.0
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"            # Max 1 CPU core (can use up to 100% of one core)
+          memory: 512M           # Max 512 MB RAM — killed if exceeded
+        reservations:
+          cpus: "0.25"          # Guaranteed at least 0.25 CPU core
+          memory: 256M           # Guaranteed at least 256 MB RAM
+```
+
+**Line by line:**
+
+- `deploy: resources: limits: cpus: "1.0"` — the container can use up to 1 full CPU core. If it tries to use more, it will be throttled (not killed). CPU limits work by scheduling — Docker gives the container its fair share of CPU time and no more.
+- `deploy: resources: limits: memory: 512M` — the container can use up to 512 MB of RAM. If it exceeds this, Docker will kill it with an OOM (Out of Memory) error. The container will be restarted if a restart policy is set.
+- `deploy: resources: reservations: cpus: "0.25"` — when there is CPU contention (multiple containers fighting for CPU time), this container is guaranteed at least 0.25 cores. Think of it as a reservation at a restaurant — even if the place is packed, your table is held.
+- `deploy: resources: reservations: memory: 256M` — the container is guaranteed at least 256 MB of RAM. Docker reserves this memory when the container starts and will not allocate it to other containers.
+
+**Limits vs reservations:**
+
+| | Limits | Reservations |
+|---|---|---|
+| Purpose | Hard ceiling — prevent resource hogging | Guaranteed minimum — ensure baseline performance |
+| Exceeded behavior | CPU: throttled. Memory: container killed | Container may not start if reservation cannot be met |
+| Required? | Yes, for production | Recommended, especially for critical services |
+| Analogy | Speed limit on a highway | Reserved parking spot |
+
+**Setting appropriate values:**
+
+- Start by observing your application's actual resource usage with `docker stats`.
+- Set the memory limit to roughly 2x the average usage (headroom for spikes).
+- Set the reservation to roughly the average usage.
+- CPU limits are less critical — a container using extra CPU briefly is usually fine. Only set strict CPU limits when you need to prevent one service from monopolizing the CPU.
+
+### Restart Policies — Self-Healing Containers
+
+Restart policies tell Docker what to do when a container exits (crashes, finishes, or is killed).
+
+```yaml
+services:
+  web:
+    image: my-app:1.0.0
+    restart: unless-stopped     # Most common choice for production
+
+  db:
+    image: postgres:16-alpine
+    restart: always             # Always restart, even after Docker daemon restart
+```
+
+**The four restart policies:**
+
+| Policy | Behavior | When to use |
+|---|---|---|
+| `no` (default) | Never restart automatically | One-off tasks, batch jobs |
+| `always` | Always restart, regardless of exit code. Also restarts after Docker daemon restart. | Critical services that must always be running |
+| `unless-stopped` | Like `always`, but does NOT restart after Docker daemon restart if you manually stopped it. | Most production services — gives you control to intentionally stop a service |
+| `on-failure` | Restart only if the container exits with a non-zero code | Services that should restart on crash but not on clean exit |
+
+**Why `unless-stopped` is usually the best choice:** with `always`, if you manually stop a container (e.g., `docker compose stop web`) and then reboot the server, Docker will restart it. With `unless-stopped`, Docker respects your manual stop. This is almost always what you want — you stopped it for a reason.
+
+**Important:** restart policies only apply to container crashes, not to situations where `docker compose down` is used. `docker compose down` explicitly removes containers, overriding any restart policy.
+
+### Logging Configuration — Preventing Disk Catastrophes
+
+By default, Docker stores container logs as JSON files in `/var/lib/docker/containers/`. These files grow without limit. A busy API can generate gigabytes of logs per day, and after a few weeks, your disk will be full.
+
+```yaml
+services:
+  web:
+    image: my-app:1.0.0
+    logging:
+      driver: json-file               # Default log driver — stores as JSON files
+      options:
+        max-size: "10m"               # Rotate when a log file reaches 10 MB
+        max-file: "5"                 # Keep at most 5 rotated files
+        compress: "true"              # Compress rotated files to save space
+```
+
+**Line by line:**
+
+- `driver: json-file` — the default log driver. Each container gets a JSON file. Other drivers include `syslog`, `journald`, `fluentd`, and `awslogs` — but `json-file` is the simplest and most common for small-scale production.
+- `max-size: "10m"` — when the current log file reaches 10 MB, Docker rotates it: the current file is renamed (e.g., `container-json.log.1`), and a fresh file is started. This prevents any single log file from growing too large.
+- `max-file: "5"` — Docker keeps at most 5 rotated log files. When a 6th would be created, the oldest is deleted. Total disk usage for this container's logs is capped at approximately 50 MB (5 files x 10 MB each).
+- `compress: "true"` — rotated files are compressed with gzip. This can reduce storage by 80-90% for text-heavy logs.
+
+**Math:** with `max-size: 10m` and `max-file: 5`, the maximum disk usage per container is approximately 50 MB uncompressed. With compression, it might be 10-15 MB. Multiply by the number of containers in your stack to estimate total log storage.
+
+**Alternative log drivers for larger deployments:**
+
+| Driver | Best for | Notes |
+|---|---|---|
+| `json-file` | Small stacks, simple setups | Default, no external dependencies |
+| `syslog` | Centralized logging servers | Sends logs to a syslog daemon |
+| `journald` | systemd-based systems | Integrates with `journalctl` |
+| `fluentd` | Aggregation pipelines | Sends to Fluentd/Fluent Bit for processing |
+| `awslogs` | AWS CloudWatch | Sends directly to CloudWatch Logs |
+| `gcplogs` | Google Cloud Logging | Sends directly to Google Cloud |
+
+### Health Checks — Your Early Warning System
+
+In production, health checks are non-negotiable. They tell you whether a service is actually working, not just whether its process is running. A database process that is alive but unable to accept connections is effectively dead, and health checks catch this.
+
+```yaml
+services:
+  web:
+    image: my-app:1.0.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s              # Check every 30 seconds
+      timeout: 10s               # 10 seconds to respond before considering it a failure
+      retries: 3                 # 3 consecutive failures = unhealthy
+      start_period: 40s          # 40s grace period during startup
+```
+
+**Line by line:**
+
+- `test: ["CMD", "curl", "-f", "http://localhost:3000/health"]` — runs `curl` with the `-f` flag (fail silently on server errors). If the endpoint returns a 200 status code, the check passes. If it returns 500 or times out, it fails.
+- `interval: 30s` — how often the check runs. 30 seconds is a good production default — frequent enough to catch problems, but not so frequent that it adds load.
+- `timeout: 10s` — if the health endpoint does not respond within 10 seconds, the check fails. This catches services that are alive but too slow to be useful.
+- `retries: 3` — three consecutive failures before marking the container as unhealthy. One failure does not trigger an unhealthy state — it might be a transient hiccup.
+- `start_period: 40s` — during the first 40 seconds after the container starts, failed checks do not count toward the retry limit. This gives slow-starting services (like Java apps or large databases) time to initialize.
+
+**Best practice:** your `/health` endpoint should check more than just "the process is running." It should verify that critical dependencies (database connection, cache connection) are working. This gives you a true picture of service health.
+
+### Production vs Development Overrides
+
+The cleanest way to manage dev and prod configuration is with Compose override files. Your base `docker-compose.yml` contains shared settings, and environment-specific files add or override settings.
+
+**docker-compose.yml (base — shared by all environments):**
+
+```yaml
 services:
   web:
     build: .
-    image: registry.io/my-app:1.0.0   # Use pre-built image
-    restart: always
+    expose:
+      - "3000"
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  db-data:
+```
+
+**docker-compose.override.yml (development — auto-loaded by Compose):**
+
+When you run `docker compose up`, Compose automatically looks for `docker-compose.override.yml` and merges it with the base file. This is perfect for development-specific settings.
+
+```yaml
+services:
+  web:
+    build: .
+    volumes:
+      - ./src:/app/src              # Bind mount for live code reload
+      - /app/node_modules           # Protect container dependencies
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+    ports:
+      - "3000:3000"                 # Publish port for local browser access
+      - "9229:9229"                 # Node.js debugger port
+```
+
+**docker-compose.prod.yml (production — explicitly specified):**
+
+```yaml
+services:
+  web:
+    image: registry.example.com/my-app:1.0.0    # Pre-built image, no build step
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: warn                             # Less verbose than development
     deploy:
+      replicas: 3                                 # Run 3 instances
       resources:
         limits:
           cpus: "1.0"
           memory: 512M
         reservations:
+          cpus: "0.25"
           memory: 256M
     logging:
       driver: json-file
       options:
         max-size: "10m"
-        max-file: "3"
+        max-file: "5"
+        compress: "true"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+
+  db:
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"               # Databases can generate more log output
+        max-file: "10"
 ```
 
-## Health Checks
+**How to run each environment:**
 
-Every production service should have a health check:
+```bash
+# Development (auto-loads docker-compose.override.yml)
+docker compose up -d
 
-| Service | Health Check |
-|---------|-------------|
-| Web API | `curl -f http://localhost:3000/health` |
-| Postgres | `pg_isready -U $POSTGRES_USER` |
-| Redis | `redis-cli ping` |
-| Nginx | `curl -f http://localhost/` |
-
-## Resource Limits
-
-```yaml
-deploy:
-  resources:
-    limits:
-      cpus: "0.5"
-      memory: 256M
-    reservations:
-      cpus: "0.25"
-      memory: 128M
+# Production (explicitly specify the prod file)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
-- **limits** — Hard ceiling (container is killed if exceeded)
-- **reservations** — Guaranteed minimum
+**What the merge does:**
 
-## Logging Configuration
+| Setting | Base file | Production override | Merged result |
+|---|---|---|---|
+| `web.image` | (none — uses `build:`) | `registry.example.com/my-app:1.0.0` | Uses the pre-built image |
+| `web.environment.NODE_ENV` | (none) | `production` | `production` |
+| `web.deploy` | (none) | Full resource config | Resource limits applied |
+| `web.logging` | (none) | Log rotation config | Logs rotate at 10 MB |
+| `web.healthcheck` | (none) | Full health check | Health check runs every 30s |
+| `web.volumes` | (none in base) | (none in prod) | No bind mounts in production |
 
-```yaml
-logging:
-  driver: json-file
-  options:
-    max-size: "10m"    # Rotate at 10 MB
-    max-file: "5"      # Keep 5 files
-    compress: "true"   # Compress rotated logs
-```
+### Watch Mode — Development Productivity
 
-## Secrets Management
-
-Never put secrets in Compose files. Use Docker secrets or external secret managers:
+Compose Watch is a feature that monitors your source files and automatically updates running containers when changes are detected. It is faster and more efficient than traditional bind mounts because it only syncs changed files.
 
 ```yaml
 services:
-  db:
+  web:
+    build: .
+    develop:
+      watch:
+        - action: sync              # Sync changed files into the container
+          path: ./src
+          target: /app/src
+        - action: rebuild           # Rebuild the image when these files change
+          path: ./package.json
+```
+
+**Line by line:**
+
+- `action: sync` — when a file in `./src` changes, Compose copies it into the running container at `/app/src`. No rebuild needed — the change is instant.
+- `action: rebuild` — when `package.json` changes, Compose rebuilds the entire image (because you need to re-run `npm install`). This is slower but necessary for dependency changes.
+
+**Start with watch mode:**
+
+```bash
+docker compose watch
+```
+
+This is different from `docker compose up` — it starts the services AND monitors files for changes. Use it during active development instead of traditional bind mounts.
+
+## Practical Example — A Production-Ready Stack
+
+Here is a complete production Compose stack with all the hardening we have covered.
+
+**Project structure:**
+
+```
+prod-app/
+  docker-compose.yml
+  docker-compose.prod.yml
+  .env
+  web/
+    Dockerfile
+    src/
+```
+
+**.env:**
+
+```bash
+POSTGRES_USER=appuser
+POSTGRES_PASSWORD_FILE=/run/secrets/db_password
+POSTGRES_DB=appdb
+APP_VERSION=1.0.0
+REGISTRY=registry.example.com
+```
+
+**docker-compose.yml (base):**
+
+```yaml
+services:
+  web:
+    build: ./web
+    expose:
+      - "3000"
     environment:
+      DATABASE_URL: "postgres://appuser:${DB_PASSWORD}@db:5432/appdb"
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: appuser
       POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_DB: appdb
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
     secrets:
       - db_password
+
+  cache:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  db-data:
 
 secrets:
   db_password:
     external: true
 ```
 
-```bash
-echo "mysecretpassword" | docker secret create db_password -
+**docker-compose.prod.yml:**
+
+```yaml
+services:
+  web:
+    image: ${REGISTRY}/my-app:${APP_VERSION}
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+        compress: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: warn
+
+  db:
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "10"
+        compress: "true"
+
+  cache:
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
 ```
+
+**Step-by-step deployment:**
+
+1. Validate the merged configuration:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml config
+```
+
+This shows the fully-merged file with all overrides applied and variables resolved. Check it before deploying.
+
+2. Start the production stack:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+3. Verify all services are healthy:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+```
+
+**Expected output:**
+
+```
+NAME             STATUS                   PORTS
+prod-app-web-1  Up 2 min (healthy)       3000/tcp
+prod-app-web-2  Up 2 min (healthy)       3000/tcp
+prod-app-web-3  Up 2 min (healthy)       3000/tcp
+prod-app-db-1   Up 2 min (healthy)       5432/tcp
+prod-app-cache-1 Up 2 min (healthy)      6379/tcp
+```
+
+4. Monitor resource usage:
+
+```bash
+docker stats --no-stream
+```
+
+This shows real-time CPU and memory usage for all containers. Verify that usage is within your defined limits.
+
+5. Check logs (they are now rotating):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=50 web
+```
+
+6. Deploy an update (rolling approach):
+
+```bash
+# Pull the new image and recreate only the web service
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull web
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps web
+```
+
+The `--no-deps` flag ensures that only the `web` service is recreated, not its dependencies (`db`, `cache`).
+
+7. Full clean shutdown:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+```
+
+Volumes are preserved by default. Add `-v` only if you want to wipe the database.
 
 ## Production Checklist
 
-- Use `restart: unless-stopped` or `always`
-- Set memory and CPU limits
-- Configure health checks
-- Rotate logs with `max-size` and `max-file`
-- Use override files for environment-specific config
-- Never hardcode secrets — use Docker secrets or env files
-- Pin image tags (avoid `latest`)
+Before deploying any Compose stack to production, run through this checklist:
+
+- **Resource limits on every service** — set `deploy.resources.limits` for CPU and memory. No exceptions.
+- **Restart policy on every service** — `restart: unless-stopped` unless you have a specific reason not to.
+- **Health checks on critical services** — at minimum, your web app and database should have health checks.
+- **Log rotation configured** — set `max-size` and `max-file` under `logging.options`. Without this, your disk will eventually fill up.
+- **Pin image tags** — never use `latest` in production. Use specific version tags like `postgres:16.2-alpine` or `my-app:1.0.0`. `latest` is a moving target and could introduce breaking changes.
+- **Secrets out of Compose files** — use Docker secrets (`_FILE` suffix convention) or external secret managers. Never put passwords in YAML.
+- **Override files for environment separation** — use `docker-compose.prod.yml` for production-specific settings. Keep dev config in the base file or `docker-compose.override.yml`.
+- **Validate before deploying** — run `docker compose config` to check for syntax errors and verify variable substitution.
+- **Back up your volumes** — named volumes persist across container recreations, but they are still on a single host. Set up regular backups (`pg_dump` for Postgres, `redis-cli BGSAVE` for Redis).
+- **Monitor your containers** — use `docker stats` or a monitoring tool (Prometheus + Grafana, Datadog) to track resource usage and detect problems before they become outages.
+
+## Common Pitfalls and Tips
+
+- **Setting memory limits too low** — if you set the memory limit below what your application actually needs, it will be repeatedly killed by the OOM killer and restarted by the restart policy, creating a crash loop. Monitor actual usage first, then set limits with headroom.
+
+- **Forgetting `start_period` in health checks** — without a `start_period`, a slow-starting service will fail its health checks immediately and be marked unhealthy before it finishes initializing. This causes dependent services to wait indefinitely. Always set `start_period` to at least the time your service needs to start.
+
+- **Using `restart: always` with flaky services** — if a service crashes immediately on startup (e.g., bad configuration), `restart: always` will create an infinite crash loop that floods your logs. Use `restart: unless-stopped` and fix the root cause before re-enabling.
+
+- **Not testing the production compose file** — always run `docker compose -f docker-compose.yml -f docker-compose.prod.yml config` before deploying. Variable substitution errors and merge conflicts are easy to miss.
+
+- **Ignoring disk space** — log rotation is critical, but do not forget about volume growth. A database volume will grow over time. Monitor disk usage and plan for growth.
+
+- **Docker secrets require Swarm mode** — the `secrets:` top-level key in Compose only works with Docker Swarm or when using `docker stack deploy`. For single-host Compose, use the `_FILE` convention: set `POSTGRES_PASSWORD_FILE=/run/secrets/db_password` and mount the secret file as a bind mount instead.
+
+- **Override file order matters** — when merging multiple Compose files, later files override earlier ones. `docker compose -f base.yml -f prod.yml` means `prod.yml` wins on conflicts. Keep this in mind when debugging unexpected values.

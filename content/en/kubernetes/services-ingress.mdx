@@ -2,34 +2,111 @@
 title: "Services and Ingress"
 module: kubernetes
 level: beginner
-duration: "35 min"
+duration: "40 min"
 diagram: k8s-services-ingress
-description: "Expose your applications with Services and route external traffic with Ingress."
+description: "Expose workloads with Services (ClusterIP, NodePort, LoadBalancer) and route traffic with Ingress."
 order: 2
 ---
 
 # Services and Ingress
 
-Pods are ephemeral — they get new IPs when recreated. Services provide stable networking, and Ingress routes external HTTP traffic to your services.
+Imagine you're trying to call a friend, but they change their phone number every few hours. Frustrating, right? That's exactly what happens with Pods in Kubernetes -- they're ephemeral, and every time a Pod is recreated, it gets a new IP address. A **Service** is like having a permanent phone number that always routes to your friend, no matter how many times they change their actual number.
 
-## Why Services?
+And if a Service is a phone number, **Ingress** is the receptionist at a big office building. You tell the receptionist, "I'm here for the billing department" or "I need the sales team," and they route you to the right floor. Ingress routes external HTTP traffic to the right Service based on hostnames and URL paths.
 
-Without a Service, you'd need to track every Pod IP and update configurations whenever Pods are recreated. A Service gives you:
+## The Networking Problem
 
-- A **stable virtual IP** (ClusterIP)
-- A **DNS name** (`my-service.my-namespace.svc.cluster.local`)
-- **Load balancing** across healthy Pods
+Here's the fundamental challenge:
 
-## Service Types
+1. **Pods are ephemeral** -- they get created and destroyed constantly. A Pod's IP address is not reliable.
+2. **Pods are anonymous** -- you don't know their IPs ahead of time, and you shouldn't have to.
+3. **Pods are load-balanced** -- you typically have multiple replicas, and you want traffic spread across all of them.
+4. **Pods are internal** -- by default, nothing outside the cluster can reach them.
 
-| Type | Scope | Use Case |
-|------|-------|----------|
-| ClusterIP | Internal only | Service-to-service communication |
-| NodePort | External via `<NodeIP>:<Port>` | Dev/test access |
-| LoadBalancer | External via cloud LB | Production external access |
-| ExternalName | DNS CNAME | Alias to an external service |
+Services solve all four of these problems.
 
-## ClusterIP Service
+## What is a Service?
+
+A **Service** is a stable abstraction that provides:
+
+- A **fixed virtual IP address** (ClusterIP) that never changes
+- A **DNS name** (`my-service.my-namespace.svc.cluster.local`) that resolves to that IP
+- **Automatic load balancing** across all healthy Pods that match its selector
+- A **decoupling layer** between consumers and producers -- consumers talk to the Service, not the Pods
+
+When you create a Service, Kubernetes assigns it a ClusterIP and creates DNS entries. The Service uses a **selector** to find matching Pods and programs `iptables` or `IPVS` rules to distribute traffic across them.
+
+### How Services Route Traffic
+
+```text
+Client Pod
+    │
+    ▼  "I need to talk to web-service"
+Service (ClusterIP: 10.96.0.100)
+    │
+    ├──► Pod-1 (10.244.1.5) ←────┐
+    ├──► Pod-2 (10.244.2.8)      │ Round-robin load balancing
+    └──► Pod-3 (10.244.3.12) ←───┘
+```
+
+The client never knows (or cares) which Pod handles its request. If Pod-2 dies, the Service automatically stops sending traffic to it and routes to the remaining healthy Pods.
+
+## Why Does It Matter?
+
+- **Stable networking for unstable Pods.** Without Services, every Deployment change or Pod restart would break every client that connects to your app.
+- **Built-in load balancing.** No need to set up HAProxy or Nginx for internal traffic. Kubernetes does it for you.
+- **Service discovery via DNS.** Any Pod can reach any Service by name. No configuration files, no service registries.
+- **Controlled external access.** NodePort and LoadBalancer Services let you expose specific workloads to the outside world.
+- **Ingress enables smart routing.** One entry point can route to dozens of Services based on URL path or hostname.
+
+## Service Types Explained
+
+Kubernetes offers four Service types. Each one controls how the Service is exposed:
+
+| Type | Scope | How You Access It | Use Case |
+|------|-------|-------------------|----------|
+| **ClusterIP** | Internal only | `my-service.namespace.svc.cluster.local` | Service-to-service communication within the cluster |
+| **NodePort** | External via node IP | `<AnyNodeIP>:<NodePort>` (port 30000-32767) | Dev/test access, or when you don't have a cloud load balancer |
+| **LoadBalancer** | External via cloud LB | Cloud provider gives you an external IP | Production external access on cloud clusters (AWS, GCP, Azure) |
+| **ExternalName** | DNS alias | Returns a CNAME record | Pointing to an external service (like a managed database) |
+
+### ClusterIP (Default)
+
+This is the most common Service type. It gives your workloads a stable internal IP and DNS name. **Nothing outside the cluster can reach it.** This is what you use for internal microservices, databases, and cache layers.
+
+```yaml
+apiVersion: v1                       # Core API group for Services
+kind: Service
+metadata:
+  name: api-service                  # The DNS name: api-service.default.svc.cluster.local
+spec:
+  type: ClusterIP                   # Default value -- could omit this line entirely
+  selector:
+    app: api                         # Route traffic to Pods with this label
+  ports:
+    - name: http                     # Named port (useful when a Service has multiple ports)
+      protocol: TCP                 # Default is TCP; also supports UDP, SCTP
+      port: 80                      # The port the Service listens on (what clients connect to)
+      targetPort: 3000              # The port the container listens on (inside the Pod)
+```
+
+The key relationship: **Clients connect to `port:80`, the Service forwards to `targetPort:3000`** on the Pod. This decoupling means you can change the container port without changing what clients connect to.
+
+Verify the Service:
+
+```bash
+kubectl apply -f api-service.yaml
+kubectl get svc api-service
+```
+
+```text
+NAME          TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+api-service   ClusterIP   10.96.142.58    <none>        80/TCP    5s
+```
+
+### NodePort
+
+A NodePort opens a port (30000-32767 by default) on **every node** in the cluster and routes traffic from that port to your Service. It builds on top of ClusterIP.
 
 ```yaml
 apiVersion: v1
@@ -37,41 +114,187 @@ kind: Service
 metadata:
   name: web-service
 spec:
+  type: NodePort                    # Opens a port on every cluster node
   selector:
     app: web
   ports:
-    - port: 80          # Service port
-      targetPort: 3000  # Pod port
-  type: ClusterIP
+    - port: 80                      # Service port (internal)
+      targetPort: 3000              # Container port
+      nodePort: 30080              # Port on each node (30000-32767 range)
 ```
 
-## NodePort Service
+Now you can reach your app at `<AnyNodeIP>:30080`. If you have three nodes at 10.0.0.1, 10.0.0.2, and 10.0.0.3, all three of these work:
+
+```text
+http://10.0.0.1:30080
+http://10.0.0.2:30080
+http://10.0.0.3:30080
+```
+
+Even if the Pod isn't running on that specific node, the traffic gets routed to the right place.
+
+### LoadBalancer
+
+A LoadBalancer Service is what you use in production on cloud clusters. It provisions an external load balancer (AWS ELB, GCP Cloud Load Balancer, Azure Load Balancer) and routes traffic to the NodePort.
 
 ```yaml
 apiVersion: v1
 kind: Service
 metadata:
-  name: web-service
+  name: web-lb
 spec:
+  type: LoadBalancer               # Cloud provider creates an external LB
   selector:
     app: web
   ports:
     - port: 80
       targetPort: 3000
-      nodePort: 30080   # Port on each node (30000-32767)
-  type: NodePort
 ```
 
-## Ingress
+```bash
+kubectl get svc web-lb
+```
 
-Ingress is a higher-level HTTP router — it handles host-based and path-based routing:
+```text
+NAME     TYPE           CLUSTER-IP     EXTERNAL-IP      PORT(S)        AGE
+web-lb   LoadBalancer   10.96.44.12    203.0.113.42     80:31234/TCP   2m
+```
+
+The `EXTERNAL-IP` is your public entry point. It might take a minute or two for the cloud provider to provision the load balancer.
+
+**Warning:** Each LoadBalancer Service costs money on cloud providers. If you have 10 microservices, that's 10 load balancers. This is exactly the problem Ingress solves -- one load balancer, many Services.
+
+### ExternalName
+
+This is a special Service type that doesn't route to Pods at all. It returns a CNAME record, pointing to an external DNS name.
 
 ```yaml
-apiVersion: networking.k8s.io/v1
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-database
+spec:
+  type: ExternalName
+  externalName: db.prod.example.com   # CNAME record pointing here
+```
+
+Now your in-cluster code can connect to `external-database.default.svc.cluster.local` and it resolves to `db.prod.example.com`. This is great for migrating to managed services or abstracting external dependencies.
+
+## Selector-Based Routing
+
+The `selector` field is the glue between a Service and its Pods. The Service continuously watches for Pods that match the selector and updates its routing table automatically.
+
+```yaml
+# Service selector
+selector:
+  app: web
+  environment: production
+```
+
+This Service routes to any Pod with **both** labels: `app: web` AND `environment: production`. If you add a new Pod with matching labels, the Service starts routing to it immediately. Remove a label? The Service stops sending traffic. No restart required.
+
+**Important:** If you change a Pod's labels, the Service relationship changes instantly. Be careful with label changes on running Pods.
+
+## Ingress: The Traffic Cop
+
+If Services are phone numbers, **Ingress** is the smart receptionist who directs visitors to the right department. Instead of exposing each Service with its own LoadBalancer (expensive!), you expose one Ingress controller and route traffic based on:
+
+- **Hostname** -- `api.example.com` goes to the API Service, `app.example.com` goes to the frontend
+- **URL path** -- `/api` goes to the API Service, `/` goes to the web Service
+- **Both** -- combine hostname and path for fine-grained control
+
+### Ingress Controller: The Missing Piece
+
+An **Ingress resource** is just a rule file. It doesn't do anything by itself. You need an **Ingress Controller** -- a reverse proxy (like Nginx, Traefik, or Kong) that reads Ingress rules and actually routes the traffic.
+
+Think of it this way: the Ingress resource is the list of routing rules, and the Ingress Controller is the router that enforces them. Without a controller, Ingress rules are just wishful thinking.
+
+Common Ingress Controllers:
+
+| Controller | Best For | Key Feature |
+|------------|----------|-------------|
+| **Nginx Ingress** | Most workloads | Battle-tested, wide community support |
+| **Traefik** | Cloud-native stacks | Auto-discovery, great dashboard |
+| **Kong** | API management | Plugins for auth, rate limiting, logging |
+| **Istio Gateway** | Service mesh setups | Integrated with Istio's mesh features |
+
+### Path-Based Routing
+
+```yaml
+apiVersion: networking.k8s.io/v1      # Ingress lives in the networking API group
 kind: Ingress
 metadata:
-  name: web-ingress
+  name: app-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /   # Strip the path prefix before forwarding
 spec:
+  ingressClassName: nginx             # Which Ingress Controller handles this resource
+  rules:
+    - host: app.example.com           # Match this hostname
+      http:
+        paths:
+          - path: /                   # Root path goes to the frontend
+            pathType: Prefix          # Prefix matching: /, /about, /contact all match
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 80
+          - path: /api                # /api/* goes to the API backend
+            pathType: Prefix
+            backend:
+              service:
+                name: api-service
+                port:
+                  number: 80
+          - path: /ws                 # /ws/* goes to the WebSocket backend
+            pathType: Prefix
+            backend:
+              service:
+                name: ws-service
+                port:
+                  number: 80
+```
+
+### Host-Based Routing
+
+You can also route based on different hostnames -- useful when you have multiple apps on the same cluster:
+
+```yaml
+spec:
+  rules:
+    - host: shop.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: shop-frontend
+                port:
+                  number: 80
+    - host: blog.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: blog-frontend
+                port:
+                  number: 80
+```
+
+### TLS Termination
+
+Ingress can handle HTTPS for you. It terminates the TLS connection at the Ingress Controller and forwards plain HTTP to your Services. This means your Pods don't need TLS certificates -- the Ingress handles it.
+
+```yaml
+spec:
+  tls:                                # TLS configuration
+    - hosts:
+        - app.example.com             # This hostname uses TLS
+      secretName: app-tls-secret      # Reference to a Kubernetes Secret with the cert
   rules:
     - host: app.example.com
       http:
@@ -80,7 +303,84 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: web-service
+                name: frontend-service
+                port:
+                  number: 80
+```
+
+The `app-tls-secret` must contain `tls.crt` and `tls.key`. You can create it manually or use **cert-manager** for automatic certificate provisioning with Let's Encrypt.
+
+## Practical Example: Multi-Service Application
+
+Let's wire up a complete setup with a frontend, an API, and Ingress routing.
+
+**Project structure:**
+
+```text
+k8s/
+├── frontend-deployment.yaml
+├── api-deployment.yaml
+├── frontend-service.yaml
+├── api-service.yaml
+└── ingress.yaml
+```
+
+**frontend-service.yaml:**
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+spec:
+  type: ClusterIP                    # Internal only -- Ingress handles external access
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 3000
+```
+
+**api-service.yaml:**
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-service
+spec:
+  type: ClusterIP
+  selector:
+    app: api
+  ports:
+    - port: 80
+      targetPort: 8080
+```
+
+**ingress.yaml:**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - myapp.example.com
+      secretName: myapp-tls
+  rules:
+    - host: myapp.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
                 port:
                   number: 80
           - path: /api
@@ -92,11 +392,72 @@ spec:
                   number: 80
 ```
 
-## Common Commands
+Deploy everything:
 
 ```bash
-kubectl get svc                    # List services
-kubectl describe svc web-service  # Service details
-kubectl get ingress               # List ingress rules
-kubectl port-forward svc/web 8080:80  # Local access
+kubectl apply -f k8s/
+kubectl get ingress
 ```
+
+```text
+NAME          CLASS   HOSTS                ADDRESS          PORTS     AGE
+app-ingress   nginx   myapp.example.com    203.0.113.50     80, 443   30s
+```
+
+Now traffic flows like this:
+
+```text
+Internet
+    │
+    ▼
+Ingress Controller (203.0.113.50)
+    │
+    ├── /        ──►  frontend-service ──►  Frontend Pods (:3000)
+    └── /api     ──►  api-service      ──►  API Pods (:8080)
+```
+
+One IP address, one TLS certificate, multiple backends. That's the power of Ingress.
+
+## Common Pitfalls and Tips
+
+| Pitfall | What Goes Wrong | How to Fix It |
+|---------|----------------|---------------|
+| **No Ingress Controller installed** | Ingress resources are created but nothing happens | Install one: `kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml` |
+| **Selector doesn't match any Pods** | Service has endpoints but no traffic flows | Check with `kubectl get endpoints <service-name>` -- if it shows `<none>`, your selector is wrong |
+| **Using NodePort in production** | Exposing high ports is awkward and insecure | Use LoadBalancer or Ingress for production |
+| **Too many LoadBalancer Services** | Each one costs money and creates a cloud LB | Consolidate behind Ingress |
+| **Forgetting `ingressClassName`** | Ingress rules are ignored if no controller is specified | Add `ingressClassName: nginx` (or your controller's name) |
+| **Mixed pathType values** | `Prefix` vs `Exact` behave differently and can cause routing surprises | Use `Prefix` for most cases; `Exact` only when you need precise matching |
+| **TLS Secret missing** | HTTPS doesn't work, Ingress falls back to HTTP | Create the Secret or use cert-manager for auto-provisioning |
+
+### Pro Tips
+
+- Use `kubectl port-forward svc/web-service 8080:80` to test a Service locally without exposing it.
+- Check Service endpoints with `kubectl get endpoints <service-name>` -- this tells you if the selector is working.
+- Use `kubectl describe svc <name>` to see the full list of endpoints the Service is routing to.
+- For local development, tools like `minikube tunnel` or `kind` with port mappings make LoadBalancer Services accessible on localhost.
+- Prefer Ingress over multiple LoadBalancer Services -- it's cheaper and gives you more routing control.
+
+## Key Commands Reference
+
+```bash
+# Working with Services
+kubectl get svc                              # List all Services
+kubectl describe svc <name>                  # Detailed Service info and endpoints
+kubectl get endpoints <name>                 # See which Pods the Service routes to
+kubectl expose deployment <name> --port=80 --target-port=3000  # Quick way to create a Service
+
+# Testing Service connectivity
+kubectl port-forward svc/web-service 8080:80   # Forward local port 8080 to the Service
+kubectl run test --image=busybox --rm -it -- wget -qO- http://api-service:80  # Test from inside the cluster
+
+# Working with Ingress
+kubectl get ingress                          # List all Ingress resources
+kubectl describe ingress <name>              # Detailed Ingress rules and backend info
+kubectl get ingressclass                     # List available Ingress classes
+
+# Debugging
+kubectl get events --field-selector reason=CreatingLoadBalancerFailed  # Check LB provisioning errors
+```
+
+<Diagram config={k8sServicesIngress} />

@@ -3,27 +3,63 @@ title: "Multi-Stage Builds"
 module: docker
 level: intermediate
 duration: "30 min"
-description: "Optimize images with multi-stage builds and reduce final image size."
+diagram: docker-multi-stage-build
+description: "Dramatically reduce image size with multi-stage builds and distroless images."
 order: 4
 ---
 
-# Multi-Stage Builds
+# Multi-Stage Builds: Ship the Product, Not the Factory
 
-Multi-stage builds let you use multiple `FROM` statements in a single Dockerfile. Each `FROM` starts a new stage, and you can copy artifacts from one stage to another — discarding everything you don't need in the final image.
+Imagine you're manufacturing a car. The factory has enormous machines — stamping presses, welding robots, paint booths. But when the car is finished, you don't ship the factory to the customer. You ship only the car. The factory stays behind.
 
-## Why Multi-Stage?
+That's exactly what multi-stage builds do for Docker images. The build process needs compilers, build tools, development dependencies, and source code. But the runtime? It only needs the compiled output and a minimal runtime environment. Multi-stage builds let you use the full factory to build your application, then copy only the finished product into a clean, minimal image.
 
-A typical Node.js build needs dev dependencies, a compiler, and build tools. But the **runtime** only needs `node` and your compiled output. Without multi-stage builds, your image carries hundreds of MB of unnecessary tools.
+## The Problem With Fat Images
 
-| Approach | Image Size | Contains |
-|----------|-----------|----------|
-| Single-stage | ~1.2 GB | Build tools, dev deps, source |
-| Multi-stage | ~180 MB | Node runtime, compiled app |
-
-## Basic Pattern
+Let's see the problem firsthand. Here's a naive Dockerfile for a Go application:
 
 ```dockerfile
-# Stage 1: Build
+FROM golang:1.22
+WORKDIR /app
+COPY . .
+RUN go build -o server main.go
+CMD ["./server"]
+```
+
+Sounds reasonable, right? But let's check the size:
+
+```bash
+docker images my-go-app
+# REPOSITORY   TAG   SIZE
+# my-go-app    latest   1.2GB
+```
+
+**1.2 gigabytes.** For a simple Go HTTP server. Why? Because the `golang:1.22` base image includes the entire Go toolchain, build tools, and a full Debian installation. Your compiled binary might only be 10MB, but you're shipping 1.2GB of unnecessary weight.
+
+Now compare that with a multi-stage build:
+
+```bash
+docker images my-go-app-multistage
+# REPOSITORY           TAG   SIZE
+# my-go-app-multistage latest   15MB
+```
+
+**15 megabytes.** That's 80 times smaller. Same application. Same functionality. The difference? Multi-stage builds left the factory behind.
+
+## Why Does It Matter?
+
+- **Faster deployments** — A 15MB image downloads in under a second. A 1.2GB image takes minutes. In auto-scaling scenarios, this delay directly impacts your ability to respond to traffic spikes.
+- **Lower storage costs** — Container registries charge by storage. 80x smaller images mean 80x lower registry costs across all your services.
+- **Reduced attack surface** — Fewer packages in the image means fewer vulnerabilities. A compiler in your image can't be exploited if it's not there.
+- **Faster builds in CI/CD** — Smaller images build, push, and pull faster. Your deployment pipeline goes from minutes to seconds.
+- **Better resource efficiency** — Smaller images use less disk I/O, less memory for caching, and less bandwidth. At scale, this adds up.
+
+## How Multi-Stage Builds Work
+
+A multi-stage Dockerfile has multiple `FROM` statements. Each `FROM` starts a new stage — a completely separate build environment. Stages are independent, but you can copy artifacts from one stage to another using `COPY --from=<stage>`.
+
+```dockerfile
+# ============ STAGE 1: Build ============
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
@@ -31,7 +67,7 @@ RUN npm ci
 COPY . .
 RUN npm run build
 
-# Stage 2: Production
+# ============ STAGE 2: Run ============
 FROM node:20-alpine
 WORKDIR /app
 COPY --from=builder /app/dist ./dist
@@ -40,34 +76,261 @@ EXPOSE 3000
 CMD ["node", "dist/server.js"]
 ```
 
-## Key Techniques
+Let's trace what happens:
 
-- **`AS` keyword** — Name a stage so you can reference it with `--from=builder`
-- **`COPY --from=`** — Copy artifacts from a previous stage
-- **`docker build --target`** — Build only up to a specific stage for debugging
+1. **Stage 1 (`builder`)** starts from `node:20-alpine` and installs all dependencies (including dev dependencies). It compiles the application. This stage might be 400MB, but that's fine — it's temporary.
 
-## Real-World Example: Go
+2. **Stage 2** starts from a fresh `node:20-alpine` — a clean slate. It copies ONLY `dist/` and `node_modules/` from the builder stage. Everything else (source code, dev dependencies, build tools) is left behind.
+
+3. The final image contains only Stage 2. Stage 1 is discarded entirely.
+
+### The FROM ... AS Syntax
+
+```dockerfile
+FROM node:20-alpine AS builder
+```
+
+- **`AS builder`** — Names this stage `builder`. You can reference it later with `COPY --from=builder`.
+- Without `AS`, you'd have to reference stages by their index number (`COPY --from=0`), which is fragile and hard to read.
+
+### The COPY --from= Syntax
+
+```dockerfile
+COPY --from=builder /app/dist ./dist
+```
+
+- **`--from=builder`** — Copy from the `builder` stage instead of from the build context (your host machine).
+- **`/app/dist`** — The source path inside the builder stage.
+- **`./dist`** — The destination path in the current (runtime) stage.
+
+You can copy from any named stage, and even from external images:
+
+```dockerfile
+# Copy a binary from an entirely different image
+COPY --from=alpine:3.19 /bin/sh /usr/local/bin/sh
+```
+
+### The --target Flag
+
+Sometimes you want to build only up to a specific stage — useful for debugging:
+
+```bash
+# Build only the builder stage to inspect it
+docker build --target builder -t my-app:debug .
+
+# Run the debug image to inspect build artifacts
+docker run --rm my-app:debug ls -la /app/dist
+```
+
+This is invaluable when your build fails and you need to figure out why. Instead of guessing, you can build up to the failing stage and explore.
+
+## Size Comparison: The Numbers Don't Lie
+
+| Approach | Image Size | What's Inside |
+|----------|-----------|---------------|
+| Single-stage Node.js (Debian) | ~1.2 GB | Full OS, Go/Node toolchain, dev deps, source, compiled output |
+| Multi-stage Node.js (Alpine) | ~180 MB | Alpine OS, Node runtime, production deps, compiled app |
+| Multi-stage Go (scratch) | ~10-15 MB | Only the compiled binary — zero OS |
+| Multi-stage Go (distroless) | ~20-25 MB | Compiled binary + minimal runtime (ca-certs, timezone data) |
+| Multi-stage Node.js (distroless) | ~100 MB | Node runtime + production deps, no shell, no package manager |
+
+## Distroless Images: Taking Minimalism Further
+
+Google's distroless images take the minimal-image concept to the extreme. They contain:
+
+- Your application and its dependencies
+- SSL certificates (for HTTPS)
+- Timezone data
+- A non-root user
+
+What they **don't** contain:
+- No shell (`sh`, `bash`)
+- No package manager (`apt`, `apk`, `yum`)
+- No standard Linux utilities (`ls`, `cat`, `grep`)
+- Nothing you don't explicitly add
 
 ```dockerfile
 # Build stage
-FROM golang:1.22 AS builder
+FROM node:20-alpine AS builder
 WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Distroless runtime stage
+FROM gcr.io/distroless/nodejs20-debian12
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+EXPOSE 3000
+CMD ["dist/server.js"]
+```
+
+**Why no shell matters:** If an attacker gains access to your container, they can't run commands. There's no `sh` to execute. This dramatically limits what an attacker can do.
+
+**The tradeoff:** Debugging is harder. You can't `docker exec -it <container> sh` because there's no shell. For debugging, use `docker cp` to extract files or build a debug variant with a shell.
+
+## Practical Example: Go Microservice
+
+Go is the poster child for multi-stage builds because it compiles to a single static binary. No runtime dependencies needed.
+
+**Project structure:**
+
+```
+my-go-service/
+├── Dockerfile
+├── go.mod
+├── go.sum
+└── main.go
+```
+
+**main.go:**
+
+```go
+package main
+
+import (
+    "fmt"
+    "net/http"
+)
+
+func handler(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprintf(w, "Hello from Go! Version 1.0.0")
+}
+
+func main() {
+    http.HandleFunc("/", handler)
+    fmt.Println("Server starting on :8080")
+    http.ListenAndServe(":8080", nil)
+}
+```
+
+**Dockerfile:**
+
+```dockerfile
+# Stage 1: Build the binary
+FROM golang:1.22-alpine AS builder
+
+# Install build dependencies (e.g., for CGO if needed)
+RUN apk add --no-cache git
+
+WORKDIR /app
+
+# Copy dependency manifests first for layer caching
 COPY go.mod go.sum ./
 RUN go mod download
-COPY . .
-RUN CGO_ENABLED=0 go build -o /server
 
-# Minimal runtime
+# Copy source code and build
+COPY . .
+
+# Build a statically linked binary
+# CGO_ENABLED=0: Disable CGO for static linking
+# -ldflags="-s -w": Strip debug info and symbol table for smaller binary
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /server main.go
+
+# Stage 2: Minimal runtime with scratch
 FROM scratch
+
+# Copy CA certificates from builder (needed for HTTPS requests)
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# Copy the compiled binary
 COPY --from=builder /server /server
+
+# Expose the port
+EXPOSE 8080
+
+# Run the binary
 ENTRYPOINT ["/server"]
 ```
 
-The `scratch` image has **zero OS overhead** — only your compiled binary.
+**Build and run:**
 
-## Tips
+```bash
+docker build -t my-go-service:1.0 .
+docker run -d -p 8080:8080 --name go-svc my-go-service:1.0
 
-1. Order stages from heaviest (build) to lightest (runtime)
-2. Use `--target` to test intermediate stages: `docker build --target builder -t debug .`
-3. Combine with `.dockerignore` to keep build context small
-4. Pin base image tags — avoid `latest` in production
+# Test it
+curl http://localhost:8080
+# Expected: Hello from Go! Version 1.0.0
+```
+
+**Check the size:**
+
+```bash
+docker images my-go-service
+# REPOSITORY       TAG   SIZE
+# my-go-service    1.0   ~10MB
+```
+
+10 megabytes. That's the Go binary plus SSL certificates. No OS, no package manager, no shell. The smallest possible image.
+
+**Important note on `FROM scratch`:** The `scratch` image is literally empty — it's Docker's special base image with zero content. You can't add packages, there's no shell, no init system. It works perfectly for Go because the binary is self-contained. For languages that need a runtime (Node.js, Python, Java), use distroless or Alpine instead.
+
+## Practical Example: Node.js with Multi-Stage
+
+Let's do the same for a Node.js application that uses a build step (like TypeScript or a bundler).
+
+```dockerfile
+# Stage 1: Install ALL dependencies and build
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy dependency manifests
+COPY package*.json ./
+
+# Install ALL dependencies (including devDependencies for building)
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Build the application (TypeScript compilation, bundling, etc.)
+RUN npm run build
+
+# Stage 2: Production image with only production dependencies
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy dependency manifests
+COPY package*.json ./
+
+# Install ONLY production dependencies
+RUN npm ci --only=production
+
+# Copy built artifacts from the builder stage
+COPY --from=builder /app/dist ./dist
+
+# Don't run as root
+USER node
+
+EXPOSE 3000
+CMD ["node", "dist/server.js"]
+```
+
+**Why reinstall dependencies in Stage 2?** Because `npm ci --only=production` in Stage 2 skips dev dependencies. The builder stage needed `devDependencies` (TypeScript, build tools), but the runtime doesn't. This ensures your production image has the absolute minimum number of packages.
+
+## Common Pitfalls & Tips
+
+- **Copying everything from the builder** — `COPY --from=builder /app /app` defeats the purpose. Be selective — copy only what you need (`dist/`, `node_modules/`, specific config files).
+
+- **Forgetting CA certificates in scratch images** — If your Go service makes HTTPS requests (calling APIs, connecting to databases), you need SSL certificates. Always copy them from the builder: `COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/`
+
+- **Not using `--target` for debugging** — When your build fails in a multi-stage Dockerfile, don't guess. Use `docker build --target builder -t debug .` to build only up to the builder stage and inspect what went wrong.
+
+- **Using `latest` tags for base images** — In multi-stage builds, both stages should use pinned tags. `FROM node:latest` in any stage can introduce unexpected changes.
+
+- **Large final images despite multi-stage** — If your final image is still large, check what's in it with `docker history my-app:latest`. This shows each layer and its size, helping you identify what's bloating the image.
+
+- **Not combining with `.dockerignore`** — Multi-stage builds reduce the final image, but the build context still includes all your files. Use `.dockerignore` to keep the build context small and fast.
+
+- **Scratch images don't support `docker exec`** — You can't debug a scratch-based container with `docker exec -it <id> sh` because there's no shell. For debugging, build an Alpine-based variant or use `docker cp` to extract files.
+
+## Interactive Diagram
+
+See how multi-stage builds separate build and runtime environments:
+
+<Diagram config={dockerMultiStageBuild} />

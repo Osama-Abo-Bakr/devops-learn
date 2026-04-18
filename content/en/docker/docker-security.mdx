@@ -3,81 +3,418 @@ title: "Docker Security"
 module: docker
 level: intermediate
 duration: "35 min"
-description: "Secure your containers: least privilege, image scanning, and runtime protection."
+diagram: docker-security
+description: "Secure containers: least privilege, image scanning, secrets management, and runtime protection."
 order: 5
 ---
 
-# Docker Security
+# Docker Security: Locking Down Your Containers
 
-Containers are not inherently secure — they share the host kernel. Security requires deliberate configuration at every layer: image, runtime, network, and host.
+Imagine you're the owner of an apartment building. Every tenant gets their own unit with a lock on the door — that's container isolation. But all tenants share the same building foundation, the same plumbing, and the same electrical system — that's the shared kernel. If one tenant figures out how to access the shared infrastructure, every unit is at risk.
+
+This is the fundamental reality of container security. Containers provide isolation, but it's not the same as the hard wall between virtual machines. A container exploit that reaches the kernel can potentially affect the entire host — and every other container running on it. Security in Docker isn't automatic; it requires deliberate configuration at every layer.
+
+## The Shared Kernel Risk
+
+Let's be precise about the threat. Containers share the host's Linux kernel. This means:
+
+- A kernel vulnerability in the host affects all containers
+- A container breakout (escaping to the host) is possible if the kernel has bugs
+- Containers on the same host can potentially interfere with each other through kernel resources
+
+This doesn't mean containers are inherently insecure — it means you need to apply security in depth. You don't rely on a single lock; you use multiple layers.
+
+## Why Does It Matter?
+
+- **Containers often run in production with sensitive data** — Database credentials, API keys, and user data flow through your containers. A single misconfiguration can expose all of it.
+- **The default configuration is insecure** — Docker's defaults prioritize ease of use over security. Containers run as root, the filesystem is writable, and there are no resource limits. You must actively secure them.
+- **Supply chain attacks are real** — Malicious base images, compromised dependencies, and image tampering are documented attack vectors. You need a strategy to verify what you're running.
+- **Kernel exploits cross container boundaries** — Unlike VMs, a kernel exploit in one container can affect the entire host. Minimizing privilege reduces the blast radius.
+- **Compliance requirements** — SOC 2, PCI-DSS, and HIPAA all require specific security controls. Running containers without hardening is a compliance violation.
 
 ## The Container Security Stack
 
-| Layer | Concern | Example |
-|-------|---------|---------|
-| Image | Vulnerabilities, secrets | `docker scout`, `.dockerignore` |
-| Runtime | Privilege escalation | `--user`, `--read-only` |
-| Network | Lateral movement | Custom networks, `--icc=false` |
-| Host | Kernel exploits | Seccomp, AppArmor |
+Think of container security as a stack of four layers. You need protections at each one:
 
-## Run as Non-Root
+| Layer | What's at Risk | Key Defenses |
+|-------|---------------|--------------|
+| **Image** | Vulnerabilities, secrets, bloated attack surface | Scanning, `.dockerignore`, distroless images |
+| **Runtime** | Privilege escalation, unauthorized writes | Non-root user, read-only filesystem, capabilities |
+| **Network** | Lateral movement, unauthorized access | Custom networks, port restrictions, encrypted traffic |
+| **Host** | Kernel exploits, resource exhaustion | Seccomp, AppArmor, resource limits, kernel updates |
 
-By default, containers run as root. This is dangerous if an attacker breaks out.
+Let's walk through each defense in detail.
+
+## Least Privilege: The Golden Rule
+
+The principle of least privilege is simple: give a container only the permissions it absolutely needs to function. Nothing more. If your web server doesn't need to modify files, don't let it. If it doesn't need raw network access, don't give it.
+
+### Running as Non-Root
+
+By default, Docker containers run as root (UID 0). This means if an attacker breaks into your container, they have root privileges inside it. Combined with a kernel vulnerability, this can lead to a full host takeover.
+
+**Fix it in the Dockerfile:**
 
 ```dockerfile
 FROM node:20-alpine
 WORKDIR /app
+
+# Copy files and set ownership to the 'node' user
 COPY --chown=node:node . .
+
+# Switch to the non-root user
 USER node
+
 CMD ["node", "server.js"]
 ```
 
-Or at runtime:
+The `node` base image includes a pre-created `node` user (UID 1000). The `--chown=node:node` flag ensures the files are owned by that user, and `USER node` switches the runtime identity.
+
+**Fix it at runtime:**
 
 ```bash
 docker run --user 1000:1000 my-app
 ```
 
-## Read-Only Filesystem
+This overrides the Dockerfile's USER directive with a specific UID:GID. Useful when you can't modify the image.
 
-Prevent runtime writes to the filesystem:
+**Why does this matter?** A process running as a non-root user inside the container has significantly fewer capabilities. It can't modify system files, install packages, or change network configuration. Even if the container is compromised, the attacker's options are severely limited.
+
+### Dropping Linux Capabilities
+
+Linux capabilities break root's monolithic power into specific permissions. By default, Docker containers get a limited set of capabilities, but you can reduce them further:
+
+```bash
+docker run \
+  --cap-drop ALL \
+  --cap-add NET_BIND_SERVICE \
+  my-web-app
+```
+
+- **`--cap-drop ALL`** — Remove ALL capabilities first
+- **`--cap-add NET_BIND_SERVICE`** — Add back only the ability to bind to ports below 1024
+
+This is the most secure approach: start with nothing, add only what you need.
+
+**Common capabilities and when you need them:**
+
+| Capability | What It Allows | When You Need It |
+|-----------|---------------|-----------------|
+| `NET_BIND_SERVICE` | Bind to ports below 1024 | Web servers on port 80/443 |
+| `SYS_PTRACE` | Trace process system calls | Debugging tools (don't use in production) |
+| `CHOWN` | Change file ownership | Rarely needed at runtime |
+| `SETUID`/`SETGID` | Switch user/group identity | Almost never needed |
+| `DAC_OVERRIDE` | Bypass file permission checks | Almost never needed |
+
+### Read-Only Filesystem
+
+If your application only reads files at runtime (which is true for most web services), make the filesystem read-only:
 
 ```bash
 docker run --read-only --tmpfs /tmp my-app
 ```
 
-Use `--tmpfs` for directories that must be writable (like `/tmp`).
+- **`--read-only`** — Mounts the entire container filesystem as read-only. The container cannot write anywhere.
+- **`--tmpfs /tmp`** — Creates a writable tmpfs mount at `/tmp`. Some applications need a temporary directory for runtime operations.
 
-## Image Scanning
+**Why this helps:** If an attacker tries to write a malicious script or modify a configuration file, the write fails. The filesystem is immutable at runtime.
 
-Scan images for known vulnerabilities before deploying:
-
-```bash
-# Using Docker Scout
-docker scout cves my-app:latest
-
-# Using Trivy
-trivy image my-app:latest
-```
-
-## Resource Limits
-
-Prevent denial-of-service by capping resources:
+**Some applications need specific writable paths.** You can mount tmpfs for those:
 
 ```bash
 docker run \
-  --memory 512m \
-  --cpus 1.0 \
-  --pids-limit 100 \
+  --read-only \
+  --tmpfs /tmp \
+  --tmpfs /var/run \
+  --tmpfs /home/app/.cache \
   my-app
 ```
 
-## Security Checklist
+## Image Scanning: Know What's Inside Your Image
 
-- Don't run as root (`USER` directive)
-- Use `--read-only` where possible
-- Scan images for CVEs regularly
-- Set resource limits (memory, CPU, PIDs)
-- Never store secrets in images — use Docker secrets or env vars from orchestrators
-- Pin image tags and verify digests (`image@sha256:...`)
-- Keep Docker and the host OS updated
+Every image you pull or build contains software, and software has vulnerabilities. Image scanning checks every package in your image against known vulnerability databases (CVEs).
+
+### Scanning with Trivy
+
+Trivy is a popular open-source scanner that's easy to use:
+
+```bash
+# Install Trivy (macOS)
+brew install trivy
+
+# Scan a local image
+trivy image my-app:latest
+
+# Scan with severity filtering (only critical/high)
+trivy image --severity CRITICAL,HIGH my-app:latest
+
+# Scan and fail the build if vulnerabilities are found
+trivy image --exit-code 1 --severity CRITICAL my-app:latest
+```
+
+**Example output:**
+
+```
+my-app:latest (alpine 3.19.2)
+==============================
+Total: 2 (CRITICAL: 1, HIGH: 1)
+
+┌───────────┬─────────────┬──────────┬───────────────────┐
+│ Library   │ Vulnerability│ Severity │ Fixed Version     │
+├───────────┼─────────────┼──────────┼───────────────────┤
+│ libcurl   │ CVE-2024-NNN│ CRITICAL │ 8.5.0-r1          │
+│ openssl   │ CVE-2024-NNN│ HIGH     │ 3.2.1-r0          │
+└───────────┴─────────────┴──────────┴───────────────────┘
+```
+
+### Scanning with Docker Scout
+
+Docker Scout is Docker's built-in scanning tool (available with a Docker Pro subscription):
+
+```bash
+# Scan an image
+docker scout cves my-app:latest
+
+# Compare two versions to find new vulnerabilities
+docker scout compare --from my-app:1.0 --to my-app:2.0
+```
+
+### Integrating Scanning into CI/CD
+
+Image scanning should happen automatically in your build pipeline:
+
+```yaml
+# GitHub Actions example
+- name: Build image
+  run: docker build -t my-app:${{ github.sha }} .
+
+- name: Scan for vulnerabilities
+  run: |
+    trivy image --exit-code 1 \
+      --severity CRITICAL,HIGH \
+      --ignore-unfixed \
+      my-app:${{ github.sha }}
+```
+
+This ensures no image with critical unfixed vulnerabilities reaches production.
+
+## Secrets Management: Never Put Secrets in Images
+
+This is the most common security mistake in Docker: baking secrets (passwords, API keys, tokens) into the image. Once an image contains a secret, anyone with access to the image can extract it — even if you delete the secret in a later layer, the earlier layer still has it.
+
+**What counts as a secret?**
+
+- Database passwords
+- API keys (AWS, Stripe, SendGrid, etc.)
+- JWT signing keys
+- TLS private keys
+- OAuth client secrets
+
+**What NOT to do:**
+
+```dockerfile
+# NEVER DO THIS
+FROM node:20-alpine
+ENV DATABASE_PASSWORD=hunter2
+ENV AWS_SECRET_ACCESS_KEY=AKIA...
+```
+
+Even if you remove the ENV in a later layer, the original layer still contains the value. Anyone who runs `docker history` or inspects the layers can see it.
+
+**What to do instead:**
+
+### Option 1: Environment Variables at Runtime
+
+```bash
+docker run -e DATABASE_PASSWORD=hunter2 my-app
+```
+
+The secret is passed at runtime, not baked into the image. It exists only in the container's memory.
+
+### Option 2: Docker Secrets (Swarm Mode)
+
+```bash
+# Create a secret
+echo "hunter2" | docker secret create db_password -
+
+# Use it in a service
+docker service create \
+  --name my-app \
+  --secret db_password \
+  my-app
+```
+
+The secret is mounted as a file at `/run/secrets/db_password` inside the container. It's encrypted at rest and in transit, and never written to the image.
+
+### Option 3: Files Mounted at Runtime
+
+```bash
+docker run \
+  -v /path/to/secrets/db_password:/run/secrets/db_password:ro \
+  my-app
+```
+
+Mount a file from the host (or a secrets manager) as read-only. The application reads it at startup.
+
+### Option 4: External Secrets Managers
+
+For production, use a dedicated secrets manager:
+
+- **HashiCorp Vault** — Centralized secrets with rotation and auditing
+- **AWS Secrets Manager** — Integrated with IAM and auto-rotation
+- **Azure Key Vault** — Cloud-native with HSM backing
+- **GCP Secret Manager** — Google Cloud's secrets solution
+
+Your container fetches secrets at startup from the external manager, keeping them out of the image entirely.
+
+## Docker Content Trust: Verify Image Integrity
+
+How do you know the image you pulled is the one the publisher intended? Docker Content Trust uses digital signatures to verify image integrity.
+
+```bash
+# Enable content trust for pulls and pushes
+export DOCKER_CONTENT_TRUST=1
+
+docker pull my-registry/my-app:1.0
+# Docker verifies the image signature before pulling
+```
+
+With content trust enabled:
+- You can only pull signed images
+- You can only push signed images
+- Tampered images are rejected
+
+**Pin images by digest** for the strongest guarantee:
+
+```bash
+# Pull by digest instead of tag
+docker pull nginx@sha256:a1b2c3d4e5f6...
+```
+
+A tag (`nginx:1.25`) can point to different images over time. A digest (`sha256:...`) always points to the exact same image content. If someone replaces the image behind a tag, the digest won't match.
+
+## Security Benchmarks: The CIS Docker Benchmark
+
+The Center for Internet Security (CIS) publishes the Docker Benchmark — a comprehensive checklist of security best practices. Key recommendations include:
+
+- Keep Docker up to date
+- Set appropriate filesystem permissions on Docker files (`/var/lib/docker`, etc.)
+- Restrict Docker daemon network access
+- Configure `iptables` rules
+- Enable user namespace remapping
+- Use `--log-driver` to prevent log tampering
+- Set `ulimit` defaults
+- Disable inter-container communication by default
+
+You can automate benchmark checks with tools like **Docker Bench for Security**:
+
+```bash
+docker run --rm --net host --pid host \
+  --userns host --cap-drop all \
+  -v /etc:/etc:ro \
+  -v /lib/systemd/system:/lib/systemd/system:ro \
+  -v /usr/bin/containerd:/usr/bin/containerd:ro \
+  -v /var/lib/docker:/var/lib/docker:ro \
+  -v /var/run/docker.sock:/var/run/docker.sock:ro \
+  docker/docker-bench-security
+```
+
+This produces a detailed report of your Docker host's security posture.
+
+## Practical Example: A Hardened Production Dockerfile
+
+Let's put everything together into a production-ready, security-hardened Dockerfile:
+
+```dockerfile
+# Multi-stage build for minimal image
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Production stage with security hardening
+FROM node:20-alpine
+
+# Install security updates
+RUN apk update && apk upgrade --no-cache && rm -rf /var/cache/apk/*
+
+WORKDIR /app
+
+# Copy only production dependencies
+COPY package*.json ./
+RUN npm ci --only=production && npm cache clean --force
+
+# Copy built application from builder
+COPY --from=builder /app/dist ./dist
+
+# Create a non-root user and set ownership
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+COPY --chown=appuser:appgroup . .
+
+# Switch to non-root user
+USER appuser
+
+# Document the port
+EXPOSE 3000
+
+# Health check for runtime monitoring
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1) })"
+
+# Start the application
+CMD ["node", "dist/server.js"]
+```
+
+**Run it with maximum security constraints:**
+
+```bash
+docker run -d \
+  --name my-secure-app \
+  --read-only \
+  --tmpfs /tmp \
+  --cap-drop ALL \
+  --cap-add NET_BIND_SERVICE \
+  --memory 256m \
+  --cpus 0.5 \
+  --pids-limit 50 \
+  --security-opt no-new-privileges \
+  -e DATABASE_PASSWORD="$(cat /run/secrets/db_password)" \
+  -p 3000:3000 \
+  my-secure-app:1.0
+```
+
+Let's break down every security flag:
+
+- **`--read-only`** — The filesystem is immutable at runtime
+- **`--tmpfs /tmp`** — Only `/tmp` is writable (in memory, not on disk)
+- **`--cap-drop ALL`** — Remove all Linux capabilities
+- **`--cap-add NET_BIND_SERVICE`** — Add back only the ability to bind to low ports
+- **`--memory 256m`** — Cap memory at 256MB (prevents OOM from affecting other containers)
+- **`--cpus 0.5`** — Limit to half a CPU core
+- **`--pids-limit 50`** — Prevent fork bombs (max 50 processes)
+- **`--security-opt no-new-privileges`** — Prevent the process from gaining additional privileges via setuid/setgid binaries
+- **`-e DATABASE_PASSWORD=...`** — Pass secrets at runtime, not in the image
+
+## Common Pitfalls & Tips
+
+- **Running as root by default** — This is the most common security mistake. Always add `USER <non-root-user>` to your Dockerfile. If the base image doesn't have a non-root user, create one.
+
+- **Baking secrets into images** — ENV variables in Dockerfiles, `.env` files in the build context, and hardcoded credentials are all visible in the image layers. Use runtime secrets instead.
+
+- **Ignoring image scanning** — Vulnerabilities in base images and dependencies are discovered constantly. Scan every image before it reaches production, and re-scan on a schedule.
+
+- **Not updating base images** — A pinned Alpine or Node.js image from six months ago likely has known vulnerabilities. Rebuild regularly to pick up security patches.
+
+- **Using `--privileged` flag** — This disables ALL security restrictions and gives the container full access to the host. It should almost never be used. If you think you need it, you probably need a specific capability instead.
+
+- **Forgetting `no-new-privileges`** — This single flag prevents a process from escalating privileges. Add it to every container that doesn't explicitly need privilege escalation.
+
+- **Not scanning CI/CD pipeline images** — Your CI runner images need scanning too. A compromised build environment can inject malicious code into every image it produces.
+
+## Interactive Diagram
+
+Explore the layers of container security:
+
+<Diagram config={dockerSecurity} />

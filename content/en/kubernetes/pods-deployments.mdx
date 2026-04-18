@@ -10,63 +10,425 @@ order: 1
 
 # Pods and Deployments
 
-A **Pod** is the smallest deployable unit in Kubernetes. It contains one or more containers that share storage and network.
+Think of a Pod like an apartment in a building. The apartment itself isn't the person living there -- it's the *space* where one or more people (containers) live together, sharing the same address (network), the same plumbing (storage volumes), and the same front door (IP address). You don't manage the people directly -- the building manager (Deployment) takes care of making sure the right number of apartments are occupied and that when someone moves out, a replacement moves in right away.
+
+If that analogy clicked, you're already most of the way to understanding Pods and Deployments. Let's break it down properly.
 
 ## What is a Pod?
 
-- Smallest unit in the Kubernetes object model
-- Contains one or more containers
-- Containers in a pod share: network namespace, storage volumes, IPC
-- Typically one container per pod (sidecar pattern is an exception)
+A **Pod** is the smallest deployable unit in Kubernetes. It's not a container -- it's a *wrapper* around one or more containers that must run together on the same node.
 
-## Creating a Pod
+Here's what makes a Pod special:
+
+- **Shared network namespace** -- All containers in a Pod share the same IP address and port space. They can talk to each other over `localhost`. No need for service discovery between containers inside the same Pod.
+- **Shared storage volumes** -- Containers in the same Pod can mount the same volumes and share files instantly.
+- **Shared lifecycle** -- All containers in a Pod are scheduled together, started together, and terminated together. If one crashes, the whole Pod gets restarted.
+- **Typically one container per Pod** -- The most common pattern is one container per Pod. Multi-container Pods exist (sidecar, ambassador, adapter patterns), but they're the exception, not the rule.
+
+Think about it this way: if two processes *must* run on the same machine and share the same filesystem and network, put them in the same Pod. If they can run independently, put them in separate Pods.
+
+### Pod Anatomy
+
+Every Pod has:
+
+| Component | What It Does |
+|-----------|-------------|
+| **metadata.name** | The Pod's unique name within its namespace |
+| **spec.containers** | The list of containers running inside the Pod |
+| **spec.volumes** | Shared storage that containers can mount |
+| **status.phase** | Current state: Pending, Running, Succeeded, Failed, or Unknown |
+| **status.containerStatuses** | Per-container state, restart counts, and image info |
+
+## Why Does It Matter?
+
+- **Pods are how Kubernetes thinks about your application.** You don't deploy containers -- you deploy Pods. Understanding Pods is non-negotiable.
+- **Pods are ephemeral.** They get created, destroyed, and recreated constantly. If a node dies, all Pods on that node are gone. This is why you almost never create Pods directly.
+- **Shared networking simplifies communication.** Sidecar containers (like log collectors or proxies) can talk to the main container on `localhost` without any network configuration.
+- **Deployments give Pods superpowers.** Without a Deployment, a dead Pod stays dead. A Deployment ensures the desired number of replicas are always running.
+- **Rolling updates save you from downtime.** Deployments update Pods one at a time, so your users never notice.
+
+## Creating a Pod (The Hard Way)
+
+Let's create a Pod directly so you understand the structure -- even though in practice, you'll almost always use a Deployment instead.
 
 ```yaml
-apiVersion: v1
-kind: Pod
+apiVersion: v1                    # The Kubernetes API version for Pods
+kind: Pod                         # We're creating a Pod
 metadata:
-  name: nginx-pod
+  name: nginx-pod                 # The name of our Pod (must be unique in the namespace)
+  labels:                         # Labels are key-value pairs used for identification
+    app: nginx                    # This label lets Services and Deployments find this Pod
+    environment: dev              # Extra labels help with filtering and organization
 spec:
-  containers:
-  - name: nginx
-    image: nginx:alpine
-    ports:
-    - containerPort: 80
+  containers:                     # The list of containers inside this Pod
+    - name: nginx                 # Container name (must be unique within the Pod)
+      image: nginx:alpine         # The container image to run (Alpine = smaller footprint)
+      ports:
+        - containerPort: 80       # The port the container listens on inside the Pod
+      resources:                  # Resource limits prevent one Pod from hogging everything
+        requests:                 # Guaranteed minimum resources
+          cpu: "100m"             # 100 millicores = 0.1 CPU core
+          memory: "128Mi"         # 128 Mebibytes of memory
+        limits:                   # Maximum resources the container can use
+          cpu: "250m"             # Up to 0.25 CPU cores
+          memory: "256Mi"         # Up to 256 MiB of memory
 ```
 
-## Deployments
+Apply it and check the result:
 
-You rarely create Pods directly. Instead, use a **Deployment** to manage replicas:
+```bash
+kubectl apply -f nginx-pod.yaml
+```
+
+```text
+pod/nginx-pod created
+```
+
+```bash
+kubectl get pods
+```
+
+```text
+NAME        READY   STATUS    RESTARTS   AGE
+nginx-pod   1/1     Running   0          12s
+```
+
+That `1/1` in the READY column means 1 out of 1 containers is ready. In a multi-container Pod, you might see `2/2` or `3/3`.
+
+## The Problem with Naked Pods
+
+Here's the thing -- if you create a Pod directly and it crashes or the node it's running on fails, **nobody brings it back**. The Pod is gone. No replacement. No healing. This is why we use Controllers, and the most common controller is a **Deployment**.
+
+## Deployments: The Pod Manager
+
+A **Deployment** is a controller that manages a set of identical Pods. It declaratively defines:
+
+- **How many replicas** of your Pod should be running
+- **What the Pod looks like** (the Pod template)
+- **How updates should be rolled out** (rolling update strategy)
+
+Behind the scenes, a Deployment creates a **ReplicaSet**, which is the component that actually ensures the right number of Pods exist. The Deployment sits on top of the ReplicaSet and handles the update strategy. You rarely interact with ReplicaSets directly.
+
+```
+Deployment
+  └── ReplicaSet (revision 1)
+        ├── Pod-1
+        ├── Pod-2
+        └── Pod-3
+```
+
+When you update the Deployment (say, change the image version), the Deployment creates a *new* ReplicaSet and gradually shifts traffic from the old one to the new one. This is a **rolling update**.
+
+### The Apartment Manager Analogy
+
+If a Pod is an apartment, the Deployment is the building manager:
+
+- **Replicas** = "I need 3 apartments occupied at all times"
+- **Rolling update** = "Renovate one apartment at a time, so the other 2 stay available"
+- **Rollback** = "The new furniture looks terrible -- put the old stuff back"
+- **Scaling** = "We're getting more tenants -- open 5 more apartments"
+
+## Creating a Deployment
+
+Here's a full Deployment YAML with line-by-line explanation:
+
+```yaml
+apiVersion: apps/v1               # API version for Deployments (different from Pod's v1)
+kind: Deployment                   # We're creating a Deployment controller
+metadata:
+  name: nginx-deployment           # Name of the Deployment object
+  labels:                          # Labels on the Deployment itself (not the Pods)
+    app: nginx                     # Helps identify this Deployment
+spec:
+  replicas: 3                      # Always maintain exactly 3 Pod replicas
+  selector:                        # How the Deployment finds its Pods
+    matchLabels:
+      app: nginx                   # Must match the Pod template labels below
+  strategy:                        # How to handle updates
+    type: RollingUpdate            # Default strategy -- update Pods gradually
+    rollingUpdate:
+      maxSurge: 1                  # Allow 1 extra Pod above replicas during update (25% default)
+      maxUnavailable: 0            # Never let any Pod go unavailable (0 = zero-downtime)
+  template:                        # This is the Pod template -- Pods are created from this
+    metadata:
+      labels:
+        app: nginx                 # CRITICAL: Must match spec.selector.matchLabels above
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+```
+
+A critical detail: **the `selector.matchLabels` must match the `template.metadata.labels`**. If they don't match, the Deployment won't be able to find the Pods it creates, and you'll get an error at apply time. This is one of the most common mistakes beginners make.
+
+Apply the Deployment and observe:
+
+```bash
+kubectl apply -f nginx-deployment.yaml
+```
+
+```text
+deployment.apps/nginx-deployment created
+```
+
+```bash
+kubectl get deployments
+```
+
+```text
+NAME               READY   UP-TO-DATE   AVAILABLE   AGE
+nginx-deployment   3/3     3            3           30s
+```
+
+- **READY** = 3/3 means all 3 replicas are running and ready
+- **UP-TO-DATE** = 3 Pods match the current Deployment spec
+- **AVAILABLE** = 3 Pods have been available for at least the minReadySeconds
+
+Check the Pods the Deployment created:
+
+```bash
+kubectl get pods -l app=nginx
+```
+
+```text
+NAME                                READY   STATUS    RESTARTS   AGE
+nginx-deployment-7fb96c846b-5xz2k   1/1     Running   0          45s
+nginx-deployment-7fb96c846b-8m3nj   1/1     Running   0          45s
+nginx-deployment-7fb96c846b-dk4lp   1/1     Running   0          45s
+```
+
+Notice the naming pattern: `<deployment-name>-<replicaset-hash>-<random-suffix>`. Each Pod gets a unique name automatically.
+
+## Rolling Updates in Action
+
+The real magic of Deployments shows when you update your application. Let's change the Nginx image from `alpine` to `stable`:
+
+```bash
+kubectl set image deployment/nginx-deployment nginx=nginx:stable
+```
+
+```text
+deployment.apps/nginx-deployment image updated
+```
+
+Watch the rollout happen in real time:
+
+```bash
+kubectl rollout status deployment/nginx-deployment
+```
+
+```text
+Waiting for deployment "nginx-deployment" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "nginx-deployment" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "nginx-deployment" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "nginx-deployment" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "nginx-deployment" rollout to finish: 3 of 3 updated replicas are available...
+deployment "nginx-deployment" successfully rolled out
+```
+
+Behind the scenes, the Deployment created a new ReplicaSet with the updated image and gradually shifted Pods from the old ReplicaSet to the new one. With `maxUnavailable: 0` and `maxSurge: 1`, at most 4 Pods exist at any time, and at least 3 are always serving traffic.
+
+## Rollback: Undoing a Bad Update
+
+Pushed a broken image? No panic -- roll back:
+
+```bash
+# Check the rollout history
+kubectl rollout history deployment/nginx-deployment
+```
+
+```text
+deployment.apps/nginx-deployment
+REVISION  CHANGE-CAUSE
+1         kubectl apply --filename=nginx-deployment.yaml --record=true
+2         kubectl set image deployment/nginx-deployment nginx=nginx:stable
+```
+
+```bash
+# Roll back to the previous revision
+kubectl rollout undo deployment/nginx-deployment
+```
+
+```text
+deployment.apps/nginx-deployment rolled back
+```
+
+```bash
+# Or roll back to a specific revision
+kubectl rollout undo deployment/nginx-deployment --to-revision=1
+```
+
+The Deployment spins down the broken ReplicaSet and spins the old one back up. Your users never notice.
+
+## Scaling Your Deployment
+
+Need more capacity? Scale up on the fly:
+
+```bash
+# Scale to 5 replicas
+kubectl scale deployment/nginx-deployment --replicas=5
+```
+
+```text
+deployment.apps/nginx-deployment scaled
+```
+
+```bash
+kubectl get pods -l app=nginx
+```
+
+```text
+NAME                                READY   STATUS    RESTARTS   AGE
+nginx-deployment-7fb96c846b-5xz2k   1/1     Running   0          10m
+nginx-deployment-7fb96c846b-8m3nj   1/1     Running   0          10m
+nginx-deployment-7fb96c846b-dk4lp   1/1     Running   0          10m
+nginx-deployment-7fb96c846b-qw9rv   1/1     Running   0          5s
+nginx-deployment-7fb96c846b-zm8tx   1/1     Running   0          5s
+```
+
+Two new Pods spun up instantly. Scale back down just as easily:
+
+```bash
+kubectl scale deployment/nginx-deployment --replicas=3
+```
+
+## Practical Example: Deploying a Web Application
+
+Let's put it all together with a real-world scenario. You're deploying a web app that needs 3 replicas, rolling updates, and resource limits.
+
+**Project structure:**
+
+```text
+k8s/
+├── deployment.yaml
+└── service.yaml
+```
+
+**deployment.yaml:**
 
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: nginx-deployment
+  name: web-app
+  labels:
+    app: web-app
+    version: v1
 spec:
   replicas: 3
   selector:
     matchLabels:
-      app: nginx
+      app: web-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
   template:
     metadata:
       labels:
-        app: nginx
+        app: web-app
+        version: v1
     spec:
       containers:
-      - name: nginx
-        image: nginx:alpine
-        ports:
-        - containerPort: 80
+        - name: web-app
+          image: my-registry/web-app:1.0.0
+          ports:
+            - containerPort: 3000
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:              # Kubernetes checks this before sending traffic
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5    # Wait 5 seconds before first check
+            periodSeconds: 10         # Check every 10 seconds
+          livenessProbe:              # Kubernetes restarts the container if this fails
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 15   # Wait longer before liveness checks
+            periodSeconds: 20
 ```
 
-## Key Commands
+Deploy and verify:
 
 ```bash
-kubectl get pods                    # List pods
-kubectl describe pod <name>         # Pod details
-kubectl logs <pod-name>             # View logs
-kubectl apply -f deployment.yaml   # Create/update deployment
-kubectl scale deployment/nginx --replicas=5  # Scale
-kubectl rollout status deployment/nginx      # Check rollout
+kubectl apply -f k8s/deployment.yaml
+kubectl get pods -l app=web-app -w
 ```
+
+```text
+NAME                       READY   STATUS    RESTARTS   AGE
+web-app-6d9f5c8b4-7k2xm   0/1     Running   0          2s
+web-app-6d9f5c8b4-d4nj9   0/1     Running   0          2s
+web-app-6d9f5c8b4-x1p8h   0/1     Running   0          2s
+web-app-6d9f5c8b4-7k2xm   1/1     Running   0          8s
+web-app-6d9f5c8b4-d4nj9   1/1     Running   0          8s
+web-app-6d9f5c8b4-x1p8h   1/1     Running   0          8s
+```
+
+The `-w` flag watches for changes. You can see the Pods go from `0/1` to `1/1` as the readiness probes pass.
+
+## Common Pitfalls and Tips
+
+| Pitfall | What Goes Wrong | How to Fix It |
+|---------|----------------|---------------|
+| **Missing resource limits** | One Pod hogs all the CPU/memory on a node, starving others | Always set `requests` and `limits` |
+| **Selector/label mismatch** | Deployment can't find its Pods, or finds the wrong ones | Double-check that `spec.selector.matchLabels` matches `spec.template.metadata.labels` |
+| **Creating Pods directly** | Pod dies and nobody brings it back | Always use a Deployment (or another controller) |
+| **Forgetting readiness probes** | Traffic hits Pods before they're ready, causing errors | Add a `readinessProbe` to your Pod spec |
+| **Liveness probe too aggressive** | Container gets killed during slow startup (crash loop) | Set `initialDelaySeconds` high enough for your app to start |
+| **Too many replicas** | You exhaust node resources and Pods go Pending | Start with `replicas: 2` and scale based on metrics |
+| **No rollout history** | You can't roll back because there's no revision | Use `--record` flag or annotate your Deployments |
+
+### Pro Tips
+
+- Use `kubectl get events --sort-by=.metadata.creationTimestamp` to debug why a Pod isn't starting.
+- Always version your container images (`web-app:1.0.0`, not `web-app:latest`). Using `latest` means Kubernetes might pull different images on different nodes.
+- Use `kubectl explain deployment.spec` to explore the Deployment API without leaving the terminal.
+- Combine Deployments with Services (next lesson) to get stable networking for your Pods.
+
+## Key Commands Reference
+
+```bash
+# Working with Deployments
+kubectl apply -f deployment.yaml          # Create or update a Deployment
+kubectl get deployments                   # List all Deployments
+kubectl describe deployment nginx-deployment  # Detailed Deployment info
+kubectl scale deployment/nginx --replicas=5   # Scale a Deployment
+
+# Rolling updates and rollbacks
+kubectl set image deployment/nginx nginx=nginx:1.25  # Update the container image
+kubectl rollout status deployment/nginx             # Watch the rollout progress
+kubectl rollout history deployment/nginx             # View rollout revisions
+kubectl rollout undo deployment/nginx                # Roll back to previous version
+kubectl rollout undo deployment/nginx --to-revision=2  # Roll back to specific revision
+kubectl rollout pause deployment/nginx               # Pause a rollout (canary strategy)
+kubectl rollout resume deployment/nginx              # Resume a paused rollout
+
+# Working with Pods
+kubectl get pods                          # List all Pods
+kubectl get pods -l app=nginx             # Filter Pods by label
+kubectl describe pod <pod-name>          # Detailed Pod info and events
+kubectl logs <pod-name>                  # View container logs
+kubectl logs <pod-name> -c <container>    # Logs from a specific container in a multi-container Pod
+kubectl exec -it <pod-name> -- /bin/sh   # Shell into a running Pod
+kubectl delete pod <pod-name>            # Delete a Pod (Deployment will recreate it)
+```
+
+<Diagram config={k8sPodsDeployments} />

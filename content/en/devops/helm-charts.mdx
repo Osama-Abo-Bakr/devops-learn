@@ -3,109 +3,407 @@ title: "Helm Charts"
 module: devops
 level: intermediate
 duration: "35 min"
-description: "Package, template, and deploy Kubernetes applications with Helm."
+description: "Package, template, and deploy Kubernetes applications with Helm — the package manager for K8s."
 order: 2
 ---
 
 # Helm Charts
 
-Helm is the package manager for Kubernetes. It templates your YAML manifests, packages them into charts, and manages releases — install, upgrade, rollback.
+If you have ever used `apt install` on Ubuntu or `brew install` on a Mac, you already understand Helm. It is the package manager for Kubernetes. Just like `apt` packages complex Linux software into a single command, Helm packages complex Kubernetes deployments — with all their Deployments, Services, Ingresses, ConfigMaps, and Secrets — into a single installable unit called a **Chart**.
 
-## Why Helm?
+Without Helm, deploying an application to Kubernetes means managing a folder full of YAML files, manually editing values for each environment, and running `kubectl apply` on each file. With Helm, you run one command: `helm install my-app ./my-chart`. The Chart templates your YAML, injects environment-specific values, and manages the entire lifecycle — install, upgrade, and rollback.
 
-| Without Helm | With Helm |
-|-------------|----------|
-| Many raw YAML files | One `values.yaml` per environment |
-| Manual `kubectl apply` | `helm install` one command |
-| No rollback | `helm rollback` |
-| No versioning | Semantic versioning per chart |
-| Hard to share | Publish to chart repositories |
+## What is Helm?
 
-## Chart Structure
+Helm has three big ideas:
+
+1. **Charts** — Packages of templated Kubernetes manifests. Think of a Chart as a blueprint: it defines *what* to deploy, but leaves the specifics (image tag, replica count, resource limits) as variables.
+
+2. **Values** — The variables that fill in the template. Different environments (dev, staging, prod) use different values files, but the same Chart.
+
+3. **Releases** — A specific installation of a Chart. Helm tracks every release, recording its version and configuration. This makes upgrades and rollbacks trivial.
+
+## Why Does It Matter?
+
+- **No more copy-paste YAML** — Without Helm, teams copy YAML files between environments and manually change values. This leads to drift, mistakes, and configuration that is impossible to audit. Helm replaces all that with one Chart and multiple values files.
+- **One-command deploys** — `helm install` applies every manifest in the correct order. No more running five `kubectl apply` commands and hoping nothing depends on something that has not been created yet.
+- **Built-in rollbacks** — Helm tracks every release revision. If an upgrade breaks something, `helm rollback my-app 1` takes you back to the previous version in seconds. No need to dig through git history.
+- **Shareable packages** — Charts can be published to repositories (like Artifact Hub). Teams can install and share entire application stacks — databases, message queues, monitoring — with a single command.
+- **Environment parity** — The same Chart deploys to dev, staging, and production. Only the values differ. This eliminates the "works in staging, broken in production" problem caused by divergent configurations.
+
+## Core Concepts
+
+### Chart Structure
+
+A Helm Chart is a directory with a specific layout. Here is what a typical Chart looks like:
 
 ```
 my-chart/
-├── Chart.yaml          # Chart metadata
-├── values.yaml         # Default configuration
+├── Chart.yaml              # Chart metadata — name, version, description
+├── values.yaml             # Default configuration values
 ├── templates/
-│   ├── deployment.yaml  # Kubernetes manifests (templated)
-│   ├── service.yaml
-│   ├── ingress.yaml
-│   └── _helpers.tpl    # Reusable template snippets
-└── .helmignore
+│   ├── deployment.yaml      # Templated Deployment manifest
+│   ├── service.yaml         # Templated Service manifest
+│   ├── ingress.yaml         # Templated Ingress manifest
+│   ├── configmap.yaml       # Templated ConfigMap
+│   ├── _helpers.tpl         # Reusable template snippets (named templates)
+│   └── NOTES.txt            # Post-install instructions shown to the user
+├── .helmignore              # Files to exclude from the chart package
+└── charts/                  # Subcharts (dependencies on other Charts)
 ```
 
-## Chart.yaml
+### Chart.yaml — The Identity Card
+
+Every Chart has a `Chart.yaml` that identifies it and declares its dependencies:
 
 ```yaml
-apiVersion: v2
-name: my-app
-description: A web application
-type: application
-version: 1.0.0           # Chart version
-appVersion: "2.1.0"      # App version
+apiVersion: v2                # Helm 3 API version
+name: my-app                   # The chart name — used in release tracking
+description: A web application serving user profiles
+type: application              # 'application' for deployable charts, 'library' for shared templates
+version: 1.0.0                # Chart version (follows SemVer) — bump this on every change
+appVersion: "2.1.0"           # Version of the application being deployed (informational)
+maintainers:
+  - name: platform-team
+    email: platform@example.com
+dependencies:
+  - name: postgresql           # Subchart — Helm installs PostgreSQL too
+    version: "^12.0"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled  # Only install if this value is true
 ```
 
-## values.yaml
+**Important:** `version` and `appVersion` are different things. `version` tracks changes to the *Chart itself* (template changes, new features). `appVersion` tracks the *application* version the Chart deploys. Bump `version` every time you modify the Chart, even if the app version has not changed.
+
+### values.yaml — The Configuration Hub
+
+`values.yaml` holds every configurable parameter for your Chart. This is where someone deploying your Chart looks to understand what they can customize:
 
 ```yaml
+# How many replicas to run
 replicaCount: 2
 
+# Container image configuration
 image:
-  repository: ghcr.io/my-app
-  tag: latest
-  pullPolicy: IfNotPresent
+  repository: ghcr.io/my-org/my-app    # Where to pull the image from
+  tag: ""                               # Defaults to .Chart.AppVersion if empty
+  pullPolicy: IfNotPresent              # Pull strategy: Always, IfNotPresent, Never
 
+# Service configuration — how other pods reach this app
 service:
-  type: ClusterIP
-  port: 80
+  type: ClusterIP                       # ClusterIP (internal), NodePort, or LoadBalancer
+  port: 80                              # Service port
+  targetPort: 3000                      # Port the container listens on
 
+# Resource limits — prevent one pod from hogging the node
 resources:
   limits:
-    cpu: 500m
-    memory: 512Mi
+    cpu: 500m                            # Max 0.5 CPU cores
+    memory: 512Mi                        # Max 512 MiB RAM
+  requests:
+    cpu: 250m                            # Guaranteed 0.25 CPU cores
+    memory: 256Mi                        # Guaranteed 256 MiB RAM
+
+# Ingress — expose the app to the outside world
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: my-app.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+# PostgreSQL subchart toggle
+postgresql:
+  enabled: true                         # Install PostgreSQL alongside the app
+  auth:
+    database: myapp
 ```
 
-## Templated Manifest
+### Templating — The Power of `{{ .Values }}`
+
+Helm uses Go templates to inject values into your Kubernetes manifests. The double curly braces `{{ }}` are where the magic happens:
 
 ```yaml
 # templates/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
 metadata:
+  # {{ .Chart.Name }} resolves to the chart name from Chart.yaml
   name: {{ .Chart.Name }}
+  labels:
+    app: {{ .Chart.Name }}
+    version: {{ .Chart.AppVersion }}
 spec:
+  # {{ .Values.replicaCount }} pulls from values.yaml
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
       app: {{ .Chart.Name }}
   template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}
     spec:
       containers:
         - name: {{ .Chart.Name }}
-          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          # Nested values: .Values.image.repository and .Values.image.tag
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          # The 'default' function provides a fallback if image.tag is empty
+          ports:
+            - containerPort: {{ .Values.service.targetPort }}
           resources:
+            # toYaml converts the resources object to YAML
+            # nindent 12 adds a 12-space indent (nested inside containers[])
             {{- toYaml .Values.resources | nindent 12 }}
 ```
 
-## Common Commands
+**Line-by-line explanation of key template features:**
+
+- `{{ .Chart.Name }}` — Accesses the `name` field from `Chart.yaml`. The dot (`.`) represents the current context.
+- `{{ .Values.replicaCount }}` — Accesses values from `values.yaml`. The `Values` object is the entire values file.
+- `| default .Chart.AppVersion` — The pipe (`|`) passes the left side through the `default` function. If `image.tag` is empty, it falls back to the Chart's `appVersion`.
+- `{{- toYaml .Values.resources | nindent 12 }}` — The `-` inside `{{-` trims whitespace before the tag. `toYaml` converts a Go object to a YAML string. `nindent 12` adds a newline and indents every line by 12 spaces, matching the nesting level.
+
+### Helm Commands — The Lifecycle
+
+Helm manages the entire lifecycle of your application. Here are the commands you will use most:
 
 ```bash
-helm install my-app ./my-chart              # Install chart
-helm upgrade my-app ./my-chart              # Upgrade release
-helm rollback my-app 1                      # Rollback to revision 1
-helm list                                   # List releases
-helm uninstall my-app                       # Remove release
-helm template ./my-chart                    # Render templates locally
-helm install my-app ./my-chart -f prod.yaml # Override values
-```
+# Install a chart — creates a new release
+helm install my-app ./my-chart
 
-## Override Values Per Environment
-
-```bash
-# Dev
-helm install my-app ./my-chart -f values-dev.yaml
-
-# Prod
+# Install with custom values (overrides defaults from values.yaml)
 helm install my-app ./my-chart -f values-prod.yaml
+
+# Upgrade an existing release to a new chart version or new values
+helm upgrade my-app ./my-chart -f values-prod.yaml
+
+# Install OR upgrade — Helm figures out which one to do (idempotent)
+helm upgrade --install my-app ./my-chart -f values-prod.yaml
+
+# Rollback to a previous revision (revision numbers start at 1)
+helm rollback my-app 1
+
+# List all releases in the current namespace
+helm list
+
+# Uninstall a release — deletes all associated Kubernetes resources
+helm uninstall my-app
+
+# Render templates locally without deploying (great for debugging)
+helm template ./my-chart
+
+# Show the values a release is currently using
+helm get values my-app
 ```
+
+### Override Values Per Environment
+
+This is where Helm shines. One Chart, multiple environments, different values:
+
+**values-dev.yaml** — minimal resources for local development:
+```yaml
+replicaCount: 1
+image:
+  tag: "latest"
+  pullPolicy: Always
+resources:
+  limits:
+    cpu: 250m
+    memory: 256Mi
+ingress:
+  enabled: false
+postgresql:
+  enabled: true
+```
+
+**values-prod.yaml** — production-grade configuration:
+```yaml
+replicaCount: 3
+image:
+  tag: "v2.1.0"
+  pullPolicy: IfNotPresent
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+ingress:
+  enabled: true
+  hosts:
+    - host: my-app.example.com
+postgresql:
+  enabled: false        # Use external managed PostgreSQL in production
+```
+
+```bash
+# Deploy to dev
+helm upgrade --install my-app ./my-chart -f values-dev.yaml -n dev
+
+# Deploy to production
+helm upgrade --install my-app ./my-chart -f values-prod.yaml -n prod
+```
+
+### Chart Repositories
+
+Charts can be published to repositories, just like npm packages or Docker images:
+
+```bash
+# Add a repository
+helm repo add bitnami https://charts.bitnami.com/bitnami
+
+# Search for charts
+helm search repo postgresql
+
+# Install a chart from a repository
+helm install my-postgres bitnami/postgresql
+
+# Update your local index to get the latest charts
+helm repo update
+```
+
+Popular repositories include Bitnami (hundreds of production-ready charts), Artifact Hub (the Helm "app store"), and AWS ECR (for private charts).
+
+### Helm vs Kustomize
+
+Helm is not the only way to manage Kubernetes manifests. **Kustomize** is an alternative built into `kubectl`. Here is how they compare:
+
+| Feature | Helm | Kustomize |
+|---------|------|-----------|
+| Approach | Templates with `{{ }}` syntax | Overlays on plain YAML (no templates) |
+| Learning curve | Steeper — Go templates, functions, pipelines | Gentler — just YAML with patches |
+| Packaging | Charts can be published to repositories | No packaging — works on raw YAML in directories |
+| Lifecycle management | Tracks releases, supports rollback | No release tracking — apply-only |
+| Environment differences | Separate values files per environment | Overlay directories that patch base YAML |
+| Dependencies | Subcharts with version constraints | No dependency management |
+| Best for | Complex apps, shared packages, teams | Simple projects, Kubernetes purists |
+
+**When to choose Helm:** You have complex applications, need to share Charts across teams, or want release tracking and rollback. **When to choose Kustomize:** You prefer plain YAML without templating, have simple deployment needs, or are already deeply invested in GitOps with tools like ArgoCD.
+
+## Practical Example — Creating and Deploying a Chart
+
+Let us build a Chart from scratch for a web API called `profile-service`.
+
+**Step 1: Scaffold the chart**
+
+```bash
+helm create profile-service
+cd profile-service
+```
+
+Helm generates a full chart with templates for Deployment, Service, Ingress, and more. Clean up what you do not need and customize the rest.
+
+**Step 2: Edit Chart.yaml**
+
+```yaml
+apiVersion: v2
+name: profile-service
+description: User profile management API
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+```
+
+**Step 3: Define values.yaml**
+
+```yaml
+replicaCount: 2
+
+image:
+  repository: ghcr.io/my-org/profile-service
+  pullPolicy: IfNotPresent
+  tag: ""
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: profile.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 15
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
+
+**Step 4: Verify the templates render correctly**
+
+```bash
+helm template ./profile-service | less
+```
+
+This renders all templates to stdout without deploying. Look through the output to make sure values are injected correctly.
+
+**Step 5: Deploy**
+
+```bash
+# Install to a dev namespace
+kubectl create namespace dev
+helm install profile-service ./profile-service -n dev
+
+# Check the release
+helm list -n dev
+kubectl get pods -n dev
+```
+
+**Expected output:**
+
+```
+NAME              	NAMESPACE	REVISION	UPDATED                                	STATUS  	CHART                   	APP VERSION
+profile-service   	dev      	1       	2026-04-18 10:00:00.000000000 +0000 UTC	deployed	profile-service-0.1.0  	1.0.0
+```
+
+**Step 6: Upgrade and rollback**
+
+```bash
+# Change a value and upgrade
+helm upgrade profile-service ./profile-service -n dev --set replicaCount=3
+
+# Something went wrong? Rollback
+helm rollback profile-service 1 -n dev
+```
+
+## Common Pitfalls and Tips
+
+- **Pitfall: Not using `helm upgrade --install`** — If you run `helm install` on an existing release, it errors out. If you run `helm upgrade` on a nonexistent release, it also errors. **Tip:** Use `helm upgrade --install` — it installs if the release does not exist, and upgrades if it does.
+
+- **Pitfall: Overriding values with `--set` in production** — `--set replicaCount=10` is convenient for quick tests but invisible in git. No one can audit or reproduce it. **Tip:** Always use `-f values-prod.yaml` files. Put them in version control.
+
+- **Pitfall: Confusing Chart version and App version** — Bumping `appVersion` without bumping `version` means Helm does not see it as a new Chart. **Tip:** Bump the Chart `version` on every change, regardless of whether the app version changed.
+
+- **Pitfall: Hardcoding values in templates** — Writing `image: ghcr.io/my-org/my-app:v1` directly in a template defeats the purpose of Helm. **Tip:** Every environment-specific value should be in `values.yaml` or an override file.
+
+- **Tip: Use `helm template` for debugging** — Before deploying, run `helm template ./my-chart` to see the rendered YAML. This catches template errors, wrong indentation, and missing values without touching your cluster.
+
+- **Tip: Use `helm diff upgrade`** — The `helm-diff` plugin shows you exactly what will change before you upgrade. Install it with `helm plugin install https://github.com/databus23/helm-diff`.
+
+- **Tip: Lock your dependencies** — Run `helm dependency update` to generate a `Chart.lock` file. This pins exact versions of subcharts, preventing surprise upgrades.

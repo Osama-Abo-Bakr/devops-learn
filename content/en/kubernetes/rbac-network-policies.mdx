@@ -2,79 +2,324 @@
 title: "RBAC and Network Policies"
 module: kubernetes
 level: advanced
-duration: "45 min"
-description: "Control access with RBAC and restrict network traffic with NetworkPolicies."
+duration: "35 min"
+description: "Control access with Role-Based Access Control and secure pod networking with NetworkPolicies."
 order: 5
 ---
 
 # RBAC and Network Policies
 
-Security in Kubernetes has two dimensions: **who can do what** (RBAC) and **what can talk to what** (NetworkPolicies).
+Security in Kubernetes has two dimensions, and you need both to build a truly secure cluster. **RBAC** answers the question "who can do what?" -- it controls access to the Kubernetes API. **NetworkPolicies** answer the question "what can talk to what?" -- they control network traffic between Pods. Skip either one, and you've left the door wide open.
+
+Think of it like an office building: RBAC is the keycard system that determines who can enter which rooms and operate which equipment. NetworkPolicies are the internal phone system that controls which departments can call each other. A junior developer shouldn't be able to access the production database (RBAC), and the public-facing web server shouldn't be able to SSH into internal services (NetworkPolicies).
+
+## The Principle of Least Privilege
+
+Both RBAC and NetworkPolicies are built on the same foundational principle: **give every entity only the access it needs, and nothing more.**
+
+- A monitoring agent needs to read Pod metrics, but it doesn't need to delete Deployments.
+- A frontend Pod needs to talk to the API backend, but it doesn't need to talk to the database.
+- A developer needs to view logs in staging, but they shouldn't be able to modify production resources.
+
+This isn't paranoia -- it's defense in depth. When (not if) an account is compromised or a Pod is exploited, least privilege limits the blast radius. Without RBAC, a compromised ServiceAccount could delete every resource in your cluster. Without NetworkPolicies, a compromised Pod could exfiltrate data from every other Pod.
+
+## Why Does It Matter?
+
+- **Compromised Pods are inevitable.** If an attacker breaks into one Pod, NetworkPolicies prevent them from reaching other Pods. Without them, every Pod can reach every other Pod.
+- **Accidental destruction is common.** A junior engineer running `kubectl delete` against the wrong namespace can cause an outage. RBAC prevents this.
+- **Regulatory compliance requires it.** PCI-DSS, SOC 2, HIPAA, and ISO 27001 all require access controls and network segmentation.
+- **Multi-tenant clusters need isolation.** When multiple teams share a cluster, RBAC and NetworkPolicies enforce boundaries.
+- **It's on by default (RBAC).** Kubernetes enables RBAC by default in modern clusters. If you don't configure it properly, your ServiceAccounts might have no permissions -- or worse, cluster-admin access.
 
 ## RBAC: Role-Based Access Control
 
-RBAC controls access to the Kubernetes API. Every `kubectl` command and controller action is subject to RBAC checks.
+RBAC controls **who** can perform **what actions** on **which resources**. Every `kubectl` command, every API call from a controller, and every in-cluster application request goes through RBAC checks.
 
-### Core Concepts
+### The Four RBAC Objects
 
-| Concept | Scope | Purpose |
-|---------|-------|---------|
-| Role | Namespace | Grant permissions within a namespace |
-| ClusterRole | Cluster-wide | Grant permissions across all namespaces |
-| RoleBinding | Namespace | Bind a Role to users/groups |
-| ClusterRoleBinding | Cluster-wide | Bind a ClusterRole to users/groups |
+RBAC uses four objects that combine in two pairs:
 
-### Example: Read-Only Access
+| Object | Scope | Purpose |
+|--------|-------|---------|
+| **Role** | Namespace | Defines permissions within a single namespace |
+| **ClusterRole** | Cluster-wide | Defines permissions across all namespaces (or for non-namespaced resources) |
+| **RoleBinding** | Namespace | Binds a Role to subjects (users, groups, ServiceAccounts) within a namespace |
+| **ClusterRoleBinding** | Cluster-wide | Binds a ClusterRole to subjects across the entire cluster |
+
+The pattern is always: **Role/ClusterRole** (define the permissions) + **RoleBinding/ClusterRoleBinding** (assign those permissions to someone).
+
+```text
+┌─────────────────────────────────────────────────────┐
+│                    Cluster Level                      │
+│                                                      │
+│  ClusterRole ─── ClusterRoleBinding ───► Subject     │
+│  (permissions)   (assignment)            (user/SA)    │
+│                                                      │
+├─────────────────────────────────────────────────────┤
+│                  Namespace Level                      │
+│                                                      │
+│  Role ─── RoleBinding ───► Subject                   │
+│  (perms)   (assignment)     (user/SA)                 │
+└─────────────────────────────────────────────────────┘
+```
+
+### Roles and ClusterRoles: Defining Permissions
+
+A **Role** defines a set of permissions within a single namespace. Here's a Role that allows reading Pods and viewing their logs:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1     # RBAC API group
+kind: Role
+metadata:
+  name: pod-reader                          # Name of the Role
+  namespace: staging                        # This Role only applies to the "staging" namespace
+rules:                                      # List of permission rules
+  - apiGroups: [""]                         # "" = the core API group (Pods, Services, ConfigMaps, etc.)
+    resources: ["pods", "pods/log"]         # Which resources this rule applies to
+    verbs: ["get", "list", "watch"]          # Allowed actions: read individual, list collection, watch for changes
+  - apiGroups: [""]
+    resources: ["pods/exec"]                # Allow exec into Pods (shell access)
+    verbs: ["create"]                       # "create" is the verb for exec (it creates an exec session)
+```
+
+Each `rule` has three parts:
+
+| Field | What It Means | Examples |
+|-------|--------------|----------|
+| `apiGroups` | The API group the resource belongs to | `""` (core), `"apps"`, `"batch"`, `"autoscaling"` |
+| `resources` | The Kubernetes resource types | `pods`, `deployments`, `secrets`, `configmaps` |
+| `verbs` | The actions allowed | `get`, `list`, `watch`, `create`, `update`, `patch`, `delete` |
+
+A **ClusterRole** works the same way but applies cluster-wide. Use ClusterRoles for:
+
+- Non-namespaced resources (nodes, persistent volumes, namespaces themselves)
+- Permissions that should apply across all namespaces
+- Aggregating permissions that can be referenced by multiple RoleBindings
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
-  name: pod-reader
-  namespace: staging
+  name: node-reader                        # No namespace field -- ClusterRoles are cluster-scoped
 rules:
   - apiGroups: [""]
-    resources: ["pods", "pods/log"]
+    resources: ["nodes"]                    # Nodes are non-namespaced resources
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]                    # This grants pod read access across ALL namespaces
     verbs: ["get", "list", "watch"]
 ```
 
-Bind it to a user:
+### RoleBindings and ClusterRoleBindings: Assigning Permissions
+
+A **RoleBinding** assigns a Role to a subject (user, group, or ServiceAccount) within a specific namespace:
 
 ```yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: read-pods
+  name: read-pods                          # Name of the binding
+  namespace: staging                        # Must match the Role's namespace
+subjects:                                   # Who gets the permissions
+  - kind: User                              # Can be User, Group, or ServiceAccount
+    name: jane                              # The username (from your auth provider)
+    apiGroup: rbac.authorization.k8s.io
+roleRef:                                   # Which Role to bind
+  kind: Role                                # Role (namespace-scoped) or ClusterRole
+  name: pod-reader                          # Must match the Role name
+  apiGroup: rbac.authorization.k8s.io
+```
+
+**Important:** The `roleRef` is immutable after creation. If you need to change which Role is bound, you must delete the RoleBinding and create a new one.
+
+A **ClusterRoleBinding** assigns a ClusterRole cluster-wide:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admin-binding
+subjects:
+  - kind: User
+    name: alice
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin                      # Built-in super-admin role -- use with extreme caution
+  apiGroup: rbac.authorization.k8s.io
+```
+
+### A Useful Pattern: ClusterRole + RoleBinding
+
+You can bind a **ClusterRole** to a **RoleBinding**. This gives namespace-scoped permissions using a cluster-wide Role definition. This is the recommended pattern for reusable permission sets:
+
+```yaml
+# Define the permissions once as a ClusterRole
+kind: ClusterRole
+metadata:
+  name: pod-reader-global
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+
+---
+# Then bind it in each namespace where it's needed
+kind: RoleBinding
+metadata:
+  name: pod-reader-staging
   namespace: staging
 subjects:
   - kind: User
     name: jane
 roleRef:
-  kind: Role
-  name: pod-reader
+  kind: ClusterRole                        # Reference the ClusterRole, not a Role
+  name: pod-reader-global
   apiGroup: rbac.authorization.k8s.io
 ```
 
-## NetworkPolicies
+Jane can read Pods in `staging`, but not in `production` -- because the RoleBinding only exists in the staging namespace.
 
-By default, all Pods can communicate with all other Pods. NetworkPolicies restrict traffic at the IP/port level.
+## ServiceAccounts: RBAC for Pods
 
-### Deny all ingress
+When your application running inside a Pod needs to talk to the Kubernetes API (e.g., a controller, a monitoring agent, or a CI/CD tool), it authenticates using a **ServiceAccount**.
+
+Every Pod is assigned a ServiceAccount. If you don't specify one, it gets the `default` ServiceAccount in its namespace. The default ServiceAccount has almost no permissions -- which is exactly right.
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deployment-manager                 # Create a dedicated ServiceAccount
+  namespace: staging
+```
+
+Then bind it to a Role:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployment-manager-binding
+  namespace: staging
+subjects:
+  - kind: ServiceAccount                   # Bind to a ServiceAccount, not a User
+    name: deployment-manager
+    namespace: staging
+roleRef:
+  kind: Role
+  name: deployment-manager-role
+  apiGroup: rbac.authorization.k8s.io
+```
+
+And use it in your Pod:
+
+```yaml
+spec:
+  serviceAccountName: deployment-manager   # Assign the ServiceAccount to the Pod
+  containers:
+    - name: app
+      image: my-app:1.0
+```
+
+**Best practice:** Never use the `default` ServiceAccount for Pods that need API access. Create a dedicated ServiceAccount with the minimum permissions required.
+
+## NetworkPolicies: Securing Pod Networking
+
+By default, Kubernetes allows **all traffic between all Pods** in a cluster. Any Pod can reach any other Pod on any port. This is convenient for development but dangerous for production.
+
+A **NetworkPolicy** is a firewall rule for Pods. It controls which Pods can communicate with each other and on which ports.
+
+### Key Concepts
+
+- **NetworkPolicies are namespace-scoped.** They apply to Pods in the namespace where the policy is defined.
+- **They are additive.** Multiple NetworkPolicies in a namespace combine -- if any policy allows traffic, it's allowed.
+- **They require a compatible CNI plugin.** Not all CNI plugins support NetworkPolicies. Calico, Cilium, and Weave do. The default GKE, AKS, and EKS CNI plugins support them.
+- **Default behavior without policies:** All ingress and egress is allowed.
+- **Default behavior with policies:** If a Pod is selected by any NetworkPolicy, only traffic explicitly allowed by policies is permitted. Everything else is denied.
+
+### Default-Deny: The Starting Point
+
+The most important NetworkPolicy is the **default-deny**. It blocks all ingress traffic to every Pod in a namespace, creating a blank slate that you selectively open up:
+
+```yaml
+apiVersion: networking.k8s.io/v1           # NetworkPolicy API group
+kind: NetworkPolicy
+metadata:
+  name: deny-all-ingress
+  namespace: my-app                         # Apply to the my-app namespace
+spec:
+  podSelector: {}                           # Empty selector = match ALL Pods in the namespace
+  policyTypes:
+    - Ingress                               # Block all incoming traffic
+  ingress: []                               # Empty ingress list = no traffic allowed in
+```
+
+After applying this, **no Pod in the `my-app` namespace can receive any traffic from anywhere.** This might seem extreme, but it's the right starting point. Now you selectively allow only the traffic your application needs.
+
+You can also deny all egress (outbound traffic):
+
+```yaml
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress                               # Block all outgoing traffic too
+  ingress: []
+  egress: []
+```
+
+**Caution:** A default-deny egress policy will break DNS resolution unless you explicitly allow it. DNS uses UDP port 53 to the cluster's DNS service. We'll cover this in the next section.
+
+### Allowing Specific Traffic
+
+Let's build a multi-tier application with three layers and define the exact traffic flows between them:
+
+```text
+Internet
+    │
+    ▼
+┌──────────┐     ┌──────────┐     ┌──────────┐
+│ Frontend │────►│   API    │────►│ Database │
+│  :3000   │     │  :8080   │     │  :5432   │
+└──────────┘     └──────────┘     └──────────┘
+     ▲                ▲
+     │                │
+     └── can reach ───┘
+     └── nothing else ──┘
+```
+
+The rules:
+1. Frontend can receive traffic from the outside (Ingress controller)
+2. API can receive traffic from Frontend on port 8080
+3. Database can receive traffic from API on port 5432
+4. Nothing else can reach anything
+
+**Allow Frontend to receive from the Ingress controller:**
 
 ```yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: deny-all-ingress
+  name: allow-ingress-to-frontend
   namespace: my-app
 spec:
-  podSelector: {}    # Apply to all pods in namespace
+  podSelector:
+    matchLabels:
+      app: frontend                         # Apply to Pods with this label
   policyTypes:
     - Ingress
-  ingress: []        # No ingress allowed
+  ingress:
+    - from:
+        - namespaceSelector:                # Allow from any Pod in the ingress namespace
+            matchLabels:
+              name: ingress-nginx           # The Ingress Controller's namespace must have this label
+      ports:
+        - port: 3000                        # Only allow traffic on port 3000
+          protocol: TCP
 ```
 
-### Allow specific traffic
+**Allow API to receive from Frontend:**
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -85,40 +330,213 @@ metadata:
 spec:
   podSelector:
     matchLabels:
-      app: api
+      app: api                              # Apply to API Pods
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:                      # Allow from Pods with this label
+            matchLabels:
+              app: frontend                 # Only frontend Pods can reach the API
+      ports:
+        - port: 8080                        # Only on port 8080
+          protocol: TCP
+```
+
+**Allow Database to receive from API (including DNS for egress):**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-database
+  namespace: my-app
+spec:
+  podSelector:
+    matchLabels:
+      app: database
   policyTypes:
     - Ingress
   ingress:
     - from:
         - podSelector:
             matchLabels:
-              app: frontend
+              app: api                      # Only API Pods can reach the database
       ports:
-        - port: 8080
+        - port: 5432                        # PostgreSQL port
           protocol: TCP
 ```
 
-## Common Patterns
+If you also apply a default-deny egress policy, you must explicitly allow DNS resolution:
 
-| Pattern | Effect |
-|---------|--------|
-| Deny all ingress | Lock down namespace by default |
-| Allow same-namespace | `from: [{podSelector: {}}]` |
-| Allow specific labels | `from: [{podSelector: {matchLabels: {app: web}}}]` |
-| Allow from another namespace | `from: [{namespaceSelector: {matchLabels: {env: prod}}}]` |
-
-## Commands
-
-```bash
-kubectl get roles -A                      # List all roles
-kubectl describe role pod-reader -n staging
-kubectl get networkpolicies -A             # List network policies
-kubectl auth can-i get pods --as=jane -n staging  # Check permissions
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: my-app
+spec:
+  podSelector: {}                           # Apply to ALL Pods in the namespace
+  policyTypes:
+    - Egress
+  egress:
+    - to:                                   # Allow outbound to the DNS service
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system             # DNS runs in kube-system
+        - podSelector:
+            matchLabels:
+              k8s-app: kube-dns             # CoreDNS label
+      ports:
+        - port: 53                          # DNS port
+          protocol: UDP
+        - port: 53
+          protocol: TCP                     # Some DNS queries use TCP
 ```
 
-## Important Notes
+### NetworkPolicy Selector Reference
 
-- NetworkPolicies require a CNI plugin that supports them (Calico, Cilium, Weave)
-- Default GKE/AKS/EKS setups support NetworkPolicies
-- RBAC is always enforced — no plugin required
-- Use `kubectl auth can-i` to test permissions
+NetworkPolicies use three types of selectors to match traffic sources or destinations:
+
+| Selector Type | Syntax | What It Matches |
+|---------------|--------|----------------|
+| `podSelector` | `matchLabels: {app: web}` | Pods with matching labels in the **same namespace** |
+| `namespaceSelector` | `matchLabels: {name: prod}` | All Pods in namespaces with matching labels |
+| Both combined | Both selectors in the same `from` entry | Pods that match **both** (AND logic -- same as namespace-scoped pod selector) |
+| Multiple entries | Multiple items in the `from` list | Any Pod that matches **any** entry (OR logic) |
+
+```yaml
+ingress:
+  - from:
+      - podSelector:                        # Entry 1: Pods in same namespace
+          matchLabels:
+            app: frontend
+      - namespaceSelector:                  # Entry 2: Pods in monitoring namespace (OR with entry 1)
+          matchLabels:
+            name: monitoring
+    - from:
+        - podSelector:                      # Entry 3: Must match BOTH pod AND namespace labels
+            matchLabels:
+              role: logger                  # (AND with namespace selector below)
+          namespaceSelector:
+            matchLabels:
+              name: logging
+```
+
+## Practical Example: Multi-Tier Application with Full Security
+
+Let's put together RBAC and NetworkPolicies for a complete secure application setup.
+
+**Project structure:**
+
+```text
+k8s/
+├── rbac/
+│   ├── service-account.yaml
+│   ├── role.yaml
+│   └── role-binding.yaml
+├── network-policies/
+│   ├── default-deny.yaml
+│   ├── allow-frontend.yaml
+│   ├── allow-api.yaml
+│   ├── allow-database.yaml
+│   └── allow-dns.yaml
+└── deployments/
+    ├── frontend.yaml
+    ├── api.yaml
+    └── database.yaml
+```
+
+**service-account.yaml:**
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api-server
+  namespace: my-app
+```
+
+**role.yaml:**
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: config-reader
+  namespace: my-app
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+    resourceNames: ["api-config"]            # Only allow reading this specific ConfigMap
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+    resourceNames: ["db-credentials"]        # Only allow reading this specific Secret
+```
+
+**role-binding.yaml:**
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: api-server-config-reader
+  namespace: my-app
+subjects:
+  - kind: ServiceAccount
+    name: api-server
+    namespace: my-app
+roleRef:
+  kind: Role
+  name: config-reader
+  apiGroup: rbac.authorization.k8s.io
+```
+
+This gives the API's ServiceAccount read-only access to exactly one ConfigMap and one Secret. It can't read other ConfigMaps, can't read other Secrets, can't modify anything, and can't access any other resource type.
+
+## Common Pitfalls and Mistakes
+
+| Pitfall | What Goes Wrong | How to Fix It |
+|---------|----------------|---------------|
+| **Using cluster-admin liberally** | Everyone has super-user access -- a single compromised account is catastrophic | Create fine-grained Roles with least privilege; reserve cluster-admin for break-glass scenarios |
+| **Not labeling namespaces** | `namespaceSelector` in NetworkPolicies can't match namespaces without labels | Label your namespaces: `kubectl label namespace production name=production` |
+| **Breaking DNS with egress deny** | Pods can't resolve service names, breaking all internal communication | Add an egress rule allowing UDP/TCP port 53 to the kube-system DNS service |
+| **CNI doesn't support NetworkPolicies** | Policies are created but not enforced -- traffic still flows freely | Verify your CNI plugin supports NetworkPolicies; use Calico, Cilium, or Weave |
+| **Forgetting to label the Ingress namespace** | NetworkPolicies that allow traffic from the Ingress controller can't find it | Label the Ingress namespace: `kubectl label namespace ingress-nginx name=ingress-nginx` |
+| **Using default ServiceAccount** | Pods authenticate to the API with an uncontrolled identity | Create dedicated ServiceAccounts for every workload that needs API access |
+| **Overly broad NetworkPolicy selectors** | Using `podSelector: {}` in an ingress rule allows all traffic | Be specific with labels; use default-deny as the baseline |
+| **Not testing RBAC policies** | You think permissions are right but they're not | Use `kubectl auth can-i` to verify before deploying |
+
+### Pro Tips
+
+- Use `kubectl auth can-i` to test permissions. Examples:
+  - `kubectl auth can-i get pods --as=jane -n staging` -- Can Jane read Pods in staging?
+  - `kubectl auth can-i delete secrets --as=alice -n production` -- Can Alice delete Secrets in production?
+  - `kubectl auth can-i list pods --as=system:serviceaccount:my-app:api-server -n my-app` -- Test a ServiceAccount's permissions
+- Use `kubectl auth can-i --list` to see ALL permissions for the current user in a namespace.
+- Start with default-deny NetworkPolicies and open up incrementally. It's easier to add allow rules than to find all the traffic you've accidentally blocked.
+- Label your namespaces proactively: `kubectl label namespace production env=production name=production team=platform`. You'll need these labels for NetworkPolicies later.
+- Use tools like **Ratify** or **OPA Gatekeeper** to enforce RBAC and NetworkPolicy standards across your cluster.
+- For zero-trust networking, consider a service mesh like **Istio** or **Linkerd** that adds mTLS and fine-grained authorization policies on top of NetworkPolicies.
+- Audit your cluster regularly with `kubectl get clusterrolebindings -o wide` to find overly permissive bindings.
+
+## Key Commands Reference
+
+```bash
+# RBAC
+kubectl get roles -n <namespace>                              # List Roles in a namespace
+kubectl get clusterroles                                       # List ClusterRoles
+kubectl describe role <name> -n <namespace>                   # View Role rules
+kubectl get rolebindings -n <namespace>                        # List RoleBindings
+kubectl get clusterrolebindings                                # List ClusterRoleBindings
+kubectl auth can-i get pods --as=jane -n staging               # Test user permissions
+kubectl auth can-i delete pods --as=system:serviceaccount:my-app:api-server -n my-app  # Test SA permissions
+kubectl auth can-i --list -n staging                          # List all permissions in a namespace
+
+# NetworkPolicies
+kubectl get networkpolicies -n <namespace>                     # List NetworkPolicies
+kubectl describe networkpolicy <name> -n <namespace>          # View policy details
+kubectl label namespace production name=production             # Label a namespace (needed for namespaceSelector)
+```

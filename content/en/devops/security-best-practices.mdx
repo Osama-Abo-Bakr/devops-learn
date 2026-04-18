@@ -3,116 +3,558 @@ title: "Security Best Practices"
 module: devops
 level: advanced
 duration: "40 min"
-description: "Image signing, vulnerability scanning, runtime security, and supply chain hardening."
+description: "Defense in depth: image security, runtime protection, supply chain integrity, and compliance scanning."
 order: 4
 ---
 
 # Security Best Practices
 
-Container security is a chain — every link must hold. A vulnerability at any layer (image, registry, runtime, orchestrator) can compromise your entire system.
+Think of a medieval castle. The outer wall stops casual raiders. The moat slows down determined attackers. The inner keep protects the crown jewels even if the outer walls fall. Guards patrol the grounds. Archers cover the gates. No single defense is enough — security comes from **layers**, each one buying time and raising the cost of attack.
 
-## Defense in Depth
+Container security works the same way. There is no single tool or setting that makes you secure. Instead, you build layers of defense — from the code you write, through the image you build, across the registry you store it in, into the runtime where it executes, and across the network where it communicates. If one layer fails, the others still protect you. This is called **defense in depth**.
 
-| Layer | Threat | Defense |
-|-------|--------|---------|
-| Code | Dependencies with CVEs | `npm audit`, Dependabot |
-| Image | Base image vulnerabilities | Trivy, Docker Scout |
-| Build | Tampered build pipeline | Signed builds, reproducible builds |
-| Registry | Image substitution | Content trust, image signing |
-| Runtime | Privilege escalation | Non-root, seccomp, AppArmor |
-| Network | Lateral movement | NetworkPolicies, mTLS |
-| Orchestrator | Unauthorized access | RBAC, audit logs |
+## What is Defense in Depth?
 
-## Image Signing
+Defense in depth means never trusting a single security control. Every layer has its own protections, and an attacker must break through all of them to compromise your system:
 
-Use **cosign** to sign images and verify them before deployment:
+| Layer | Threat | Defense | Tool |
+|-------|--------|---------|------|
+| Code | Dependencies with known CVEs | Automated dependency scanning | `npm audit`, Dependabot, Snyk |
+| Image | Base image vulnerabilities | Image scanning and minimal bases | Trivy, Grype, Docker Scout |
+| Build | Tampered or reproducible builds | Signed builds, build provenance | Sigstore, SLSA, GitHub OIDC |
+| Registry | Image substitution or tampering | Content trust, image signing | Cosign, Notary |
+| Runtime | Privilege escalation, escape | Non-root, read-only FS, seccomp | Kubernetes SecurityContext |
+| Network | Lateral movement between pods | NetworkPolicies, mTLS | Calico, Istio, Cilium |
+| Orchestrator | Unauthorized access | RBAC, audit logging, secrets management | Kubernetes RBAC, Vault |
 
-```bash
-# Sign an image
-cosign sign --key cosign.key ghcr.io/my-app:v1.0.0
+## Why Does It Matter?
 
-# Verify before pulling
-cosign verify --key cosign.pub ghcr.io/my-app:v1.0.0
+- **Containers share the host kernel** — Unlike virtual machines, containers are not isolated by hardware. A container escape can give an attacker access to the host machine and every other container on it. Runtime hardening is not optional.
+- **Supply chain attacks are rising** — Attackers increasingly target the build and distribution pipeline, not the application itself. If they can inject malicious code into your CI pipeline or replace your image in the registry, they own your production.
+- **Vulnerabilities hide in base images** — Your `FROM ubuntu:latest` might contain hundreds of known CVEs. If you do not scan your images, you are shipping known vulnerabilities to production.
+- **Compliance requires proof** — Regulations like SOC 2, PCI-DSS, and HIPAA require evidence that you are scanning for vulnerabilities, managing access, and auditing changes. You need tools that generate this evidence automatically.
+- **Blast radius reduction** — Defense in depth means that even if one container is compromised, the attacker cannot move to other services, access secrets, or exfiltrate data. Each layer limits what they can do.
+
+## Core Concepts
+
+### Image Security — Build a Solid Foundation
+
+Your container image is the first line of defense. Every package, library, and tool in that image is potential attack surface.
+
+**Use minimal base images:**
+
+```dockerfile
+# BAD: Full Ubuntu — 400+ packages, hundreds of CVEs
+FROM ubuntu:22.04
+
+# BETTER: Slim variant — fewer packages, smaller attack surface
+FROM python:3.12-slim
+
+# BEST: Distroless — no shell, no package manager, no attack surface
+FROM gcr.io/distroless/python3-debian12
 ```
 
-In CI, enforce verification:
+| Base Image | Size | Packages | Shell | Package Manager |
+|-----------|------|----------|-------|-----------------|
+| `ubuntu:22.04` | ~77 MB | 400+ | Yes | apt |
+| `python:3.12-slim` | ~50 MB | ~100 | Yes | apt |
+| `distroless/python3` | ~22 MB | ~30 | No | None |
 
-```yaml
-# Fail deployment if image is not signed
-- name: Verify image signature
-  run: cosign verify --key cosign.pub $IMAGE_REF
+**Why distroless?** An attacker who gets a shell in your container usually needs tools like `curl`, `wget`, `nc`, or `apt` to do anything useful. Distroless images remove all of them. If there is no shell, there is no easy way to explore the container.
+
+**Multi-stage builds strip out build tools:**
+
+```dockerfile
+# Stage 1: Build (has compilers, dev tools — these do NOT go to production)
+FROM golang:1.22 AS builder
+WORKDIR /app
+COPY . .
+RUN CGO_ENABLED=0 go build -o server .
+
+# Stage 2: Production (only the binary — nothing else)
+FROM gcr.io/distroless/static-debian12
+COPY --from=builder /app/server /server
+ENTRYPOINT ["/server"]
 ```
 
-## Vulnerability Scanning
+The builder stage has the entire Go toolchain. But the final image contains only your compiled binary — no compiler, no source code, no shell. An attacker who compromises this container has almost nothing to work with.
 
-Scan at multiple stages:
+**Scan images for vulnerabilities:**
 
 ```bash
-# During development
+# Scan a local image — lists all CVEs by severity
 trivy image my-app:latest
 
-# In CI pipeline (fail on critical)
-trivy image --exit-code 1 --severity CRITICAL my-app:$SHA
+# Scan in CI — fail the pipeline on CRITICAL findings
+trivy image --exit-code 1 --severity CRITICAL my-app:$COMMIT_SHA
 
-# Periodic production scanning
+# Scan periodically in production — catch new CVEs in already-deployed images
 trivy image --severity HIGH,CRITICAL --ignore-unfixed my-app:production
 ```
 
-## Supply Chain Security with SBOM
+The `--ignore-unfixed` flag is important for production scanning: it skips CVEs that have no available patch, so you are not flooded with alerts you cannot act on.
 
-A Software Bill of Materials lists every component in your image:
+### Image Signing — Trust What You Deploy
+
+How do you know the image you are pulling from the registry is the same image you built in CI? Without signing, you do not. An attacker with registry access could replace your image with a malicious one that looks identical.
+
+**Cosign** (part of the Sigstore project) signs images using keyless signing — it uses OIDC identity (your GitHub account) instead of managing private keys:
 
 ```bash
-# Generate SBOM
-syft ghcr.io/my-app:v1.0.0 -o spdx-json > sbom.json
+# Sign an image using GitHub OIDC identity in CI
+cosign sign ghcr.io/my-org/my-app:v1.0.0
 
-# Scan SBOM for vulnerabilities
-grype sbom:sbom.json
+# Verify the image signature before deploying
+cosign verify ghcr.io/my-org/my-app:v1.0.0 \
+  --certificate-identity=https://github.com/my-org/my-app/.github/workflows/ci.yml@refs/heads/main \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com
 ```
 
-## Runtime Security
+**Enforce verification in your CI/CD pipeline:**
 
-### Seccomp Profiles
+```yaml
+# GitHub Actions — verify image signature before deploying
+- name: Verify image signature
+  run: |
+    cosign verify ghcr.io/my-org/my-app:${{ github.sha }} \
+      --certificate-identity=https://github.com/my-org/my-app/.github/workflows/ci.yml@refs/heads/main \
+      --certificate-oidc-issuer=https://token.actions.githubusercontent.com
 
-Restrict system calls a container can make:
+- name: Deploy to Kubernetes
+  run: kubectl set image deployment/my-app my-app=ghcr.io/my-org/my-app:${{ github.sha }}
+```
+
+With this in place, even if an attacker replaces the image in the registry, the signature verification fails and the deployment is blocked.
+
+### Supply Chain Security — Know What Is in Your Image
+
+**SBOM (Software Bill of Materials)** is a complete list of every component in your image — every library, every transitive dependency, every version. It is the ingredient label for your software.
+
+```bash
+# Generate an SBOM from your image
+syft ghcr.io/my-org/my-app:v1.0.0 -o spdx-json > sbom.json
+
+# Scan the SBOM for vulnerabilities (without rescanning the image)
+grype sbom:sbom.json
+
+# Attach the SBOM to the image in the registry (alongside the signature)
+cosign attach sbom --sbom sbom.json ghcr.io/my-org/my-app:v1.0.0
+```
+
+**SLSA (Supply-chain Levels for Software Artifacts)** is a framework that defines levels of supply chain security. Think of it as a maturity model:
+
+| SLSA Level | What It Guarantees | Example |
+|-----------|-------------------|---------|
+| Level 1 | Build was performed in a service, not locally | CI pipeline built the image |
+| Level 2 | Build is authenticated and signed | Signed with Cosign in CI |
+| Level 3 | Build platform is hardened, provenance is verifiable | GitHub Actions with OIDC, immutable builds |
+| Level 4 | Two-party review required, hermetic builds | Required reviewers + isolated build environment |
+
+Most organizations should aim for Level 2 or 3. Level 4 is for critical infrastructure.
+
+### Runtime Protection — Harden the Container
+
+Even with a secure image, a running container can be exploited if it has too many privileges. Kubernetes `SecurityContext` lets you lock down what a container can do at the kernel level.
+
+**The principle of least privilege applied to containers:**
+
+```yaml
+# Kubernetes Pod spec — production-grade security context
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+spec:
+  securityContext:
+    runAsNonRoot: true         # Block the pod if the image tries to run as root
+    runAsUser: 1000            # Run as user ID 1000 (not 0=root)
+    runAsGroup: 1001           # Run as group ID 1001
+    fsGroup: 1001              # Files created by the pod are owned by this group
+    seccompProfile:            # Restrict which system calls the container can make
+      type: RuntimeDefault     # Use the container runtime's default profile
+  containers:
+    - name: my-app
+      image: ghcr.io/my-org/my-app:v1.0.0
+      securityContext:
+        allowPrivilegeEscalation: false  # Prevent sudo, setuid binaries
+        readOnlyRootFilesystem: true     # Container cannot write to its filesystem
+        capabilities:
+          drop: ["ALL"]                  # Remove ALL Linux capabilities (NET_RAW, SYS_ADMIN, etc.)
+      volumeMounts:
+        - name: tmp-volume
+          mountPath: /tmp                # Mount a tmpfs for the only writable directory
+  volumes:
+    - name: tmp-volume
+      emptyDir:
+        medium: Memory                  # In-memory tmp — no disk writes
+```
+
+**What each setting does and why:**
+
+- **`runAsNonRoot: true`** — Most container exploits assume root access. If the container runs as a non-root user, the attacker starts with limited permissions. If your Dockerfile does not set a `USER`, this setting *fails the pod* — it will not start. That is intentional: it forces you to be explicit about who runs your container.
+
+- **`readOnlyRootFilesystem: true`** — If an attacker breaks in, they cannot write malicious scripts, modify configuration files, or plant backdoors on the filesystem. The only writable path is the volumes you explicitly mount (like `/tmp`).
+
+- **`drop: ["ALL"]`** — Linux capabilities are kernel-level permissions beyond standard Unix permissions. `CAP_NET_RAW` lets you send raw network packets. `CAP_SYS_ADMIN` lets you mount filesystems. Dropping all of them means the container can only do ordinary process operations.
+
+- **`allowPrivilegeEscalation: false`** — Even if an attacker gets into the container, they cannot use `sudo` or setuid binaries to gain more privileges. This blocks a common privilege escalation path.
+
+**Seccomp profiles — fine-grained syscall filtering:**
+
+If the default seccomp profile is too permissive for your needs, you can create a custom profile that only allows the specific system calls your application needs:
 
 ```json
 {
   "defaultAction": "SCMP_ACT_ERRNO",
   "syscalls": [
-    { "names": ["read", "write", "exit"], "action": "SCMP_ACT_ALLOW" }
+    {
+      "names": ["read", "write", "exit", "mmap", "brk", "fcntl", "fstat", "poll", "mprotect", "munmap", "rt_sigaction", "clone", "execve"],
+      "action": "SCMP_ACT_ALLOW"
+    }
   ]
 }
 ```
 
-### Read-only Root Filesystem
+This profile blocks *everything* by default (`SCMP_ACT_ERRNO`) and explicitly allows only the syscalls a typical application needs. If the application tries any other syscall, the kernel returns an error.
+
+### Network Security — Contain the Blast Radius
+
+In a default Kubernetes cluster, every pod can talk to every other pod. If one pod is compromised, the attacker can reach every service. **NetworkPolicies** change this by restricting traffic at the network level.
+
+**Default-deny — block all traffic unless explicitly allowed:**
 
 ```yaml
-# Kubernetes pod spec
-securityContext:
-  readOnlyRootFilesystem: true
-  runAsNonRoot: true
-  runAsUser: 1000
-  capabilities:
-    drop: ["ALL"]
+# deny-all.yml — Apply this FIRST to every namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: my-app
+spec:
+  podSelector: {}              # Apply to ALL pods in the namespace
+  policyTypes:
+    - Ingress                  # Block all incoming traffic
+    - Egress                   # Block all outgoing traffic
 ```
 
-## Network Security
+**Then allow only the specific traffic your application needs:**
 
-- Use **NetworkPolicies** to restrict pod-to-pod traffic
-- Enable **mTLS** with a service mesh (Istio, Linkerd)
-- Use **Ingress** with TLS termination
-- Block egress to the internet where possible
+```yaml
+# allow-frontend-to-api.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-api
+  namespace: my-app
+spec:
+  podSelector:
+    matchLabels:
+      app: api                  # Apply to pods labeled app=api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend     # Only allow traffic from frontend pods
+      ports:
+        - port: 8080            # Only on port 8080
+```
+
+**Service mesh for mTLS (mutual TLS):**
+
+NetworkPolicies work at the IP/port level. For encryption and identity-based access control, you need a service mesh like Istio or Linkerd. A service mesh automatically encrypts all traffic between pods (mTLS) and lets you define access policies based on service identity, not IP addresses.
+
+```yaml
+# Istio AuthorizationPolicy — only the frontend can call the API
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: api-only-from-frontend
+  namespace: my-app
+spec:
+  selector:
+    matchLabels:
+      app: api
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/my-app/sa/frontend"]  # Service identity
+      to:
+        - operation:
+            methods: ["GET", "POST"]
+            paths: ["/api/*"]
+```
+
+### Compliance Scanning — Automated Evidence
+
+Compliance frameworks (CIS, NIST, PCI-DSS, HIPAA) require continuous verification that your infrastructure meets security standards. Tools like **kube-bench** and **Polaris** automate this:
+
+```bash
+# Run the CIS Kubernetes Benchmark against your cluster
+kube-bench run --targets master,node,etcd
+
+# Check your workloads against best practices
+polaris audit --audit-path ./kubernetes-manifests/
+```
+
+**Common CIS benchmark checks:**
+
+| Check | What It Verifies | Why It Matters |
+|-------|-----------------|----------------|
+| No containers running as root | `runAsNonRoot: true` | Root containers can escape |
+| No privileged containers | `privileged: false` | Privileged containers have host access |
+| Read-only root filesystem | `readOnlyRootFilesystem: true` | Prevents in-container modifications |
+| CPU and memory limits set | `resources.limits` | Prevents resource exhaustion attacks |
+| All capabilities dropped | `drop: ["ALL"]` | Minimizes kernel-level permissions |
+| Host network not used | `hostNetwork: false` | Prevents access to host network stack |
+
+## Practical Example — Securing a Full Stack
+
+Let us secure a three-tier application: frontend (Nginx), API (Node.js), and database (PostgreSQL). Here is the project structure:
+
+```
+secure-stack/
+├── frontend/
+│   ├── Dockerfile
+│   └── k8s/
+│       ├── deployment.yml
+│       └── networkpolicy.yml
+├── api/
+│   ├── Dockerfile
+│   └── k8s/
+│       ├── deployment.yml
+│       └── networkpolicy.yml
+├── database/
+│   └── k8s/
+│       ├── statefulset.yml
+│       └── networkpolicy.yml
+├── k8s/
+│   ├── namespace.yml
+│   ├── default-deny.yml
+│   └── security-context.yml
+└── ci/
+    └── security-pipeline.yml
+```
+
+**Step 1: Create a namespace with default-deny network policy**
+
+```yaml
+# k8s/namespace.yml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secure-stack
+  labels:
+    name: secure-stack
+    pod-security.kubernetes.io/enforce: restricted    # Enforce restricted pod security
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+```
+
+```yaml
+# k8s/default-deny.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: secure-stack
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+```
+
+**Step 2: Build secure images with multi-stage builds and distroless**
+
+```dockerfile
+# api/Dockerfile
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM gcr.io/distroless/nodejs20-debian12
+WORKDIR /app
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+USER 1000
+CMD ["dist/index.js"]
+```
+
+**Step 3: Deploy with hardened security context**
+
+```yaml
+# api/k8s/deployment.yml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: secure-stack
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: ghcr.io/my-org/api:v1.0.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+```
+
+**Step 4: Allow only necessary network traffic**
+
+```yaml
+# api/k8s/networkpolicy.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-ingress
+  namespace: secure-stack
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend      # Only frontend can reach the API
+      ports:
+        - port: 3000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: database       # API can only reach the database
+      ports:
+        - port: 5432
+    - to:                          # Allow DNS resolution
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+```
+
+**Step 5: Scan, sign, and verify in CI**
+
+```yaml
+# ci/security-pipeline.yml — GitHub Actions
+name: Security Pipeline
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Scan the Dockerfile for bad practices
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+
+      # Build the image
+      - name: Build image
+        run: docker build -t ghcr.io/my-org/api:${{ github.sha }} ./api
+
+      # Scan for vulnerabilities — fail on CRITICAL
+      - name: Vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/my-org/api:${{ github.sha }}
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+      # Generate and attach SBOM
+      - name: Generate SBOM
+        run: |
+          syft ghcr.io/my-org/api:${{ github.sha }} -o spdx-json > sbom.json
+          cosign attach sbom --sbom sbom.json ghcr.io/my-org/api:${{ github.sha }}
+
+      # Sign the image with keyless signing
+      - name: Sign image
+        uses: sigstore/cosign-installer@v3
+      - run: cosign sign --yes ghcr.io/my-org/api:${{ github.sha }}
+
+      # Verify the CIS benchmark on the cluster
+      - name: CIS Benchmark
+        run: kube-bench run --targets node
+```
 
 ## Security Checklist
 
-- Run containers as non-root
-- Drop all Linux capabilities (`drop: ["ALL"]`)
-- Use read-only root filesystem
-- Scan images in CI and periodically
-- Sign and verify images with cosign
-- Generate and scan SBOMs
-- Use NetworkPolicies by default
-- Enable audit logging
-- Rotate secrets regularly
-- Keep base images updated
+Use this checklist for every deployment. If any item is unchecked, you have a gap in your defense:
+
+- [ ] **Images use minimal or distroless bases** — No full OS images in production
+- [ ] **Multi-stage builds strip build tools** — Compilers and dev tools stay in the builder stage
+- [ ] **All containers run as non-root** — `runAsNonRoot: true` and `runAsUser: 1000`
+- [ ] **All Linux capabilities are dropped** — `drop: ["ALL"]`
+- [ ] **Root filesystem is read-only** — `readOnlyRootFilesystem: true`
+- [ ] **Images are scanned in CI** — Trivy with `exit-code: 1` on CRITICAL
+- [ ] **Images are signed with Cosign** — Keyless signing in CI, verification before deploy
+- [ ] **SBOMs are generated and attached** — Syft + Cosign for every image
+- [ ] **NetworkPolicies are default-deny** — No implicit trust between pods
+- [ ] **Resource limits are set** — CPU and memory limits prevent resource exhaustion
+- [ ] **Secrets are managed securely** — Use Vault or Sealed Secrets, not environment variables
+- [ ] **Base images are updated regularly** — Schedule weekly rebuilds to pick up security patches
+- [ ] **Audit logging is enabled** — Kubernetes audit logs track who did what
+- [ ] **Pod Security Standards are enforced** — Restricted profile at the namespace level
+
+## Common Pitfalls and Tips
+
+- **Pitfall: Running as root "because it works"** — Many Docker images default to root, and applications often "just work" with root permissions. **Tip:** Always add `USER 1000` to your Dockerfile and set `runAsNonRoot: true` in Kubernetes. If something breaks, fix the permission issue rather than running as root.
+
+- **Pitfall: Scanning images once** — New CVEs are published daily. An image that was clean yesterday might have critical vulnerabilities today. **Tip:** Scan in CI on every build AND run periodic scans on deployed images (daily or weekly).
+
+- **Pitfall: Ignoring supply chain security** — Most teams focus on runtime security but forget that the build pipeline itself can be compromised. **Tip:** Implement SLSA Level 2 at minimum: sign your images in CI and verify them before deployment.
+
+- **Pitfall: NetworkPolicies that allow everything** — A policy with no `ingress` or `egress` rules but `policyTypes: [Ingress, Egress]` does nothing useful. **Tip:** Start with a default-deny policy and add specific allow rules incrementally.
+
+- **Pitfall: Storing secrets in environment variables** — Environment variables are visible to anyone who can run `kubectl describe pod`. **Tip:** Use a secrets manager (HashiCorp Vault, AWS Secrets Manager) or encrypted secrets (Sealed Secrets, External Secrets Operator).
+
+- **Tip: Automate with admission controllers** — Tools like OPA Gatekeeper or Kyverno can enforce security policies at the API level. If someone tries to deploy a pod without `runAsNonRoot: true`, the admission controller rejects it — no exceptions.
+
+- **Tip: Use `kubectl who-can` to audit RBAC** — Run `kubectl who-can create pods` or `kubectl who-can get secrets` to find service accounts with excessive permissions. Principle of least privilege applies to people and service accounts alike.

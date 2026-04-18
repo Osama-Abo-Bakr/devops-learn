@@ -1,62 +1,249 @@
 ---
 title: "Monitoring and Observability"
 module: devops
-level: advanced
-duration: "45 min"
-description: "Set up Prometheus metrics, Grafana dashboards, and distributed tracing."
+level: intermediate
+duration: "40 min"
+description: "Implement the three pillars of observability: metrics (Prometheus), logs (Loki), and traces (Jaeger)."
 order: 3
 ---
 
 # Monitoring and Observability
 
-Observability is the ability to understand what's happening inside your systems from their external outputs. The three pillars: **metrics**, **logs**, and **traces**.
+Think about the dashboard of a car. Your speedometer tells you *how fast* you are going right now (a metric). The check engine light tells you *something is wrong* (a log). And when you take the car to a mechanic, they connect a diagnostic tool that traces the problem *through every system* to find the root cause (a trace). Monitoring your applications works the same way — you need all three instruments to understand what is happening inside your systems.
 
-## The Three Pillars
+The difference between monitoring and observability is important. **Monitoring** is collecting data and alerting on known problems. **Observability** is the ability to ask arbitrary questions about your system — even questions you did not think to ask in advance. Observability is what lets you debug an outage at 3 AM when the alert just says "something is slow."
 
-| Pillar | Answers | Tool Example |
-|--------|---------|-------------|
-| Metrics | How much? How fast? | Prometheus |
-| Logs | What happened? | Loki, ELK |
-| Traces | Where did time go? | Jaeger, Tempo |
+## What is Observability?
 
-## Prometheus
+Observability is built on three pillars, each answering a different kind of question:
 
-Prometheus scrapes metrics endpoints at regular intervals and stores time-series data.
+- **Metrics** — "How much? How fast? How often?" Numeric data measured over time: request rates, CPU usage, memory consumption, error counts.
+- **Logs** — "What happened?" Discrete events recorded as text: an error message, a user login, a database query.
+- **Traces** — "Where did the time go?" The journey of a single request through your entire system, showing every service it touched and how long each step took.
 
-### Expose metrics from your app
+No single pillar is enough. Metrics tell you *something is wrong*, logs tell you *what happened*, and traces tell you *where and why*.
+
+## Why Does It Matter?
+
+- **Faster incident resolution** — When production breaks, the difference between a 10-minute fix and a 2-hour outage is whether you can trace the problem. Observability gives you the data to ask "which service is slow and why?" instead of guessing.
+- **Proactive problem detection** — Metrics let you set alerts on trends *before* they become outages. A gradual increase in latency over hours is invisible without metrics but obvious on a dashboard.
+- **Understanding user experience** — Aggregated metrics like p99 latency tell you what 1% of your slowest users experience. That is far more useful than average response time, which hides outliers.
+- **Data-driven capacity planning** — CPU and memory trends tell you when you need to scale — before you run out of resources at peak traffic.
+- **Debugging distributed systems** — In a microservices architecture, a single user request might touch 10 services. Without traces, finding the slow one is like finding a needle in a haystack.
+
+## Core Concepts
+
+### Metrics — Prometheus
+
+Prometheus is the standard for metrics collection in cloud-native environments. It works on a **pull model**: it scrapes HTTP endpoints on your services at regular intervals and stores the data as time series.
+
+**How to expose metrics from your application:**
+
+Your application needs to expose a `/metrics` endpoint that Prometheus can scrape. Most languages have a client library. Here is an example in Go:
 
 ```go
-var httpRequests = prometheus.NewCounterVec(
-    prometheus.CounterOpts{
-        Name: "http_requests_total",
-        Help: "Total HTTP requests",
-    },
-    []string{"method", "path", "status"},
+package main
+
+import (
+    "net/http"
+    "github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-http.Handle("/metrics", promhttp.Handler())
+// Define a counter metric that tracks HTTP requests
+// The three labels let you break down requests by method, path, and status code
+var httpRequests = prometheus.NewCounterVec(
+    prometheus.CounterOpts{
+        Name: "http_requests_total",       // Metric name — use _total suffix for counters
+        Help: "Total number of HTTP requests",  // Human-readable description
+    },
+    []string{"method", "path", "status"},  // Labels for dimensionality
+)
+
+func init() {
+    prometheus.MustRegister(httpRequests)  // Register the metric with Prometheus
+}
+
+func handler(w http.ResponseWriter, r *http.Request) {
+    httpRequests.WithLabelValues("GET", "/", "200").Inc()  // Increment the counter
+    w.WriteHeader(http.StatusOK)
+}
+
+func main() {
+    http.HandleFunc("/", handler)
+    http.Handle("/metrics", promhttp.Handler())  // Expose /metrics endpoint
+    http.ListenAndServe(":8080", nil)
+}
 ```
 
-### Scrape config
+**What the `/metrics` endpoint returns:**
+
+```
+# HELP http_requests_total Total number of HTTP requests
+# TYPE http_requests_total counter
+http_requests_total{method="GET",path="/",status="200"} 1542
+http_requests_total{method="POST",path="/api/users",status="201"} 87
+http_requests_total{method="GET",path="/api/users",status="500"} 3
+```
+
+**Prometheus configuration to scrape your app:**
 
 ```yaml
 # prometheus.yml
 scrape_configs:
-  - job_name: 'my-app'
-    kubernetes_sd_configs:
+  - job_name: 'my-app'                    # Name for this scrape target
+    scrape_interval: 15s                   # How often to pull metrics
+    kubernetes_sd_configs:                 # Auto-discover pods in Kubernetes
       - role: pod
     relabel_configs:
       - source_labels: [__meta_kubernetes_pod_label_app]
         action: keep
-        regex: my-app
+        regex: my-app                      # Only scrape pods labeled app=my-app
 ```
 
-## Grafana Dashboards
+**PromQL — The Query Language**
 
-Grafana visualizes Prometheus metrics. Deploy with Compose for local testing:
+PromQL lets you query and aggregate metrics. Here are the queries you will use most:
+
+| Query | What It Returns | Use Case |
+|-------|----------------|----------|
+| `http_requests_total` | Raw counter values | Rarely useful alone — counters only go up |
+| `rate(http_requests_total[5m])` | Requests per second over 5 minutes | Current traffic level |
+| `rate(http_requests_total{status=~"5.."}[5m])` | Error rate per second | Detecting failures |
+| `histogram_quantile(0.99, rate(latency_bucket[5m]))` | 99th percentile latency | Worst-case user experience |
+| `sum(rate(http_requests_total[5m])) by (path)` | Traffic grouped by endpoint | Finding hot paths |
+
+The `rate()` function is essential — it converts raw counters into per-second rates. Without `rate()`, you just see an ever-increasing number that tells you nothing about current behavior.
+
+### Logs — Loki
+
+Loki is a log aggregation system designed by the Grafana team. Unlike the ELK stack (Elasticsearch, Logstash, Kibana), Loki does *not* index the full text of your logs. Instead, it indexes only **labels** (metadata like service name, namespace, pod) and stores the log body as compressed chunks. This makes Loki dramatically cheaper and simpler to run.
+
+**How logs flow from your application to Loki:**
+
+```
+App (stdout/stderr) ──► Promtail (agent) ──► Loki (storage) ──► Grafana (visualization)
+```
+
+1. Your application writes logs to stdout/stderr (the Twelve-Factor App way).
+2. **Promtail** runs on every node, tails the container log files, adds labels, and ships them to Loki.
+3. **Loki** stores and indexes the labeled logs.
+4. **Grafana** queries Loki using **LogQL** and displays logs alongside your metrics.
+
+**LogQL — The Log Query Language:**
+
+```logql
+# Simple: all logs from a specific app
+{app="profile-service"}
+
+# Filter by content: find error messages
+{app="profile-service"} |= "error"
+
+# Multiple filters: errors from a specific endpoint
+{app="profile-service"} |= "error" |~ "timeout|refused"
+
+# Extract metrics from logs: count errors per minute
+sum(count_over_time({app="profile-service"} |= "error" [1m])) by (level)
+```
+
+**Loki configuration:**
 
 ```yaml
-# docker-compose.monitoring.yml
+# loki-config.yml
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: loki_index_
+        period: 24h
+```
+
+### Traces — Jaeger
+
+Distributed tracing shows you the complete path of a single request through your system. When a user clicks "Place Order" and the response takes 3 seconds, the trace tells you exactly where those 3 seconds went — was it the database query? The payment service? A network call?
+
+**Key concepts:**
+
+- **Trace** — The entire journey of one request, identified by a unique trace ID.
+- **Span** — One unit of work within a trace. A span represents a single operation: an HTTP call, a database query, a function execution. Each span has a start time, duration, and metadata.
+- **Context propagation** — The trace ID is passed from service to service via HTTP headers (like `traceparent`). This is how separate services are linked into one coherent trace.
+
+```
+Trace ID: abc123
+├── Span 1: API Gateway (0ms - 50ms)
+│   ├── Span 2: Auth Service (50ms - 80ms)
+│   └── Span 3: Order Service (80ms - 2500ms)
+│       ├── Span 4: Inventory Check (80ms - 200ms)
+│       ├── Span 5: Payment Service (200ms - 2400ms)  ← Bottleneck!
+│       │   └── Span 6: Payment DB Query (200ms - 2350ms)
+│       └── Span 7: Order DB Write (2400ms - 2500ms)
+```
+
+In this trace, the payment database query takes 2.15 seconds — that is your bottleneck. Without tracing, you would see "Order Service took 2.5 seconds" but not know *why*.
+
+**Instrumenting a Node.js application with OpenTelemetry:**
+
+OpenTelemetry is the standard framework for generating traces. It is vendor-neutral — the same instrumentation works with Jaeger, Zipkin, or any trace backend.
+
+```javascript
+// tracing.js — Initialize at application startup
+const { NodeSDK } = require('@opentelemetry/sdk-node');
+const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-http');
+const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
+
+const sdk = new NodeSDK({
+  // Export traces to Jaeger via OTLP on port 4318
+  traceExporter: new OTLPTraceExporter({
+    url: 'http://jaeger:4318/v1/traces',
+  }),
+  // Auto-instrument HTTP, Express, database drivers, etc.
+  instrumentations: [getNodeAutoInstrumentations()],
+});
+
+sdk.start();
+```
+
+**Jaeger deployment with Docker Compose:**
+
+```yaml
+# docker-compose.observability.yml
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4318:4318"     # OTLP HTTP receiver (where apps send traces)
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+```
+
+### Grafana — Bringing It All Together
+
+Grafana is the visualization layer that ties metrics, logs, and traces into unified dashboards. You can see your Prometheus charts, click on a spike to drill into Loki logs, and click a log line to open the corresponding Jaeger trace — all in one interface.
+
+**Docker Compose for a complete local observability stack:**
+
+```yaml
+# docker-compose.observability.yml
 services:
   prometheus:
     image: prom/prometheus:latest
@@ -65,57 +252,126 @@ services:
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
 
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - /var/log:/var/log
+      - ./promtail.yml:/etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
   grafana:
     image: grafana/grafana:latest
     ports:
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana-datasources:/etc/grafana/provisioning/datasources
 ```
 
-## Key Metrics to Track
-
-| Metric | Type | Alert Threshold |
-|--------|------|-----------------|
-| Request rate | Counter | — |
-| Error rate | Counter | > 1% |
-| Latency (p99) | Histogram | > 500ms |
-| CPU usage | Gauge | > 80% |
-| Memory usage | Gauge | > 90% |
-| Pod restarts | Counter | > 3 in 5 min |
-
-## Alerting Rules
+**Grafana datasource configuration (auto-configure Prometheus, Loki, and Jaeger):**
 
 ```yaml
-# alerts.yml
+# grafana-datasources/datasources.yml
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    url: http://prometheus:9090
+    isDefault: true
+
+  - name: Loki
+    type: loki
+    url: http://loki:3100
+
+  - name: Jaeger
+    type: jaeger
+    url: http://jaeger:16686
+```
+
+### Alerting — From Data to Action
+
+Metrics without alerts are just charts. Alerts turn your data into automated notifications when something goes wrong.
+
+```yaml
+# alerts.yml — Prometheus alerting rules
 groups:
-  - name: my-app
+  - name: my-app-alerts
     rules:
+      # Alert: Error rate exceeds 1% over 5 minutes
       - alert: HighErrorRate
-        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.01
-        for: 5m
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+          / sum(rate(http_requests_total[5m])) > 0.01
+        for: 5m                    # Must be true for 5 minutes before firing
         labels:
-          severity: critical
+          severity: critical        # Used for routing in Alertmanager
         annotations:
           summary: "Error rate above 1%"
+          description: "The 5xx error rate is {{ $value | humanizePercentage }}"
+
+      # Alert: P99 latency exceeds 500ms
+      - alert: HighLatency
+        expr: histogram_quantile(0.99, rate(latency_bucket[5m])) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P99 latency above 500ms"
 ```
 
-## Distributed Tracing
+**Key metrics to track and their alert thresholds:**
 
-Traces show the path of a request across services:
+| Metric | Type | What It Tells You | Alert Threshold |
+|--------|------|-------------------|-----------------|
+| Request rate | Counter | Traffic volume | Sudden drop or spike |
+| Error rate | Counter | Failure frequency | Greater than 1% of 5xx responses |
+| Latency (p50, p99) | Histogram | User experience | p99 greater than 500ms |
+| CPU usage | Gauge | Resource pressure | Greater than 80% sustained |
+| Memory usage | Gauge | Memory pressure | Greater than 90% sustained |
+| Pod restarts | Counter | Crash loops | Greater than 3 in 5 minutes |
+| Disk usage | Gauge | Storage pressure | Greater than 85% |
 
-```
-[Client] ──► [API Gateway] ──► [User Service] ──► [DB]
-                  │
-                  └────────► [Order Service] ──► [Cache]
-```
+## Practical Example — Observability for a Microservices App
 
-Each span records timing, making bottlenecks visible.
+Imagine an e-commerce platform with three services: `cart-service`, `order-service`, and `payment-service`. Here is how the three pillars work together when a user places an order:
 
-## Commands
+**The scenario:** Users report "orders are slow." Here is how each pillar helps:
 
-```bash
-kubectl port-forward svc/prometheus 9090:9090   # Access Prometheus
-kubectl port-forward svc/grafana 3000:3000       # Access Grafana
-kubectl top pods                                 # Quick metrics check
-```
+1. **Metrics (Prometheus)** — Your dashboard shows `order-service` latency jumped from 200ms to 3 seconds. The *what* is clear: something in order-service is slow.
+
+2. **Logs (Loki)** — You query Loki for `order-service` logs in the last hour and find repeated errors: `connection pool exhausted, waiting for available connection`. The *why* is becoming clear: database connections are running out.
+
+3. **Traces (Jaeger)** — You click from a log line into the corresponding trace and see that `order-service` spent 2.8 seconds waiting for a response from `payment-service`, which in turn waited 2.7 seconds on a database query. The *where* is pinpointed: a slow database query in payment-service.
+
+Without all three, you might know *something* is slow (metrics) but not *why* (logs) or *where exactly* (traces). Together, they turn a vague "it's slow" into a precise "payment-service database query takes 2.7 seconds due to a missing index."
+
+## Common Pitfalls and Tips
+
+- **Pitfall: Alerting on everything** — If you get 50 alerts per day, you will ignore all of them (alert fatigue). **Tip:** Only alert on symptoms that affect users (error rate, latency), not on internal metrics (CPU, memory). Use dashboards for the rest.
+
+- **Pitfall: Missing the `for:` duration in alerts** — A brief spike triggers an alert, pages someone at 3 AM, and resolves itself before anyone looks. **Tip:** Use `for: 5m` or longer to avoid flapping alerts.
+
+- **Pitfall: Logging sensitive data** — Logging passwords, API keys, or personal data in plain text is a security and compliance violation. **Tip:** Use structured logging with a sanitization layer. Never log request bodies that might contain credentials.
+
+- **Pitfall: Not correlating pillars** — Metrics, logs, and traces are most powerful when linked. **Tip:** Include trace IDs in your log output. This lets you jump from a log line directly to the corresponding trace in Jaeger.
+
+- **Tip: Use the RED method** — For every service, track **R**ate (requests per second), **E**rrors (error rate), and **D**uration (latency). These three metrics cover the most critical aspects of service health.
+
+- **Tip: Use the USE method for infrastructure** — For every resource (CPU, disk, network), track **U**tilization (percent busy), **S**aturation (queued work), and **E**rrors (error count). This catches resource bottlenecks before they cause user-facing issues.
+
+- **Tip: Start simple** — Do not try to deploy Prometheus, Loki, Jaeger, Grafana, and Alertmanager all at once. Start with Prometheus and Grafana, add Loki when you need log search, and add Jaeger when you have multiple services to trace.

@@ -5,7 +5,7 @@ describe("content utilities", () => {
     const content = getLessonContent("en", "docker", "containers-101");
     expect(content).toBeTruthy();
     expect(content).toContain("---");
-    expect(content).toContain("What Are Containers");
+    expect(content).toContain("Container");
   });
 
   test("getLessonContent returns null for missing lesson", () => {

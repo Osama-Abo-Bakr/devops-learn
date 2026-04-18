@@ -3,36 +3,165 @@ title: "HPA and Scaling"
 module: kubernetes
 level: intermediate
 duration: "30 min"
-description: "Automatically scale your workloads with the Horizontal Pod Autoscaler."
+description: "Automatically scale pods with Horizontal Pod Autoscaler based on CPU and custom metrics."
 order: 4
 ---
 
 # HPA and Scaling
 
-The Horizontal Pod Autoscaler (HPA) automatically scales the number of Pod replicas based on observed metrics — typically CPU or memory usage, but custom metrics are also supported.
+Imagine you run a restaurant. On a quiet Tuesday, two servers handle the dining room just fine. But on a busy Saturday night, you need eight. You wouldn't staff for Saturday every day -- that's wasteful. And you wouldn't keep Tuesday's crew on Saturday -- that's a disaster. You'd adjust your staffing based on demand.
 
-## How HPA Works
+That's exactly what the **Horizontal Pod Autoscaler (HPA)** does for your Kubernetes workloads. It watches how busy your application is and automatically adds or removes Pod replicas to match the current load. Too much traffic? Scale up. Traffic drops? Scale back down. No manual intervention needed.
 
-1. HPA checks metrics at regular intervals (default: 15s)
-2. It compares current metrics against target thresholds
-3. It adjusts replica count up or down to meet the target
+## Why Manual Scaling Doesn't Work
+
+You could manually run `kubectl scale deployment/web --replicas=10` every time traffic spikes, but here's why that breaks down:
+
+- **Traffic is unpredictable.** A viral tweet, a marketing campaign, or a bot surge can hit at any time. By the time you notice and scale up, your users are already seeing errors.
+- **You can't watch 24/7.** Traffic spikes at 3 AM? Your app is down until someone wakes up and scales manually.
+- **Overscaling wastes money.** Running 20 replicas "just in case" means you're paying for 15 idle Pods most of the time.
+- **Underscaling loses customers.** Running 3 replicas to save money means your app crawls under load and users leave.
+- **Multiple workloads multiply the problem.** A cluster with 20 microservices means 20 things to monitor and scale manually. That doesn't scale.
+
+The HPA automates all of this. It continuously monitors metrics and adjusts replica counts to match your configured targets.
+
+## What is the Horizontal Pod Autoscaler?
+
+The **HPA** is a Kubernetes controller that automatically scales the number of Pod replicas in a Deployment, ReplicaSet, or StatefulSet based on observed metrics.
+
+Here's how the control loop works:
+
+1. **The HPA controller queries metrics** every 15 seconds (default) from the Metrics Server or a custom metrics API.
+2. **It calculates the desired replica count** based on the current metric value and your target.
+3. **It updates the Deployment's replica count** if the desired count differs from the current count.
+4. **The Deployment creates or removes Pods** to match the new replica count.
+
+```text
+┌───────────────────────────┐
+│     HPA Controller         │
+│                            │
+│  Current CPU: 85%          │
+│  Target CPU:  70%          │
+│  Current Replicas: 3      │
+│  Desired Replicas: 4 ←─── │─── 85/70 * 3 = 3.64, round up to 4
+└──────────┬────────────────┘
+           │ reads metrics
+           ▼
+┌───────────────────────────┐
+│    Metrics Server          │
+│  Pod-1: 80% CPU            │
+│  Pod-2: 90% CPU            │
+│  Pod-3: 85% CPU            │
+└───────────────────────────┘
+```
+
+## Why Does It Matter?
+
+- **Automatic response to load changes.** Traffic spikes at 3 AM? HPA scales up before anyone notices.
+- **Cost optimization.** Run fewer replicas during quiet periods and more during peaks. Pay for what you use.
+- **Improved reliability.** When CPU or memory pressure builds, HPA adds capacity before users experience degradation.
+- **Declarative configuration.** Define your scaling policy once in YAML, and Kubernetes handles it forever.
+- **Foundation for production readiness.** Any serious production workload needs autoscaling. It's not optional.
+
+## Prerequisites: Metrics Server
+
+The HPA needs metrics to make decisions. By default, Kubernetes clusters don't include a Metrics Server -- you need to install it.
+
+```bash
+# Install the Metrics Server
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+# Wait a minute, then verify it's working
+kubectl top pods
+```
+
+```text
+NAME                       CPU(cores)   MEMORY(bytes)
+web-app-7d8b9c5f4-2xzkm   120m         145Mi
+web-app-7d8b9c5f4-5njpw   85m          132Mi
+web-app-7d8b9c5f4-8qrty   95m          138Mi
+```
+
+If `kubectl top pods` works, the Metrics Server is running and HPA can use CPU and memory metrics.
+
+**Note for local development:** Minikube requires an extra flag because it doesn't serve proper TLS certificates:
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml --validate=false
+```
+
+Or use `minikube addons enable metrics-server` for a simpler setup.
+
+## The HPA Algorithm
+
+Understanding the math behind HPA decisions helps you set sensible targets. The formula is straightforward:
 
 ```
-        ┌──────────────────┐
-        │   HPA Controller  │
-        └────────┬─────────┘
-                 │ checks metrics
-        ┌────────▼─────────┐
-        │  Metrics Server   │
-        └────────┬─────────┘
-                 │
-        ┌────────▼─────────┐
-        │   Deployment      │
-        │  2 ──► 5 replicas │
-        └──────────────────┘
+desiredReplicas = ceil[currentReplicas * (currentMetricValue / targetMetricValue)]
 ```
 
-## Basic HPA
+Let's walk through an example:
+
+- You have **3 replicas**, each running at **85% CPU**
+- Your target is **70% CPU**
+
+```
+desiredReplicas = ceil[3 * (85 / 70)] = ceil[3 * 1.21] = ceil[3.64] = 4
+```
+
+HPA will scale up to 4 replicas. After the new Pod starts, the load distributes across 4 Pods, and CPU per Pod drops to roughly 64%.
+
+The algorithm is conservative:
+
+- It **rounds up** (ceil), so it always errs on the side of more replicas.
+- It **won't scale down immediately** -- there's a stabilization window (default 5 minutes) to prevent flapping.
+- It **respects min and max boundaries** -- it will never go below `minReplicas` or above `maxReplicas`.
+
+## Basic HPA: CPU-Based Scaling
+
+Here's a complete HPA manifest with line-by-line explanation:
+
+```yaml
+apiVersion: autoscaling/v2               # v2 API supports multiple metrics and behaviors
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-hpa                          # Name of the HPA object
+spec:
+  scaleTargetRef:                        # What resource to scale
+    apiVersion: apps/v1
+    kind: Deployment                     # You can also scale ReplicaSets or StatefulSets
+    name: web                            # The name of the target Deployment
+  minReplicas: 2                         # Never go below 2 replicas (even at 0% CPU)
+  maxReplicas: 10                        # Never go above 10 replicas (cost ceiling)
+  metrics:
+    - type: Resource                     # Resource metric = built-in (CPU, memory)
+      resource:
+        name: cpu                        # Watch CPU usage
+        target:
+          type: Utilization              # Target type: Utilization = percentage of request
+          averageUtilization: 70         # Target: 70% of requested CPU per Pod
+```
+
+The `averageUtilization` target is a percentage of the **requested** CPU, not the node's total CPU. If your container requests 200m CPU and the target is 70%, HPA tries to keep the container at 140m CPU usage (70% of 200m). **This is why setting resource requests is mandatory for HPA to work correctly.**
+
+Apply the HPA and check its status:
+
+```bash
+kubectl apply -f web-hpa.yaml
+kubectl get hpa
+```
+
+```text
+NAME      REFERENCE        TARGETS         MINPODS   MAXPODS   REPLICAS   AGE
+web-hpa   Deployment/web   85%/70%         2         10        3          30s
+```
+
+- **TARGETS** = `85%/70%` means current CPU is 85% of the request, target is 70%
+- **REPLICAS** = 3 (the current count, about to increase)
+
+## Multiple Metrics
+
+You can combine CPU and memory metrics. HPA calculates the desired replicas for each metric independently and uses the **higher** value:
 
 ```yaml
 apiVersion: autoscaling/v2
@@ -52,65 +181,261 @@ spec:
         name: cpu
         target:
           type: Utilization
+          averageUtilization: 70         # Scale if CPU exceeds 70%
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80         # Scale if memory exceeds 80%
+```
+
+If CPU-based calculation says 5 replicas and memory-based calculation says 7 replicas, HPA chooses 7. It always picks the most conservative (highest) value to satisfy all metric targets.
+
+## Custom Metrics with Prometheus
+
+CPU and memory are useful, but they're indirect indicators of load. What if you want to scale based on **request rate**, **queue depth**, or **connections per second**? That's where custom metrics come in.
+
+This requires:
+1. **Prometheus** running in your cluster to collect application metrics
+2. **Prometheus Adapter** to expose those metrics through the Kubernetes custom metrics API
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-hpa-custom
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Pods                          # Pod metric = custom metric per Pod
+      pods:
+        metric:
+          name: http_requests_per_second  # Custom metric from Prometheus
+        target:
+          type: AverageValue
+          averageValue: "1000"            # Scale to keep ~1000 req/s per Pod
+```
+
+This scales your Deployment so each Pod handles approximately 1000 requests per second. If traffic hits 5000 req/s, HPA scales to 5 replicas.
+
+## Scaling Behavior: Fine-Tuning the Response
+
+The `behavior` field gives you precise control over how fast HPA scales up and down. This prevents thrashing (rapid scale up/down cycles) and protects against sudden spikes.
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web
+  minReplicas: 2
+  maxReplicas: 15
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
           averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300     # Wait 5 minutes of low load before scaling down
+      policies:
+        - type: Percent
+          value: 10                       # Remove at most 10% of Pods per period
+          periodSeconds: 60               # Evaluate every 60 seconds
+    scaleUp:
+      stabilizationWindowSeconds: 0       # No delay on scale-up -- act immediately
+      policies:
+        - type: Percent
+          value: 100                      # Can double replica count per period
+          periodSeconds: 60
+        - type: Pods
+          value: 4                        # Or add at most 4 Pods per period
+          periodSeconds: 60
+      selectPolicy: Max                   # Use the policy that adds the most Pods
 ```
 
-This means: keep CPU under 70%. Scale between 2 and 10 replicas.
+### Behavior Breakdown
 
-## Prerequisites
+| Field | What It Does | Why It Matters |
+|-------|-------------|----------------|
+| `stabilizationWindowSeconds` (scaleDown) | Cooldown period before scaling down | Prevents flapping when metrics bounce around the target |
+| `stabilizationWindowSeconds` (scaleUp) | Delay before scaling up | Set to 0 for fast response; higher for cost-sensitive workloads |
+| `periodSeconds` | How often the policy is evaluated | Shorter = more responsive, longer = more stable |
+| `selectPolicy: Max` | Pick the most aggressive policy | Ensures quick scale-up when multiple policies apply |
+| `selectPolicy: Min` | Pick the most conservative policy | Useful for scale-down to avoid removing too many Pods |
 
-The Metrics Server must be running in your cluster:
+## VPA vs HPA vs Cluster Autoscaler
 
-```bash
-# Install metrics-server
-kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+Kubernetes has multiple autoscaling mechanisms. Here's how they differ:
 
-# Verify it's working
-kubectl top pods
-kubectl top nodes
-```
+| Feature | HPA | VPA | Cluster Autoscaler |
+|---------|-----|-----|-------------------|
+| **What it scales** | Number of Pod replicas | Pod resource requests (CPU/memory) | Number of nodes in the cluster |
+| **Direction** | Horizontal (more/fewer Pods) | Vertical (bigger/smaller Pods) | Infrastructure (more/fewer nodes) |
+| **Best for** | Variable traffic, web services | Right-sizing resource requests | When Pods can't schedule due to insufficient node resources |
+| **Downtime** | None (rolling) | **Yes** -- VPA restarts Pods to apply new sizes | None for existing Pods |
+| **Works with HPA?** | N/A | No -- don't use both on the same workload | Yes -- works together |
+| **Typical use** | Primary scaling mechanism | Optimization and recommendations | Infrastructure-level scaling |
 
-## Multiple Metrics
+**Important:** Do **not** use HPA and VPA on the same Deployment. They conflict -- HPA scales replica count based on CPU, VPA changes the CPU request, and they fight each other. Use VPA in "recommendation" mode to get sizing advice, and HPA for actual autoscaling.
+
+The **Cluster Autoscaler** works hand-in-hand with HPA. When HPA scales up and the existing nodes don't have enough capacity, the Cluster Autoscaler provisions new nodes. When HPA scales down and nodes are underutilized, it removes them.
+
+## Practical Example: Load Test with HPA
+
+Let's deploy a web application and see HPA in action by generating load.
+
+**deployment.yaml:**
 
 ```yaml
-metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 80
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: load-demo
+  template:
+    metadata:
+      labels:
+        app: load-demo
+    spec:
+      containers:
+        - name: app
+          image: hashicorp/http-echo             # Simple HTTP server for testing
+          args: ["-text=Hello from HPA demo!"]
+          ports:
+            - containerPort: 5678
+          resources:
+            requests:
+              cpu: "100m"                       # 0.1 CPU core requested
+              memory: "64Mi"
+            limits:
+              cpu: "200m"                       # 0.2 CPU core maximum
+              memory: "128Mi"
 ```
 
-HPA uses the metric that would require the most replicas.
-
-## Scaling Behavior
+**service.yaml:**
 
 ```yaml
-behavior:
-  scaleDown:
-    stabilizationWindowSeconds: 300  # Wait 5 min before scaling down
-    policies:
-      - type: Percent
-        value: 10       # Remove max 10% of pods per minute
-        periodSeconds: 60
-  scaleUp:
-    policies:
-      - type: Percent
-        value: 100      # Double pods if needed
-        periodSeconds: 60
+apiVersion: v1
+kind: Service
+metadata:
+  name: load-demo-service
+spec:
+  selector:
+    app: load-demo
+  ports:
+    - port: 80
+      targetPort: 5678
 ```
 
-## Commands
+**hpa.yaml:**
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: load-demo-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: load-demo
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50               # Scale up when CPU exceeds 50% of request
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+```
+
+Deploy and check the HPA:
 
 ```bash
-kubectl get hpa                          # List autoscalers
-kubectl describe hpa web-hpa            # Detailed status
-kubectl autoscale deployment web --min=2 --max=10 --cpu-percent=70
+kubectl apply -f deployment.yaml -f service.yaml -f hpa.yaml
+kubectl get hpa load-demo-hpa
 ```
+
+```text
+NAME              REFERENCE              TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+load-demo-hpa     Deployment/load-demo   1%/50%    2         10        2          30s
+```
+
+CPU is at 1% -- idle. Now let's generate some load:
+
+```bash
+# Run a load generator Pod that bombards the service with requests
+kubectl run load-generator --image=busybox --restart=Never -- \
+  /bin/sh -c "while true; do wget -qO- http://load-demo-service; done"
+```
+
+Watch HPA respond:
+
+```bash
+kubectl get hpa load-demo-hpa --watch
+```
+
+```text
+NAME              REFERENCE              TARGETS    MINPODS   MAXPODS   REPLICAS   AGE
+load-demo-hpa     Deployment/load-demo   1%/50%     2         10        2          1m
+load-demo-hpa     Deployment/load-demo   85%/50%    2         10        2          2m
+load-demo-hpa     Deployment/load-demo   85%/50%    2         10        4          2m15s
+load-demo-hpa     Deployment/load-demo   62%/50%    2         10        4          2m30s
+load-demo-hpa     Deployment/load-demo   62%/50%    2         10        6          2m45s
+load-demo-hpa     Deployment/load-demo   48%/50%    2         10        6          3m
+```
+
+HPA detected CPU at 85% (well above 50% target), calculated that more replicas were needed, and scaled from 2 to 4, then to 6, until CPU dropped near the target.
+
+Stop the load generator and watch HPA scale back down:
+
+```bash
+kubectl delete pod load-generator
+```
+
+After the stabilization window, HPA scales the Deployment back to 2 replicas.
+
+## Common Pitfalls and Tips
+
+| Pitfall | What Goes Wrong | How to Fix It |
+|---------|----------------|---------------|
+| **Missing resource requests** | HPA can't calculate utilization percentage without a baseline | Always set `resources.requests` in your Pod spec |
+| **Missing Metrics Server** | HPA shows `<unknown>` for targets and can't scale | Install Metrics Server before creating HPA |
+| **minReplicas too low** | HPA can't scale up enough during spikes | Set `minReplicas` to handle your baseline load |
+| **maxReplicas too low** | HPA hits the ceiling and can't add more Pods | Set `maxReplicas` high enough for peak load plus headroom |
+| **HPA and VPA on same workload** | They fight -- VPA changes requests, HPA responds by changing replicas | Don't combine them. Use VPA in recommendation mode only. |
+| **No scaling behavior configured** | HPA scales down too aggressively after a spike | Configure `behavior.scaleDown.stabilizationWindowSeconds` (300s is a good start) |
+| **Using autoscaling/v1** | Old API with limited features | Always use `autoscaling/v2` for multiple metrics and behavior settings |
+| **Scaling based on CPU only** | CPU doesn't always correlate with actual load | Add custom metrics (request rate, queue depth) via Prometheus Adapter |
+
+### Pro Tips
+
+- Start with a conservative HPA and adjust based on real production data. It's better to be a little over-provisioned than to have users hitting 503 errors.
+- Use `kubectl get hpa -w` to watch HPA decisions in real time during load tests.
+- Set `minReplicas` to at least 2 for production workloads -- single-replica Deployments can't scale up from zero.
+- Combine HPA with the Cluster Autoscaler so new nodes are provisioned automatically when HPA needs more capacity.
+- Monitor your HPA with Prometheus -- track `kube_hpa_status_current_replicas` and `kube_hpa_status_desired_replicas` to detect when HPA is consistently at max (you need to raise `maxReplicas`).
+- Use Pod priority and preemption to ensure critical workloads get scheduled first when the cluster is under pressure.

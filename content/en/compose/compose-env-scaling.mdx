@@ -1,109 +1,452 @@
 ---
-title: "Env Vars and Scaling"
+title: "Environment and Scaling"
 module: compose
 level: intermediate
 duration: "30 min"
-description: "Use .env files, variable substitution, and scale services horizontally."
+description: "Use .env files, environment variables, and scale services horizontally."
 order: 4
 ---
 
-# Environment Variables and Scaling
+# Environment and Scaling — Config Without Rebuilding
 
-Environment variables configure your services without rebuilding images. Scaling lets you run multiple instances of a service for load distribution.
+Imagine you are a chef running a restaurant. You would not rebuild the kitchen every time the menu changes — you would just swap out the ingredients. Environment variables work the same way for containers. Instead of baking configuration into the image (which requires a rebuild), you pass it in at runtime. The image stays the same; only the configuration changes. And when the dinner rush hits, you call in more cooks — that is horizontal scaling. This lesson covers both: how to configure your services dynamically, and how to run multiple instances when one is not enough.
 
-## .env File
+## What Are Environment Variables in Compose?
 
-Create a `.env` file in your project root:
+Environment variables are key-value pairs that are passed into a container at runtime. They let you configure a service without modifying the image or the Compose file itself. A single image can run in development, staging, and production — you just change the environment variables.
+
+## Why Does It Matter?
+
+- **Same image, multiple environments** — build once, deploy everywhere. Your development database URL and production database URL are just different environment variables pointing to different servers.
+- **Secrets stay out of code** — passwords, API keys, and tokens belong in environment files (which you gitignore), not in your Compose file or Docker image.
+- **Scaling requires stateless services** — to run 5 instances of a web app, each instance must be identical except for its environment. Hardcoded config makes this impossible.
+- **Team collaboration** — each developer can have their own `.env.local` with personal settings (database name, debug flags) without modifying shared files.
+- **CI/CD integration** — your pipeline can inject environment variables at deploy time without touching the codebase.
+
+## Core Concepts
+
+### The .env File — Your Project's Settings
+
+The `.env` file sits in the same directory as your `docker-compose.yml`. Compose automatically loads it, and you can reference its values with `${VAR}` syntax in the Compose file.
+
+**.env:**
 
 ```bash
-# .env
-POSTGRES_USER=myuser
+# Database configuration
+POSTGRES_USER=appuser
 POSTGRES_PASSWORD=secretpass
+POSTGRES_DB=myapp_dev
+
+# Application configuration
 APP_PORT=3000
-NODE_ENV=production
+NODE_ENV=development
+LOG_LEVEL=debug
+
+# External services
+REDIS_URL=redis://cache:6379
+API_KEY=sk-dev-12345
 ```
 
-Compose automatically loads `.env` — reference variables with `${VAR}`:
+**docker-compose.yml:**
 
 ```yaml
 services:
   web:
-    image: my-app:latest
+    build: .
     ports:
-      - "${APP_PORT}:3000"
+      - "${APP_PORT}:3000"        # Variable substitution — pulls APP_PORT from .env
     environment:
-      NODE_ENV: ${NODE_ENV}
-      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/mydb
+      NODE_ENV: ${NODE_ENV}        # development
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
+      LOG_LEVEL: ${LOG_LEVEL}      # debug
+      API_KEY: ${API_KEY}          # sk-dev-12345
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}        # Pulled from .env
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
 ```
 
-## Environment Precedence
+**Line by line:**
 
-From lowest to highest priority:
+- `"${APP_PORT}:3000"` — Compose reads `APP_PORT` from `.env` and substitutes `3000`. The published port becomes `3000:3000`. Always quote this — the colon in port mappings can confuse the YAML parser without quotes.
+- `${POSTGRES_USER}` — substituted at Compose parse time, before the container starts. The container receives the final value, not the variable reference.
+- `"postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"` — multiple substitutions in one string. The `$` and `{}` are required for variable substitution in Compose files.
 
-1. `Dockerfile` `ENV`
-2. Compose `environment` key
-3. Compose `env_file`
-4. Shell environment variables
-5. `.env` file
-6. `docker compose run -e`
+**Important distinction:** `.env` variables are used for **Compose file substitution** (replacing `${VAR}` in the YAML). They are NOT automatically passed into containers as environment variables. To set container environment variables, you must use the `environment` or `env_file` keys.
 
-Higher priority **overrides** lower.
+### The environment Key — Inline Variables
 
-## Multiple env_files
+The `environment` key sets environment variables directly in the Compose file. This is best for values that are not secret and are the same across all environments.
+
+```yaml
+services:
+  web:
+    environment:
+      NODE_ENV: production           # Key: value syntax (preferred for readability)
+      PORT: "3000"                    # Quotes prevent YAML from parsing as integer
+      LOG_LEVEL: info
+
+      # List syntax (alternative)
+      - "ANOTHER_VAR=some_value"     # Less common, but valid
+```
+
+### The env_file Key — Loading from External Files
+
+The `env_file` key reads a file and passes each line as an environment variable into the container. This is ideal for secrets and environment-specific configuration.
 
 ```yaml
 services:
   web:
     env_file:
-      - .env           # Shared defaults
-      - .env.local      # Local overrides (gitignored)
+      - .env                    # Shared defaults
+      - .env.local              # Personal overrides (gitignored)
 ```
 
-## Scaling Services
+**.env.local:**
 
 ```bash
-# Scale web to 3 instances
+# Override defaults for local development
+POSTGRES_DB=myapp_jane          # Jane's personal database
+LOG_LEVEL=debug                  # More verbose logging
+API_KEY=sk-dev-jane-personal     # Jane's personal API key
+```
+
+**Line by line:**
+
+- `.env` — loaded first, provides shared defaults.
+- `.env.local` — loaded second. If a variable appears in both files, the **last file wins** (`.env.local` overrides `.env`).
+- This pattern lets each developer have personal settings without modifying files that are tracked in git. Add `.env.local` to `.gitignore`.
+
+### .env vs env_file vs environment — What Goes Where?
+
+This is one of the most confusing parts of Compose, so let's be explicit:
+
+| Feature | `.env` file | `env_file` key | `environment` key |
+|---|---|---|---|
+| Where it is used | Variable substitution in the Compose YAML | Passed into the container as env vars | Passed into the container as env vars |
+| When it is resolved | At Compose parse time (before containers start) | At container creation time | At container creation time |
+| Can reference in YAML? | Yes (`${VAR}`) | No | No |
+| Visible inside container? | No (unless also in `environment`/`env_file`) | Yes | Yes |
+| Best for | Compose-level config (ports, image tags, volume paths) | Secrets, long lists of env vars | A few inline values |
+| File location | Project root (same dir as compose file) | Any path you specify | Inline in YAML |
+
+**The mental model:** `.env` configures Compose itself (what ports to publish, what image to use). `env_file` and `environment` configure the application inside the container (database URLs, API keys, feature flags).
+
+### Environment Variable Precedence
+
+When the same variable is set in multiple places, Compose uses a precedence order (highest wins):
+
+| Priority | Source | Example |
+|---|---|---|
+| 1 (highest) | `docker compose run -e VAR=val` | Command-line override |
+| 2 | Shell environment variables | `export VAR=val && docker compose up` |
+| 3 | `env_file` | `.env`, `.env.local` |
+| 4 | `environment` key | Inline in Compose file |
+| 5 (lowest) | `Dockerfile` `ENV` | Baked into the image |
+
+**What this means in practice:** if you set `NODE_ENV=production` in the Dockerfile, but `NODE_ENV=development` in the `environment` key, the container will see `development` because `environment` has higher priority. If you also pass `NODE_ENV=staging` via the command line with `-e`, that wins over everything.
+
+### Variable Substitution with Defaults
+
+You can provide default values in case a variable is not set:
+
+```yaml
+services:
+  web:
+    ports:
+      - "${APP_PORT:-3000}:3000"          # Use APP_PORT, or 3000 if not set
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}  # Use NODE_ENV, or "development" if not set
+      LOG_LEVEL: ${LOG_LEVEL:-info}       # Use LOG_LEVEL, or "info" if not set
+```
+
+**Line by line:**
+
+- `${APP_PORT:-3000}` — the `:-` syntax means "use the value of `APP_PORT`, but if it is not set or empty, use `3000` instead." This makes your Compose file work even without a `.env` file.
+
+**Another syntax:** `${APP_PORT-3000}` (without the colon) means "use the default only if `APP_PORT` is unset, but not if it is empty." The difference matters when you intentionally set a variable to an empty string.
+
+### Scaling Services — Running Multiple Instances
+
+When one instance of a service cannot handle the load, you scale it by running multiple copies. Compose makes this trivially easy with the `--scale` flag.
+
+```bash
+# Run 3 instances of the web service
 docker compose up -d --scale web=3
 ```
 
-This creates `web-1`, `web-2`, `web-3`. But you need a load balancer or reverse proxy to distribute traffic.
+**What happens:** Compose creates three containers — `web-1`, `web-2`, `web-3`. Each is an identical copy of the `web` service definition. They all connect to the same network and can all reach the same database and cache.
 
-## Scaling with Port Conflicts
+**But there is a catch** — if your service maps a fixed host port, scaling will fail. Only one container can bind to port 3000 on the host. The others will get port conflicts and crash.
 
-If your service maps a fixed host port, scaling fails — only one container can bind port 3000. Solution: use a reverse proxy or dynamic port range:
+### The Port Conflict Problem and Solution
+
+When scaling, you need to avoid mapping fixed host ports. Instead, let a reverse proxy handle routing:
 
 ```yaml
 services:
   web:
-    image: my-app:latest
-    # Don't map fixed ports — let a proxy handle it
+    build: .
     expose:
-      - "3000"
-  
+      - "3000"                    # Expose port to other containers (not the host)
+    environment:
+      DATABASE_URL: "postgres://appuser:pass@db:5432/myapp"
+    deploy:
+      replicas: 3                 # Run 3 instances (alternative to --scale flag)
+
   proxy:
     image: nginx:alpine
     ports:
-      - "80:80"
+      - "80:80"                   # Only the proxy publishes a port
     depends_on:
       - web
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
 ```
 
-## Override Files
+**Line by line:**
+
+- `expose: "3000"` — makes port 3000 available to other containers on the same network, but does not publish it to the host. This is the key to avoiding port conflicts when scaling.
+- `deploy: replicas: 3` — tells Compose to run 3 instances of the `web` service. This is the Compose-file way to scale, as opposed to the `--scale` command-line flag.
+- The `proxy` service (Nginx) publishes port 80 on the host. It load-balances across the three `web` instances using Nginx's upstream configuration.
+
+**Nginx upstream configuration (nginx.conf):**
+
+```nginx
+upstream web_backend {
+    server web:3000;    # Docker DNS round-robins between web-1, web-2, web-3
+}
+
+server {
+    listen 80;
+    location / {
+        proxy_pass http://web_backend;
+    }
+}
+```
+
+**Line by line:**
+
+- `server web:3000` — Nginx resolves `web` via Docker DNS. When there are multiple containers for the `web` service, Docker's DNS server returns all their IPs and round-robins between them. This gives you basic load balancing without any extra configuration.
+
+### Important Limitations of Compose Scaling
+
+- **No built-in load balancer** — Compose does not automatically distribute traffic across scaled instances. You need a reverse proxy (Nginx, HAProxy, Traefik) or an application-level load balancer.
+- **No auto-scaling** — Compose does not monitor load and add or remove instances. You decide the replica count manually or through a script.
+- **Stateful services should not be scaled** — never scale a database. Multiple Postgres instances writing to the same volume would corrupt data. Scale only stateless services (web servers, API servers, workers).
+- **Session persistence** — if your app stores session state locally (in-memory), a user's request might hit a different instance on the next request, losing their session. Store sessions in Redis or the database instead.
+
+## Practical Example — A Scalable Web Application
+
+Let's build a complete example: a Node.js web app that can scale horizontally, backed by Postgres and Redis.
+
+**Project structure:**
+
+```
+scalable-app/
+  docker-compose.yml
+  .env
+  web/
+    Dockerfile
+    package.json
+    server.js
+  proxy/
+    nginx.conf
+```
+
+**.env:**
 
 ```bash
-# Use production overrides
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+APP_PORT=3000
+POSTGRES_USER=appuser
+POSTGRES_PASSWORD=secretpass
+POSTGRES_DB=appdb
+NODE_ENV=production
+WEB_REPLICAS=3
 ```
 
+**docker-compose.yml:**
+
 ```yaml
-# docker-compose.prod.yml
 services:
   web:
+    build: ./web
+    expose:
+      - "3000"                      # Available to other containers, not the host
     environment:
-      NODE_ENV: production
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
+      REDIS_URL: "redis://cache:6379"
+      NODE_ENV: ${NODE_ENV:-production}
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    restart: unless-stopped
     deploy:
-      replicas: 3
-      resources:
-        limits:
-          memory: 512M
+      replicas: ${WEB_REPLICAS:-2}  # Scale from .env, default to 2
+
+  proxy:
+    image: nginx:alpine
+    ports:
+      - "80:80"                     # Single entry point for all web instances
+    volumes:
+      - ./proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - web
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  cache:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  db-data:
 ```
+
+**proxy/nginx.conf:**
+
+```nginx
+upstream web_app {
+    server web:3000;
+}
+
+server {
+    listen 80;
+    location / {
+        proxy_pass http://web_app;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+**Step-by-step:**
+
+1. Create the project and files:
+
+```bash
+mkdir -p scalable-app/web scalable-app/proxy
+cd scalable-app
+```
+
+2. Create all the files shown above.
+
+3. Start the stack:
+
+```bash
+docker compose up -d --build
+```
+
+**Expected output:**
+
+```
+[+] Running 6/6
+ ✔ Container scalable-app-db-1      Started (healthy)
+ ✔ Container scalable-app-cache-1   Started
+ ✔ Container scalable-app-web-1    Started
+ ✔ Container scalable-app-web-2    Started
+ ✔ Container scalable-app-web-3    Started
+ ✔ Container scalable-app-proxy-1   Started
+```
+
+4. Verify that 3 web instances are running:
+
+```bash
+docker compose ps web
+```
+
+**Expected output:**
+
+```
+NAME                   STATUS         PORTS
+scalable-app-web-1    Up 30 seconds   3000/tcp
+scalable-app-web-2    Up 30 seconds   3000/tcp
+scalable-app-web-3    Up 30 seconds   3000/tcp
+```
+
+5. Test load balancing — make multiple requests and watch them hit different instances:
+
+```bash
+for i in {1..6}; do curl -s http://localhost; done
+```
+
+Requests are distributed across `web-1`, `web-2`, and `web-3` by Docker DNS round-robin.
+
+6. Scale dynamically without restarting the whole stack:
+
+```bash
+docker compose up -d --scale web=5
+```
+
+**Expected output:**
+
+```
+[+] Running 5/5
+ ✔ Container scalable-app-web-1    Running
+ ✔ Container scalable-app-web-2    Running
+ ✔ Container scalable-app-web-3    Running
+ ✔ Container scalable-app-web-4    Started
+ ✔ Container scalable-app-web-5    Started
+```
+
+7. Scale back down:
+
+```bash
+docker compose up -d --scale web=2
+```
+
+Compose stops the extra containers (`web-3`, `web-4`, `web-5`) and keeps `web-1` and `web-2`.
+
+8. Verify the resolved configuration (useful for debugging variable substitution):
+
+```bash
+docker compose config
+```
+
+This outputs the fully-merged Compose file with all `${VAR}` references resolved to their actual values.
+
+9. Clean up:
+
+```bash
+docker compose down -v
+```
+
+## Common Pitfalls and Tips
+
+- **Mixing up `.env` and `env_file`** — `.env` is for Compose variable substitution (used in the YAML file itself). `env_file` is for passing variables into the container. They serve different purposes. If you put `POSTGRES_USER=myuser` in `.env` but forget the `environment:` key in the `db` service, Postgres will not see it.
+
+- **Unquoted variable substitution in ports** — `"${APP_PORT}:3000"` must be quoted. Without quotes, the colon and variable syntax confuse the YAML parser and you will get a cryptic error.
+
+- **Scaling stateful services** — never scale databases or services with local state. If you need database redundancy, use replication features specific to that database (Postgres streaming replication, Redis Sentinel, etc.), not Compose scaling.
+
+- **Forgetting the reverse proxy** — if you scale `web` to 3 but only one instance can receive traffic (because it is the only one with a published port), you are not actually scaling. Use a proxy or remove the `ports:` mapping and use `expose:` instead.
+
+- **Missing defaults in variable substitution** — if a variable is not set in `.env` and you have no default (`${VAR}`), Compose will warn you and use an empty string. This can cause silent failures. Always use defaults: `${VAR:-fallback}`.
+
+- **Committing `.env` to git** — your `.env` file may contain secrets. Create a `.env.example` file with dummy values for the repo, and add `.env` and `.env.local` to `.gitignore`.
+
+- **Overriding at the command line** — for quick tests, you can override any variable: `APP_PORT=8080 docker compose up -d`. Shell environment variables take precedence over the `.env` file.

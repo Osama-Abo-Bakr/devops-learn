@@ -2,55 +2,364 @@
 title: "Volumes and Networks"
 module: docker
 level: beginner
-duration: "40 min"
+duration: "35 min"
 diagram: docker-volumes-networks
-description: "Persist data with volumes and connect containers with Docker networks."
+description: "Persist data with volumes and connect containers with networks."
 order: 3
 ---
 
-# Volumes and Networks
+# Volumes and Networks: Giving Containers Memory and Conversation
 
-By default, container data is ephemeral — when a container is removed, its data is lost. Volumes solve this. Networks let containers communicate securely.
+Imagine you have a colleague with amnesia. Every morning, they forget everything from the day before. They can still do their job during the day, but if they learn something new, it's gone by tomorrow. That's exactly what a container is like by default. Containers are **ephemeral** — when you remove a container, everything written inside it vanishes.
 
-## Docker Volumes
+Now imagine that same colleague working in an office with no phone or internet. They can do their own work, but they can't communicate with anyone else. That's what containers are like without networks — isolated islands with no way to talk to each other.
 
-Volumes are the preferred way to persist data in Docker.
+**Volumes** give containers persistent memory. **Networks** give them the ability to communicate. Both are essential for running real applications.
+
+## The Data Persistence Problem
+
+Let's see the problem in action. Start a container and write some data:
 
 ```bash
-# Create a volume
-docker volume create my-data
+# Start a container and create a file inside it
+docker run -d --name amnesia-test alpine sleep 3600
+docker exec amnesia-test sh -c "echo 'Important data!' > /data.txt"
+docker exec amnesia-test cat /data.txt
+# Output: Important data!
+```
 
-# Use a volume with a container
-docker run -d -v my-data:/data nginx
+The file exists. But now remove the container and try again:
 
-# Mount a host directory
-docker run -d -v /host/path:/container/path nginx
+```bash
+docker stop amnesia-test && docker rm amnesia-test
 
-# List volumes
+# Start a new container from the same image
+docker run -d --name amnesia-test alpine sleep 3600
+docker exec amnesia-test cat /data.txt
+# Output: cat: can't open '/data.txt': No such file or directory
+```
+
+**The data is gone.** The new container started from a fresh image — it has no memory of the old one. For a database, this would mean losing all your records every time you restart. That's clearly unacceptable.
+
+## Why Does It Matter?
+
+- **Databases need persistence** — PostgreSQL, MySQL, MongoDB, Redis (with persistence enabled) all write data to disk. Without volumes, a container restart wipes the entire database.
+- **Configuration survives restarts** — Settings, certificates, and configuration files should persist across container recreations.
+- **Container communication** — Real applications are composed of multiple services (app + database + cache + queue). They need to find and talk to each other reliably.
+- **Service discovery** — Hardcoding IP addresses is fragile. Docker networks provide automatic DNS resolution so containers find each other by name.
+- **Security isolation** — Custom networks let you control which containers can communicate, preventing unauthorized access between services.
+
+## Docker Volumes: Three Types
+
+Docker provides three mechanisms for persisting data. Understanding the differences is crucial.
+
+### 1. Named Volumes (Recommended)
+
+Named volumes are managed entirely by Docker. Docker creates them, stores them, and cleans them up. You refer to them by name.
+
+```bash
+# Create a named volume
+docker volume create my-app-data
+
+# Use it with a container
+docker run -d \
+  --name my-postgres \
+  -v my-app-data:/var/lib/postgresql/data \
+  postgres:16-alpine
+```
+
+Let's break down the `-v` flag: `my-app-data:/var/lib/postgresql/data`
+- **Left side (`my-app-data`)** — The volume name on the host
+- **Right side (`/var/lib/postgresql/data`)** — The path inside the container where the volume is mounted
+
+**What happens:** Docker stores the volume's data in a directory it manages (usually `/var/lib/docker/volumes/`). The container sees it as a normal directory, but the data persists even after the container is removed.
+
+```bash
+# Verify the volume exists
 docker volume ls
+# Output: DRIVER    VOLUME NAME
+#         local     my-app-data
+
+# Inspect the volume to see where Docker stores it
+docker volume inspect my-app-data
+# Output includes the Mountpoint: /var/lib/docker/volumes/my-app-data/_data
 ```
 
-## Docker Networks
+### 2. Bind Mounts
 
-Containers on the same network can communicate by container name.
+Bind mounts map a specific directory on your host machine to a directory in the container. They're a direct window into your filesystem.
 
 ```bash
-# Create a network
-docker network create my-app-net
-
-# Run containers on the network
-docker run -d --name api --network my-app-net my-api
-docker run -d --name db --network my-app-net postgres
+# Mount the current directory into the container
+docker run -d \
+  --name dev-app \
+  -v $(pwd):/app \
+  node:20-alpine
 ```
 
-The `api` container can reach the database at hostname `db`.
+**When to use bind mounts vs. named volumes:**
 
-## Port Mapping
+| Aspect | Named Volumes | Bind Mounts |
+|--------|-------------|-------------|
+| Managed by | Docker | You (the host filesystem) |
+| Portability | Works on any Docker host | Depends on host directory structure |
+| Best for | Production data (databases) | Development (live code reload) |
+| Backup | Use `docker volume` commands | Standard file backup |
+| Performance | Good on all platforms | Can be slow on macOS/Windows |
+| Risk | Low — Docker handles it | Higher — can modify host files |
+
+**The development workflow with bind mounts** is where they really shine:
 
 ```bash
-# Map host port 8080 to container port 80
-docker run -d -p 8080:80 nginx
-
-# Map to a specific host IP
-docker run -d -p 127.0.0.1:8080:80 nginx
+docker run -d \
+  --name my-dev-server \
+  -p 3000:3000 \
+  -v $(pwd):/app \
+  -v /app/node_modules \
+  node:20-alpine sh -c "cd /app && npm start"
 ```
+
+The second `-v /app/node_modules` creates an **anonymous volume** that shadows the bind mount for the `node_modules` directory. This prevents the host's `node_modules` (if any) from overwriting the container's installed dependencies.
+
+### 3. Anonymous Volumes
+
+Anonymous volumes are like named volumes, but without a name. Docker assigns them a random hash.
+
+```bash
+docker run -d -v /data nginx
+```
+
+The `-v /data` syntax (only a container path, no colon) creates an anonymous volume mounted at `/data` inside the container. It persists on disk, but it's hard to manage because you can only reference it by its random ID.
+
+**When would you use this?** Mostly as the "shadow" technique shown above (overriding a bind mount for a specific subdirectory). For standalone persistence, always prefer named volumes.
+
+### Volume Management Commands
+
+```bash
+# List all volumes
+docker volume ls
+
+# Inspect a specific volume
+docker volume inspect my-app-data
+
+# Remove unused volumes (be careful!)
+docker volume prune
+
+# Remove a specific volume
+docker volume rm my-app-data
+```
+
+**Warning:** `docker volume prune` deletes volumes not used by any container. Make sure no important data is in those volumes before running it.
+
+## Read-Only Mounts
+
+Sometimes you want a container to read data but not modify it. Add `:ro` (read-only) at the end of the volume mount:
+
+```bash
+docker run -d \
+  -v $(pwd)/config:/app/config:ro \
+  my-app
+```
+
+The container can read files in `/app/config` but cannot write or modify them. This is useful for:
+- Configuration files that shouldn't be changed at runtime
+- Static assets served by a web server
+- Preventing accidental writes from a container back to your host filesystem
+
+## Docker Networks: How Containers Talk
+
+By default, Docker creates a bridge network for your containers. But for real applications, you'll want custom networks.
+
+### The Default Bridge Network (And Why to Avoid It)
+
+When you install Docker, a network called `bridge` is created. All containers join it by default unless you specify otherwise.
+
+```bash
+# These containers are on the default bridge
+docker run -d --name app1 nginx
+docker run -d --name app2 nginx
+```
+
+**Problem:** Containers on the default bridge can only communicate via IP addresses. They cannot resolve each other by name.
+
+```bash
+docker exec app1 ping app2
+# Output: ping: bad address 'app2'
+
+docker exec app1 ping 172.17.0.3
+# Output: 64 bytes from 172.17.0.3: seq=0 ttl=64 time=0.1 ms
+```
+
+That IP address is fragile. If you restart containers, the IPs can change. This is why the default bridge is not recommended for production.
+
+### Custom Bridge Networks (Recommended)
+
+Custom networks solve the name resolution problem. Containers on the same custom network can communicate using their container names as hostnames.
+
+```bash
+# Create a custom network
+docker network create my-app-network
+
+# Run containers on the custom network
+docker run -d --name api-server --network my-app-network my-api
+docker run -d --name database --network my-app-network postgres:16-alpine
+```
+
+Now the API server can reach the database simply by using the hostname `database`:
+
+```bash
+docker exec api-server ping database
+# Output: 64 bytes from database (172.18.0.2): seq=0 ttl=64 time=0.1 ms
+```
+
+**This is DNS-based service discovery.** Docker runs an embedded DNS server that resolves container names to their IP addresses on custom networks. No hardcoding, no manual IP management.
+
+### Network Types
+
+| Network Type | Description | When to Use |
+|-------------|-------------|-------------|
+| **bridge** | Default. Containers on the same host communicate via virtual bridge. | Most single-host applications |
+| **host** | Container shares the host's network stack. No port mapping needed. | When maximum network performance is required |
+| **none** | Container has no network access. | Security-sensitive batch jobs |
+| **overlay** | Spans multiple Docker hosts (used with Swarm). | Multi-host deployments |
+
+### The Host Network
+
+```bash
+docker run -d --network host nginx
+```
+
+The container shares the host's network namespace directly. Nginx listens on port 80 on the host — no `-p` needed. This gives the best network performance but removes isolation.
+
+**When to use:** High-performance networking where the overhead of port mapping matters (e.g., high-throughput proxies). Avoid it for most applications — the loss of isolation isn't worth it.
+
+### The None Network
+
+```bash
+docker run -d --network none my-isolated-app
+```
+
+The container has no network interface (except the loopback). It literally cannot reach the outside world. This is useful for:
+- Batch processing jobs that only need the filesystem
+- Security-critical operations where network access is a risk
+- Testing how your app handles network failures
+
+### Network Management Commands
+
+```bash
+# List all networks
+docker network ls
+
+# Inspect a network (see connected containers)
+docker network inspect my-app-network
+
+# Connect a running container to a network
+docker network connect my-app-network existing-container
+
+# Disconnect a container from a network
+docker network disconnect my-app-network existing-container
+
+# Remove a network
+docker network rm my-app-network
+```
+
+## Practical Example: A Database-Backed Application
+
+Let's put volumes and networks together in a realistic scenario. We'll run a PostgreSQL database with persistent storage and connect it to a web application.
+
+**Step 1: Create the network and volume**
+
+```bash
+docker network create app-network
+docker volume create pg-data
+```
+
+**Step 2: Start the database with a named volume**
+
+```bash
+docker run -d \
+  --name postgres-db \
+  --network app-network \
+  -e POSTGRES_USER=appuser \
+  -e POSTGRES_PASSWORD=secretpass \
+  -e POSTGRES_DB=myapp \
+  -v pg-data:/var/lib/postgresql/data \
+  postgres:16-alpine
+```
+
+Let's break down every flag:
+
+- **`-e POSTGRES_USER=appuser`** — Sets the database username. The `-e` flag passes environment variables into the container.
+- **`-e POSTGRES_PASSWORD=secretpass`** — Sets the database password. The PostgreSQL image uses these variables for initial setup.
+- **`-e POSTGRES_DB=myapp`** — Creates a database named `myapp` on first start.
+- **`-v pg-data:/var/lib/postgresql/data`** — Persists the database data to the `pg-data` volume. This is where PostgreSQL stores all its data files.
+
+**Step 3: Verify the database is running**
+
+```bash
+docker logs postgres-db
+# Look for: "database system is ready to accept connections"
+```
+
+**Step 4: Connect an application to the database**
+
+```bash
+docker run -d \
+  --name web-app \
+  --network app-network \
+  -e DATABASE_URL=postgresql://appuser:secretpass@postgres-db:5432/myapp \
+  -p 3000:3000 \
+  my-web-app
+```
+
+Notice the connection string: `@postgres-db:5432`. The hostname `postgres-db` matches the container name on the shared network. Docker's DNS resolves it automatically. No IP addresses, no guesswork.
+
+**Step 5: Test persistence**
+
+```bash
+# Write some data to the database
+docker exec postgres-db psql -U appuser -d myapp -c "CREATE TABLE users (id SERIAL, name TEXT);"
+docker exec postgres-db psql -U appuser -d myapp -c "INSERT INTO users (name) VALUES ('Alice');"
+
+# Restart the database container
+docker stop postgres-db && docker start postgres-db
+
+# Verify the data survived
+docker exec postgres-db psql -U appuser -d myapp -c "SELECT * FROM users;"
+# Output:  id | name
+#         ----+-------
+#           1 | Alice
+```
+
+The data survived because the `pg-data` volume exists independently of the container. Even if you `docker rm postgres-db` and create a new container with the same volume, the data is still there.
+
+**Step 6: Clean up**
+
+```bash
+docker stop web-app postgres-db
+docker rm web-app postgres-db
+docker network rm app-network
+docker volume rm pg-data   # Only if you don't need the data anymore
+```
+
+## Common Pitfalls & Tips
+
+- **Forgetting to use volumes with databases** — This is the most common and most devastating mistake. Always, always use a named volume for database data directories.
+
+- **Using bind mounts in production** — Bind mounts depend on the host's directory structure. They're great for development (live code reload) but fragile in production. Use named volumes for production data.
+
+- **Not creating a custom network** — If you're running multiple containers that need to communicate, put them on a custom network. The default bridge doesn't support DNS resolution.
+
+- **Exposing database ports to the host** — Don't use `-p 5432:5432` for your database in production. Only the application container needs to reach it, and it does so through the Docker network. Exposing the port is a security risk.
+
+- **Mounting over existing container directories** — When you mount a volume to a path that already has files in the image (like `/var/lib/postgresql/data`), the volume's content takes precedence. On first run, Docker copies the image's content to the volume. This is fine for databases, but be aware it can mask files you expect to be there.
+
+- **Forgetting `:ro` for config files** — If a container only needs to read a config file, mount it as read-only. This prevents the container from accidentally modifying your host files.
+
+- **Not cleaning up anonymous volumes** — Anonymous volumes accumulate over time. Use `docker volume prune` periodically to clean up unused volumes.
+
+## Interactive Diagram
+
+Explore how volumes and networks connect containers:
+
+<Diagram config={dockerVolumesNetworks} />

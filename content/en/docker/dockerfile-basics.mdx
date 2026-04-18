@@ -8,50 +8,389 @@ description: "Learn to write Dockerfiles, understand layer caching, and build cu
 order: 2
 ---
 
-# Writing Your First Dockerfile
+# Dockerfile Basics: The Recipe for Your Application
 
-A Dockerfile is a text file containing instructions to build a Docker image. Each instruction creates a layer in the image.
+Imagine you're following a recipe to bake a cake. The recipe lists the ingredients (your base image), the steps to combine them (your build commands), and the final result (your image). A Dockerfile is exactly that — a recipe that tells Docker how to build a snapshot of your application, complete with all its dependencies, ready to run anywhere.
 
-## Basic Structure
+Every time you `docker run nginx`, you're using an image that someone built with a Dockerfile. In this lesson, you'll learn to write your own.
+
+## What Is a Dockerfile?
+
+A Dockerfile is a plain text file (no extension — it's literally named `Dockerfile`) that contains a series of instructions. Each instruction creates a **layer** in the resulting Docker image. Docker reads these instructions top-to-bottom, executes each one, and saves the result as a stacked set of read-only layers.
+
+Think of it like a lasagna: each layer builds on the one below it. The bottom layer is the base OS, the next adds system packages, then your dependencies, and finally your application code at the top. If you change the top layer (your code), you don't need to rebuild the bottom layers (the OS and packages) — they're already cached.
+
+## Why Does It Matter?
+
+- **Reproducibility** — A Dockerfile is code. It's version-controlled, reviewed in pull requests, and produces the same image every time. No more "works on my machine" because the build process is fully defined.
+- **Automation** — CI/CD pipelines can build images from Dockerfiles automatically. No manual steps, no human error.
+- **Layer caching saves time** — Docker caches each layer. If nothing changed in a layer, it's reused. This means rebuilds after a code change take seconds, not minutes.
+- **Security auditing** — You can see exactly what went into an image. Every installed package, every copied file is documented in the Dockerfile.
+- **Team collaboration** — New team members can build the project with one command. The Dockerfile IS the documentation for how to set up the environment.
+
+## Core Instructions, One by One
+
+Let's walk through every major Dockerfile instruction with a real example.
+
+### FROM — Your Starting Point
 
 ```dockerfile
 FROM node:20-alpine
+```
+
+Every Dockerfile begins with `FROM`. It specifies the base image — the foundation everything else is built on. Think of it as choosing which operating system and runtime you want pre-installed.
+
+- **`node:20-alpine`** — Node.js 20 on Alpine Linux (a minimal distribution, ~5MB). This is the most common choice for Node.js apps.
+- **`node:20`** — Node.js 20 on Debian. Larger (~350MB) but includes more system utilities.
+- **`alpine:3.19`** — Bare Alpine Linux with nothing else. You install everything yourself.
+
+**Why Alpine?** It's tiny, secure, and has everything most server apps need. Prefer `-alpine` variants unless you need specific Debian packages.
+
+### WORKDIR — Set Your Working Directory
+
+```dockerfile
 WORKDIR /app
+```
+
+This sets the directory where all subsequent commands (RUN, COPY, CMD) will execute. If the directory doesn't exist, Docker creates it.
+
+**Why not use `RUN cd /app`?** Because each `RUN` command runs in a new shell. If you `cd` in one `RUN`, the next `RUN` starts back in the original directory. `WORKDIR` is persistent across instructions.
+
+### COPY — Bring Your Code In
+
+```dockerfile
 COPY package*.json ./
+```
+
+This copies files from your host machine (the "build context") into the image. The format is `COPY <host_path> <image_path>`.
+
+- **`package*.json`** — Copies both `package.json` and `package-lock.json`. The `*` is a glob pattern.
+- **`./`** — Copies into the current `WORKDIR` (`/app`).
+
+There's also `ADD`, but **prefer `COPY` for simple file copying.** `ADD` has extra features (like extracting tar files and fetching URLs) that can be surprising. Use `COPY` unless you specifically need those features.
+
+### RUN — Execute Commands During Build
+
+```dockerfile
 RUN npm ci --only=production
+```
+
+`RUN` executes a command inside the image during the build process. The result is saved as a new layer.
+
+- **`npm ci`** — "Clean Install." Installs exact versions from `package-lock.json`. It's faster and more reliable than `npm install` for CI/build environments.
+- **`--only=production`** — Skips `devDependencies`. Your production image doesn't need testing frameworks or build tools.
+
+**Key principle:** Minimize the number of `RUN` layers. Each `RUN` creates a new layer. Combine related commands:
+
+```dockerfile
+# Bad: 3 layers, 3 intermediate containers
+RUN apk update
+RUN apk add curl
+RUN apk add git
+
+# Good: 1 layer, 1 intermediate container
+RUN apk update && \
+    apk add --no-cache curl git && \
+    rm -rf /var/cache/apk/*
+```
+
+The `rm -rf /var/cache/apk/*` cleanup is important — without it, the package manager cache lives in the layer forever, bloating your image.
+
+### EXPOSE — Document a Port
+
+```dockerfile
+EXPOSE 3000
+```
+
+This is **documentation, not a firewall rule.** It tells anyone reading the Dockerfile that the app inside listens on port 3000. It does NOT actually publish the port — you still need `-p 3000:3000` at `docker run`.
+
+Think of `EXPOSE` like a comment. It's a signal to the operator, not a runtime enforcement.
+
+### CMD — What Runs When the Container Starts
+
+```dockerfile
+CMD ["node", "server.js"]
+```
+
+`CMD` specifies the default command executed when the container starts. There are two important forms:
+
+- **Exec form (preferred):** `CMD ["node", "server.js"]` — Runs `node` directly. No shell involved. Signal handling works correctly (important for graceful shutdown).
+- **Shell form:** `CMD node server.js` — Runs via `/bin/sh -c`. Signal handling can be broken because the shell is PID 1, not your app.
+
+**Always use the exec form** unless you specifically need shell features like variable expansion.
+
+### The Difference Between CMD and ENTRYPOINT
+
+This confuses many people:
+
+| Instruction | Purpose | Can be overridden at runtime? |
+|------------|---------|-------------------------------|
+| `CMD` | Default command or default arguments | Yes — `docker run my-app npm start` replaces CMD |
+| `ENTRYPOINT` | The executable that always runs | Harder — need `--entrypoint` flag |
+
+A common pattern is to combine them:
+
+```dockerfile
+ENTRYPOINT ["node"]
+CMD ["server.js"]
+```
+
+This means `docker run my-app` runs `node server.js`, but `docker run my-app worker.js` runs `node worker.js`.
+
+## Layer Caching: The Performance Secret
+
+This is one of the most important concepts in Docker, and it's where most beginners make mistakes.
+
+Docker builds images in layers. Each instruction creates a layer, and Docker checks whether that layer has changed since the last build. If it hasn't, Docker **reuses the cached layer** instead of rebuilding it.
+
+**The critical rule: Order your instructions from least frequently changing to most frequently changing.**
+
+```dockerfile
+# Layer 1: Base image — changes almost never
+FROM node:20-alpine
+
+# Layer 2: Working directory — never changes
+WORKDIR /app
+
+# Layer 3: Dependency files — changes when you add/remove packages
+COPY package*.json ./
+
+# Layer 4: Install dependencies — changes when package*.json changes
+RUN npm ci --only=production
+
+# Layer 5: Application code — changes on every commit
 COPY . .
+
+# Layer 6: Runtime config — rarely changes
 EXPOSE 3000
 CMD ["node", "server.js"]
 ```
 
-## Key Instructions
+**Why is the order of COPY so important?** If you `COPY . .` before `npm ci`, then every time you change a single line of source code, the `npm ci` layer is invalidated too. That means reinstalling all your dependencies from scratch on every build. By copying `package*.json` first and running `npm ci` before the full source copy, dependency installation is only re-run when your package files actually change.
 
-- `FROM` — Base image
-- `WORKDIR` — Set working directory
-- `COPY` — Copy files from host to image
-- `RUN` — Execute commands during build
-- `EXPOSE` — Document which port the container listens on
-- `CMD` — Default command when container starts
+**What invalidates a cache?**
 
-## Layer Caching
+| Change | Layers invalidated |
+|--------|-------------------|
+| Change `FROM` | Everything after it |
+| Change `package.json` | The `npm ci` layer and everything after |
+| Change source code | The `COPY . .` layer and everything after |
+| Add to `.dockerignore` | Potentially nothing (if excluded files changed) |
 
-Docker caches each layer. If a layer hasn't changed, Docker reuses the cache instead of rebuilding. Order your instructions from least to most frequently changing:
+## .dockerignore — Keep Your Build Clean
 
-1. System dependencies (rarely change)
-2. Package installs (change with dependency updates)
-3. Application code (changes most often)
+The `.dockerignore` file tells Docker which files to exclude from the build context. Without it, Docker sends your entire project directory to the daemon — including `node_modules`, `.git`, and other junk.
 
-## .dockerignore
-
-Create a `.dockerignore` file to exclude files from the build context:
+Create a `.dockerignore` file in the same directory as your Dockerfile:
 
 ```
 node_modules
+npm-debug.log
+.git
+.github
+.env
+.env.local
+Dockerfile
+docker-compose.yml
+.dockerignore
+README.md
+.vscode
+coverage
+dist
+```
+
+**Why this matters:**
+
+- **Build speed** — A smaller build context means faster transfers to the Docker daemon.
+- **Image size** — If `node_modules` is in the build context, a careless `COPY . .` will copy it into the image, doubling the size.
+- **Security** — You don't want `.env` files (which may contain secrets) anywhere near your image.
+- **Cache efficiency** — Changes to excluded files won't invalidate your cache.
+
+## Build Context Explained
+
+When you run `docker build -t my-app .`, that `.` at the end is the build context. It's the directory that Docker sends to the daemon. All `COPY` and `ADD` paths are relative to this directory.
+
+```bash
+# Build from the current directory
+docker build -t my-app .
+
+# Build from a specific directory
+docker build -t my-app /path/to/project
+
+# Build with a Dockerfile in a different location
+docker build -t my-app -f docker/Dockerfile .
+```
+
+**Common mistake:** Running `docker build` from the root of a large monorepo. The build context could be gigabytes. Always run from the smallest directory that contains what you need.
+
+## Practical Example: Building a Node.js Application
+
+Let's build a complete, production-ready Dockerfile for a Node.js Express app.
+
+**Project structure:**
+
+```
+my-express-app/
+├── Dockerfile
+├── .dockerignore
+├── package.json
+├── package-lock.json
+├── server.js
+└── src/
+    ├── routes.js
+    └── middleware.js
+```
+
+**package.json:**
+
+```json
+{
+  "name": "my-express-app",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2"
+  }
+}
+```
+
+**server.js:**
+
+```javascript
+const express = require('express');
+const app = express();
+
+app.get('/', (req, res) => {
+  res.json({ message: 'Hello from Docker!' });
+});
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'healthy' });
+});
+
+app.listen(3000, () => {
+  console.log('Server running on port 3000');
+});
+```
+
+**Dockerfile:**
+
+```dockerfile
+# Use the official Node.js image on Alpine for minimal size
+FROM node:20-alpine
+
+# Set the working directory inside the container
+WORKDIR /app
+
+# Copy dependency manifests first (for layer caching)
+COPY package*.json ./
+
+# Install ONLY production dependencies
+RUN npm ci --only=production
+
+# Copy the rest of the application source code
+COPY . .
+
+# Document that the app listens on port 3000
+EXPOSE 3000
+
+# Run as a non-root user for security
+USER node
+
+# Start the application
+CMD ["node", "server.js"]
+```
+
+**.dockerignore:**
+
+```
+node_modules
+npm-debug.log
 .git
 .env
 Dockerfile
+README.md
 ```
+
+**Build and run:**
+
+```bash
+# Build the image
+docker build -t my-express-app:1.0 .
+
+# Run the container
+docker run -d -p 3000:3000 --name my-app my-express-app:1.0
+
+# Test it
+curl http://localhost:3000
+# Expected: {"message":"Hello from Docker!"}
+
+# Check health endpoint
+curl http://localhost:3000/health
+# Expected: {"status":"healthy"}
+```
+
+**Expected build output:**
+
+```
+[+] Building 12.3s
+ => [1/6] FROM node:20-alpine
+ => [2/6] WORKDIR /app
+ => [3/6] COPY package*.json ./
+ => [4/6] RUN npm ci --only=production
+ => [5/6] COPY . .
+ => [6/6] CMD ["node", "server.js"]
+ => exporting to image
+ => => writing image sha256:a1b2c3d4...
+```
+
+Notice how each step corresponds to a Dockerfile instruction. On your second build (with only source code changed), steps 1-4 are cached and the build completes in seconds.
+
+## A Peek at Multi-Stage Builds
+
+You'll learn this in depth in a later lesson, but here's a preview. Multi-stage builds let you use one stage for building (with compilers and dev tools) and a separate, minimal stage for running. This dramatically reduces the final image size.
+
+```dockerfile
+# Stage 1: Build (has all the heavy tools)
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Stage 2: Run (only what's needed for production)
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+EXPOSE 3000
+CMD ["node", "dist/server.js"]
+```
+
+The key magic: `COPY --from=builder` pulls only the files you need from the build stage. Everything else (compilers, source code, dev dependencies) is discarded.
+
+## Common Pitfalls & Tips
+
+- **Installing dev dependencies in production** — Always use `npm ci --only=production` (or `--omit=dev`). Dev dependencies can include tools that increase your attack surface.
+
+- **Not using `.dockerignore`** — Forgetting this file means `.git`, `node_modules`, and `.env` files get sent to the Docker daemon. It slows builds and can leak secrets.
+
+- **Putting `COPY . .` before dependency installation** — This is the single most common Dockerfile mistake. It breaks layer caching and forces dependency reinstallation on every code change.
+
+- **Using `ADD` instead of `COPY`** — `ADD` can fetch URLs and extract archives, which is surprising behavior. Use `COPY` for simple file copying.
+
+- **Running as root** — By default, containers run as root. Add `USER node` (for Node.js images) or create a custom user. We'll cover this more in the security lesson.
+
+- **Not pinning image tags** — `FROM node:latest` is a moving target. Use specific versions like `FROM node:20.11-alpine3.19` for reproducible builds.
+
+- **Large number of layers** — Each `RUN`, `COPY`, and `ADD` creates a layer. Combine related `RUN` commands with `&&` to reduce layers and image size.
 
 ## Try It Yourself
 
-Practice building and inspecting images in the interactive terminal below.
+Practice building and inspecting images in the interactive terminal below:
+
+<Terminal commands={dockerPsChallenge.commands} tasks={dockerPsChallenge.tasks} />

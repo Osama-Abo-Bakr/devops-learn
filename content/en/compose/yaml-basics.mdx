@@ -1,64 +1,362 @@
 ---
-title: "Compose YAML Basics"
+title: "YAML Basics"
 module: compose
 level: beginner
-duration: "25 min"
-description: "Write your first docker-compose.yml and understand the structure of Compose files."
+duration: "20 min"
+description: "Master YAML syntax: key-value pairs, lists, anchors, and common gotchas."
 order: 1
 ---
 
-# Compose YAML Basics
+# YAML Basics — The Language Docker Speaks
 
-Docker Compose lets you define multi-container applications in a single `docker-compose.yml` file.
+Imagine you are filling out a form at a doctor's office. You do not write a full essay about your medical history — you just fill in the blanks: *Name: Jane*, *Age: 30*, *Allergies: peanuts, penicillin*. That is essentially what YAML does for software. It is a way to write down structured data in a format that is easy for humans to read and easy for machines to parse.
 
-## A Simple Compose File
+Docker Compose uses YAML to describe your entire multi-container application. Before you can write a `docker-compose.yml` file with confidence, you need to understand how YAML works — its rules, its quirks, and its hidden pitfalls. That is exactly what this lesson covers.
+
+## What Is YAML?
+
+YAML stands for **YAML Ain't Markup Language** — yes, it is a recursive acronym. It is a data serialization format, which is a fancy way of saying "a structured way to write down data." Unlike JSON or XML, YAML prioritizes readability. There are no curly braces, no commas, no angle brackets. Just clean, indented text.
+
+Docker chose YAML for Compose files for a simple reason: you will be reading and editing these files constantly. A format that is easy on the eyes makes debugging faster and mistakes less likely.
+
+## Why Does It Matter?
+
+- **Every Compose file is YAML** — if you do not understand YAML syntax, you cannot write, read, or debug a `docker-compose.yml`.
+- **Indentation errors are the number one source of bugs** — a single tab instead of spaces can break your entire stack.
+- **YAML has subtle rules** around quoting, types, and anchors that trip up even experienced developers.
+- **Understanding YAML saves debugging time** — instead of staring at a cryptic Compose error, you will spot the issue instantly.
+- **YAML is everywhere in DevOps** — Kubernetes, Ansible, CI/CD pipelines, and Terraform all use it. Learn it once, benefit forever.
+
+## Core Concepts
+
+### Key-Value Pairs
+
+The most fundamental building block in YAML is the key-value pair. Think of it like a dictionary entry — the key is the word, the value is the definition.
 
 ```yaml
-version: "3.8"
+name: my-app
+port: 3000
+debug: true
+version: "1.0"
+```
+
+**Line by line:**
+
+- `name: my-app` — the key is `name`, the value is the string `my-app`. YAML infers the type automatically.
+- `port: 3000` — the value `3000` is parsed as an **integer**, not a string. This matters when your app expects a string.
+- `debug: true` — `true` (lowercase) is parsed as a **boolean** `true`, not the string `"true"`. Same for `false`.
+- `version: "1.0"` — quoted to prevent YAML from parsing `1.0` as a float (`1.0` becomes `1` in some parsers). Always quote version numbers.
+
+**Watch out for implicit types:**
+
+| What you write | What YAML sees | Why it matters |
+|---|---|---|
+| `port: 3000` | Integer `3000` | Fine for most cases |
+| `port: "3000"` | String `"3000"` | Needed if app expects a string |
+| `enabled: true` | Boolean `true` | Not the string `"true"` |
+| `enabled: "true"` | String `"true"` | Use quotes if you need a string |
+| `version: 1.0` | Float `1.0` | Could be silently converted to `1` |
+| `version: "1.0"` | String `"1.0"` | Safer for version numbers |
+
+### Lists (Sequences)
+
+Lists let you represent ordered collections. In YAML, you write them with a dash and a space:
+
+```yaml
+ports:
+  - "8080:80"
+  - "8443:443"
+
+environment:
+  - NODE_ENV=production
+  - DATABASE_URL=postgres://db:5432/mydb
+
+volumes:
+  - db-data:/var/lib/postgresql/data
+  - ./src:/app/src
+```
+
+**Line by line:**
+
+- Each item starts with `- ` (dash, space). The space is mandatory — `-item` is not valid YAML.
+- All items at the same list level must have the same indentation.
+- The parent key (`ports`, `environment`, `volumes`) sits at a higher indent level than the list items.
+
+You can also write lists inline using square brackets, though this is less common in Compose files:
+
+```yaml
+ports: ["8080:80", "8443:443"]
+```
+
+### Nested Structures (Maps)
+
+This is where YAML gets powerful — and where people get confused. Nesting lets you build tree-like structures by indenting:
+
+```yaml
 services:
   web:
     image: nginx:alpine
     ports:
       - "8080:80"
-    volumes:
-      - ./html:/usr/share/nginx/html
-  db:
-    image: postgres:15
     environment:
+      NODE_ENV: development
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: admin
       POSTGRES_PASSWORD: secret
+```
+
+**Line by line:**
+
+- `services:` — top-level key. Everything under it is a service definition.
+- `web:` — a service named `web`, indented 2 spaces under `services`.
+- `image: nginx:alpine` — indented 4 spaces (2 more than its parent `web`).
+- `ports:` — a key under `web`, which contains a list of port mappings.
+- `db:` — a second service, at the same level as `web`.
+
+**The indentation rule:** each level of nesting adds more indentation. The convention is **2 spaces per level**. Consistency is critical — you cannot mix 2-space and 4-space indentation in the same file.
+
+### The Indentation Rule — The Most Important Thing in This Lesson
+
+YAML uses indentation to determine structure. This is not a style choice — it is a language rule. Get it wrong, and the parser will either throw an error or silently misinterpret your data.
+
+```yaml
+# CORRECT — consistent 2-space indentation
+services:
+  web:
+    image: nginx
+    ports:
+      - "80:80"
+
+# WRONG — inconsistent indentation (will fail or misparse)
+services:
+  web:
+     image: nginx        # 5 spaces instead of 4
+    ports:               # 4 spaces
+      - "80:80"
+```
+
+**Rules to remember:**
+
+- **Use spaces, never tabs.** YAML forbids tabs for indentation. Configure your editor to insert spaces when you press Tab.
+- **Be consistent.** Pick an indent size (2 spaces is standard for Compose) and stick with it everywhere.
+- **Same level = same indent.** Siblings must align perfectly.
+
+### Anchors and Aliases — Reuse Without Repetition
+
+If you find yourself writing the same configuration block multiple times, anchors and aliases let you define it once and reference it elsewhere. Think of it like a variable in code or a template in a word processor.
+
+```yaml
+x-common-env: &common-env
+  NODE_ENV: production
+  LOG_LEVEL: info
+  TZ: UTC
+
+services:
+  api:
+    image: my-api:latest
+    environment:
+      <<: *common-env
+      PORT: "3000"
+
+  worker:
+    image: my-worker:latest
+    environment:
+      <<: *common-env
+      QUEUE: default
+```
+
+**Line by line:**
+
+- `x-common-env: &common-env` — defines an anchor named `common-env`. The `x-` prefix is a Compose convention for extension fields (ignored by Compose, used only for anchors).
+- `&common-env` — the anchor, like naming this block for later reference.
+- `<<: *common-env` — the merge key (`<<`) plus the alias (`*common-env`) merges all the keys from the anchor into this location.
+- `PORT: "3000"` — additional key specific to the `api` service, merged alongside the common values.
+
+**Expected result:** both `api` and `worker` get `NODE_ENV`, `LOG_LEVEL`, and `TZ`, plus their own unique variables.
+
+### Multi-Document Files
+
+YAML supports multiple documents in a single file, separated by `---`:
+
+```yaml
+---
+services:
+  web:
+    image: nginx
+
+---
+services:
+  db:
+    image: postgres
+```
+
+In Compose, you will rarely use this. Multi-document files are more common in Kubernetes manifests. But it is good to know the `---` separator when you see it.
+
+### Comments
+
+Add comments with `#`:
+
+```yaml
+services:
+  web:
+    image: nginx:alpine     # Lightweight nginx image
+    # ports:
+    #   - "8080:80"         # Temporarily disabled
+```
+
+Comments are ignored by the parser. Use them to document your Compose files — future you will be grateful.
+
+## YAML vs JSON
+
+YAML is a superset of JSON, meaning every valid JSON file is also valid YAML. Here is the same data in both formats:
+
+**YAML:**
+
+```yaml
+services:
+  web:
+    image: nginx
+    ports:
+      - "80:80"
+```
+
+**JSON:**
+
+```json
+{
+  "services": {
+    "web": {
+      "image": "nginx",
+      "ports": ["80:80"]
+    }
+  }
+}
+```
+
+| Feature | YAML | JSON |
+|---|---|---|
+| Readability | High — minimal punctuation | Lower — lots of braces and quotes |
+| Comments | Yes (`#`) | No |
+| Multi-document | Yes (`---`) | No |
+| Anchors/aliases | Yes | No |
+| Implicit types | Yes (can be surprising) | No (everything is explicit) |
+| Parsing speed | Slower (complex spec) | Faster (simple spec) |
+| Where it is used | Compose, K8s, Ansible, CI/CD | APIs, configs, data exchange |
+
+For Compose files, YAML is the clear winner — you will be editing these by hand constantly, and readability matters.
+
+## Practical Example — Your First Compose File
+
+Let's put everything together. Here is a project structure for a simple web application with a database:
+
+```
+my-project/
+  docker-compose.yml
+  .env
+  html/
+    index.html
+```
+
+**docker-compose.yml:**
+
+```yaml
+# Define the Compose file format version
+services:
+  # Web server — serves static HTML
+  web:
+    image: nginx:alpine          # Lightweight nginx image (~7MB)
+    ports:
+      - "${WEB_PORT}:80"         # Map host port (from .env) to container port 80
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - ./html:/usr/share/nginx/html  # Bind mount: local files served by nginx
+
+  # Database — persists data across restarts
+  db:
+    image: postgres:16-alpine    # Postgres 16 on Alpine Linux
+    environment:
+      POSTGRES_USER: ${DB_USER}         # Pulled from .env file
+      POSTGRES_PASSWORD: ${DB_PASSWORD}  # Never hardcode passwords!
+      POSTGRES_DB: appdb                 # Default database name
+    volumes:
+      - db-data:/var/lib/postgresql/data # Named volume for persistence
 
 volumes:
-  db-data:
+  db-data:                       # Declare the named volume
 ```
 
-## Key Sections
-
-- `version` — Compose file format version
-- `services` — Container definitions
-- `volumes` — Named volume declarations
-- `networks` — Custom network definitions (optional)
-
-## Service Configuration
-
-Each service can define:
-
-| Key | Purpose |
-|-----|---------|
-| `image` | Image to use |
-| `build` | Build from a Dockerfile |
-| `ports` | Port mappings |
-| `volumes` | Mount paths |
-| `environment` | Environment variables |
-| `depends_on` | Service dependencies |
-| `restart` | Restart policy |
-
-## Running Compose
+**.env:**
 
 ```bash
-docker compose up -d      # Start in background
-docker compose down         # Stop and remove
-docker compose logs -f      # Follow logs
-docker compose ps           # List services
+WEB_PORT=8080
+DB_USER=appuser
+DB_PASSWORD=secretpassword
 ```
+
+**Step-by-step:**
+
+1. Create the project directory and files:
+
+```bash
+mkdir my-project && cd my-project
+mkdir html
+echo "<h1>Hello from Compose!</h1>" > html/index.html
+```
+
+2. Create the `docker-compose.yml` and `.env` files with the content above.
+
+3. Start the stack:
+
+```bash
+docker compose up -d
+```
+
+**Expected output:**
+
+```
+[+] Running 3/3
+ ✔ Network my-project_default    Created
+ ✔ Container my-project-web-1   Started
+ ✔ Container my-project-db-1    Started
+```
+
+4. Verify everything is running:
+
+```bash
+docker compose ps
+```
+
+**Expected output:**
+
+```
+NAME                  IMAGE              STATUS         PORTS
+my-project-web-1     nginx:alpine       Up 10 seconds  0.0.0.0:8080->80/tcp
+my-project-db-1      postgres:16-alpine Up 10 seconds  5432/tcp
+```
+
+5. Visit `http://localhost:8080` — you should see "Hello from Compose!"
+
+6. Clean up when you are done:
+
+```bash
+docker compose down -v
+```
+
+The `-v` flag removes the named volume too. Without it, `db-data` sticks around for next time.
+
+## Common Pitfalls and Tips
+
+- **Tabs vs spaces** — This is the number one YAML mistake. If your editor inserts tabs, Compose will throw a parsing error. Configure your editor: "Insert spaces when pressing Tab." In VS Code, check the bottom status bar — it should say "Spaces: 2", not "Tab Size: 2."
+
+- **Trailing spaces** — A space after a value like `image: nginx ` is included in the value. This can cause "image not found" errors that are maddening to debug.
+
+- **Unquoted special values** — Values like `on`, `off`, `yes`, `no`, `true`, `false`, `null` are parsed as booleans or nulls. If you need the literal string, quote it: `"yes"`.
+
+- **Colon in values** — URLs like `postgres://host:5432` can confuse the parser. Always quote them: `"postgres://host:5432"`.
+
+- **Blank line breaks nesting** — A blank line does not end a block in YAML. Only a decrease in indentation does. But blank lines between top-level sections are fine and improve readability.
+
+- **Validate your YAML** — Before tearing your hair out over a Compose error, run your file through a YAML validator. The `yamllint` command-line tool or an online YAML parser can save you hours.
+
+- **Use `docker compose config`** — This command parses your Compose file, resolves variables, and outputs the fully-merged result. It is the fastest way to check if your YAML is valid and see what Compose actually sees.

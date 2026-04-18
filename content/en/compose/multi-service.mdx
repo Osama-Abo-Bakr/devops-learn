@@ -8,91 +8,373 @@ description: "Connect multiple services: web app, database, and cache in a singl
 order: 2
 ---
 
-# Multi-Service Stacks
+# Multi-Service Stacks — Building Real Applications
 
-Real applications need multiple services — a web server, a database, maybe a cache. Docker Compose lets you define and connect them all in one file.
+Imagine you are building a house. A house is not just four walls and a roof — it has plumbing, electrical wiring, a foundation, and insulation, all working together. A real application is the same way. It is not a single container running in isolation. It is a web server that talks to a database, a cache that speeds up responses, and maybe a background worker that processes jobs. Docker Compose is the blueprint that ties them all together.
 
-## A Full-Stack Application
+In this lesson, you will learn how to define, connect, and manage multi-service applications. This is the heart of what makes Compose powerful — one file, one command, and your entire stack comes alive.
+
+## What Is a Multi-Service Stack?
+
+A multi-service stack is a collection of containers that work together to form a complete application. Each container runs one service (one process, one responsibility), and they communicate over a shared network. Compose lets you define the entire stack — every service, every connection, every dependency — in a single `docker-compose.yml` file.
+
+Think of it as a recipe for your application. Instead of starting each ingredient separately, you write down the whole recipe once, and then just say "cook" (well, `docker compose up`).
+
+## Why Does It Matter?
+
+- **Real applications are multi-service** — a web app without a database is just a static page. A database without a cache is slow under load. You need multiple services working together.
+- **One command starts everything** — no more running five separate `docker run` commands in five terminal tabs. `docker compose up` starts your entire stack in the right order.
+- **Service discovery is automatic** — containers find each other by name, not IP address. No configuration files to update when a container restarts and gets a new IP.
+- **Dependencies are explicit** — Compose knows that your web app depends on the database, so it starts the database first. No race conditions, no flaky startup scripts.
+- **Reproducibility** — every developer on your team gets the exact same stack with the exact same command. "Works on my machine" becomes "works on everyone's machine."
+
+## Core Concepts
+
+### The Compose File Structure
+
+Every Compose file has a consistent structure. Here are the top-level sections you will encounter:
 
 ```yaml
-version: "3.8"
+services:          # Required — defines your containers
+  web:
+    image: nginx
+  db:
+    image: postgres
+
+volumes:           # Optional — named volume declarations
+  db-data:
+
+networks:          # Optional — custom network definitions
+  frontend:
+  backend:
+```
+
+**Line by line:**
+
+- `services:` — the only required top-level key. Each child key defines one service (one container).
+- `volumes:` — declare named volumes that services can mount. These persist data across container restarts.
+- `networks:` — define custom networks for service isolation. By default, Compose creates one network for all services.
+
+### Service Discovery — How Containers Find Each Other
+
+This is one of the most powerful features of Compose, and it is also one of the easiest to understand.
+
+When you run `docker compose up`, Compose creates a shared network and attaches every service to it. Docker's built-in DNS server automatically maps each service name to its container IP address. This means:
+
+- A service named `db` is reachable at hostname `db` from any other service.
+- A service named `cache` is reachable at hostname `cache`.
+- No hardcoding IP addresses. No updating config files when containers restart.
+
+```yaml
 services:
   web:
-    build: ./web
-    ports:
-      - "3000:3000"
     environment:
-      - DATABASE_URL=postgres://user:pass@db:5432/mydb
-      - REDIS_URL=redis://cache:6379
-    depends_on:
-      - db
-      - cache
+      # The web app connects to the database using the service name "db"
+      DATABASE_URL: "postgres://appuser:secretpass@db:5432/appdb"
+      # Same for Redis — just use the service name "cache"
+      REDIS_URL: "redis://cache:6379"
 
   db:
     image: postgres:16-alpine
-    volumes:
-      - db-data:/var/lib/postgresql/data
-    environment:
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: pass
-      POSTGRES_DB: mydb
 
   cache:
     image: redis:7-alpine
-    volumes:
-      - cache-data:/data
+```
+
+**Line by line:**
+
+- `DATABASE_URL: "postgres://appuser:secretpass@db:5432/appdb"` — notice the hostname is just `db`, not an IP address. Docker DNS resolves this automatically.
+- `REDIS_URL: "redis://cache:6379"` — `cache` is the service name defined below. Docker DNS handles the rest.
+
+**What happens under the hood:** when the `web` container tries to connect to `db:5432`, Docker's DNS server (running at `127.0.0.11` inside the container) looks up the IP address of the `db` container and returns it. If the `db` container restarts and gets a new IP, DNS automatically updates. Your app never needs to know.
+
+### depends_on — Controlling Startup Order
+
+By default, Compose starts services in the order they are defined, but it does not wait for one service to be "ready" before starting the next. A database container might start in 2 seconds but take 10 more seconds before it can accept connections. If your web app starts during those 10 seconds, it will fail to connect.
+
+`depends_on` fixes this by telling Compose about service dependencies:
+
+```yaml
+services:
+  web:
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+```
+
+**Line by line:**
+
+- `depends_on:` — tells Compose that `web` depends on other services.
+- `db: condition: service_healthy` — Compose will not start `web` until `db` reports as healthy via its health check. This means the database is actually ready to accept connections, not just running.
+- `cache: condition: service_started` — Compose will start `web` as soon as `cache` has started. It does not wait for Redis to be fully ready — Redis starts so fast that `service_started` is usually sufficient.
+
+**The two conditions:**
+
+| Condition | What it means | When to use |
+|---|---|---|
+| `service_started` | The container has started | For fast-starting services like Redis, or when you do not have a health check |
+| `service_healthy` | The container's health check passes | For databases and services that take time to become ready |
+| `service_completed_successfully` | The container ran and exited with code 0 | For init containers or migration tasks |
+
+**Important:** `depends_on` only controls startup order during `docker compose up`. It does not make Compose restart dependent services if a dependency crashes. For that, you need restart policies (covered in the Production Compose lesson).
+
+### Health Checks — Knowing When a Service Is Actually Ready
+
+A health check is a command that Docker runs inside the container periodically to determine if the service is functioning. Without a health check, Docker only knows if the container process is running — not whether it is actually doing its job.
+
+```yaml
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: secretpass
+      POSTGRES_DB: appdb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser"]  # Run this command to check health
+      interval: 5s      # Check every 5 seconds
+      timeout: 5s       # If the command takes longer than 5s, consider it failed
+      retries: 5        # After 5 consecutive failures, mark as unhealthy
+      start_period: 10s # Give 10s grace period before first check (startup time)
+```
+
+**Line by line:**
+
+- `test: ["CMD-SHELL", "pg_isready -U appuser"]` — runs the `pg_isready` command inside the container. This is Postgres' built-in readiness checker. The `CMD-SHELL` format runs the command through a shell, which allows shell features like pipes and environment variables.
+- `interval: 5s` — how often Docker runs the health check. 5 seconds is a good default for development.
+- `timeout: 5s` — if `pg_isready` takes more than 5 seconds to respond, the check is considered failed. This catches cases where the database is overwhelmed.
+- `retries: 5` — the container must fail 5 consecutive checks before being marked unhealthy. This prevents false positives from brief hiccups.
+- `start_period: 10s` — during the first 10 seconds after the container starts, failed health checks do not count toward the retry limit. This gives Postgres time to initialize.
+
+**Common health check commands:**
+
+| Service | Health Check Command |
+|---|---|
+| Postgres | `pg_isready -U username` |
+| Redis | `redis-cli ping` (expects `PONG`) |
+| MySQL | `mysqladmin ping -h localhost` |
+| Nginx / any HTTP server | `curl -f http://localhost:PORT/health` |
+| MongoDB | `mongosh --eval "db.adminCommand('ping')"` |
+
+## Practical Example — A Flask App with Redis
+
+Let's build a complete multi-service stack: a Python Flask web application that counts page views, backed by a Redis cache. This is a classic Compose example because it demonstrates service discovery, dependency ordering, and health checks — all in a small, understandable package.
+
+**Project structure:**
+
+```
+flask-redis-app/
+  docker-compose.yml
+  web/
+    Dockerfile
+    app.py
+    requirements.txt
+```
+
+**web/app.py:**
+
+```python
+from flask import Flask
+import redis
+import os
+
+app = Flask(__name__)
+
+# Connect to Redis using the service name "cache" as the hostname
+# Docker DNS resolves "cache" to the Redis container's IP automatically
+r = redis.Redis(
+    host=os.environ.get("REDIS_HOST", "cache"),
+    port=int(os.environ.get("REDIS_PORT", 6379)),
+    decode_responses=True
+)
+
+@app.route("/")
+def hello():
+    # Increment the counter in Redis
+    count = r.incr("hits")
+    return f"Hello! This page has been viewed {count} times."
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
+```
+
+**Line by line:**
+
+- `host=os.environ.get("REDIS_HOST", "cache")` — reads the Redis hostname from an environment variable, defaulting to `cache` (the Compose service name). This is service discovery in action.
+- `r.incr("hits")` — Redis atomically increments the `hits` key and returns the new value. This is safe even with multiple web instances hitting Redis simultaneously.
+- `app.run(host="0.0.0.0", port=5000)` — binds to all interfaces so the app is reachable from outside the container.
+
+**web/requirements.txt:**
+
+```
+flask==3.0
+redis==5.0
+```
+
+**web/Dockerfile:**
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install dependencies first (layer caching)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY app.py .
+
+# Run the Flask app
+CMD ["flask", "run", "--host=0.0.0.0", "--port=5000"]
+```
+
+**docker-compose.yml:**
+
+```yaml
+services:
+  web:
+    build: ./web                   # Build from the web/Dockerfile
+    ports:
+      - "5000:5000"                # Expose Flask on host port 5000
+    environment:
+      REDIS_HOST: cache            # Service name = Docker DNS hostname
+      REDIS_PORT: "6379"
+      FLASK_ENV: development       # Enable Flask debug mode
+    depends_on:
+      cache:
+        condition: service_healthy # Wait for Redis to be ready
+    restart: unless-stopped        # Auto-restart if the app crashes
+
+  cache:
+    image: redis:7-alpine          # Official Redis image, lightweight
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]  # Check if Redis responds
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
 
 volumes:
-  db-data:
-  cache-data:
+  redis-data:                     # Named volume for Redis persistence
 ```
 
-## Service Discovery
+**Line by line:**
 
-Containers on the same Compose network communicate using **service names as hostnames**:
+- `build: ./web` — tells Compose to build an image from the Dockerfile in `./web/` instead of pulling a pre-built image.
+- `ports: "5000:5000"` — maps host port 5000 to container port 5000, so you can visit the app in your browser.
+- `REDIS_HOST: cache` — this is the magic. The Flask app connects to Redis using the service name. No IP address needed.
+- `depends_on: cache: condition: service_healthy` — Compose will not start `web` until Redis responds to `ping`. This prevents "connection refused" errors on startup.
+- `restart: unless-stopped` — if the container crashes, Compose restarts it automatically. It will not restart if you manually stop it.
+- `healthcheck: test: ["CMD", "redis-cli", "ping"]` — runs `redis-cli ping` inside the container. A healthy Redis instance responds with `PONG`.
 
-| From | To | URL |
-|------|----|-----|
-| web | db | `db:5432` |
-| web | cache | `cache:6379` |
+**Step-by-step:**
 
-No IP addresses needed — Docker's embedded DNS handles resolution.
-
-## depends_on
-
-The `depends_on` key controls startup order:
-
-```yaml
-depends_on:
-  db:
-    condition: service_healthy
-  cache:
-    condition: service_started
-```
-
-- `service_started` — wait until the container starts
-- `service_healthy` — wait until the health check passes (requires `healthcheck`)
-
-## Health Checks in Compose
-
-```yaml
-db:
-  image: postgres:16-alpine
-  healthcheck:
-    test: ["CMD-SHELL", "pg_isready -U user"]
-    interval: 5s
-    timeout: 5s
-    retries: 5
-```
-
-This ensures `web` doesn't start until `db` is actually ready to accept connections.
-
-## Common Commands
+1. Create the project structure:
 
 ```bash
-docker compose up -d           # Start everything
-docker compose logs -f web     # Follow web logs
-docker compose exec db psql    # Open a database shell
-docker compose restart web     # Restart one service
-docker compose down -v         # Stop and remove volumes
+mkdir -p flask-redis-app/web
+cd flask-redis-app
 ```
+
+2. Create the four files shown above (`app.py`, `requirements.txt`, `Dockerfile`, `docker-compose.yml`).
+
+3. Start the stack:
+
+```bash
+docker compose up -d --build
+```
+
+**Expected output:**
+
+```
+[+] Building 12.3s
+ => [web internal] load build definition from Dockerfile
+ => => transferring dockerfile: 186B
+ ...
+[+] Running 3/3
+ ✔ Network flask-redis-app_default     Created
+ ✔ Container flask-redis-app-cache-1  Started
+ ✔ Container flask-redis-app-web-1    Started
+```
+
+4. Test the app:
+
+```bash
+curl http://localhost:5000
+```
+
+**Expected output:**
+
+```
+Hello! This page has been viewed 1 times.
+```
+
+5. Hit it again:
+
+```bash
+curl http://localhost:5000
+```
+
+**Expected output:**
+
+```
+Hello! This page has been viewed 2 times.
+```
+
+The counter increments because Redis persists the `hits` key. Even if you restart the web container, the count keeps going.
+
+6. Watch the logs:
+
+```bash
+docker compose logs -f
+```
+
+This streams logs from all services. You will see Flask request logs and Redis connection events.
+
+7. Clean up:
+
+```bash
+docker compose down -v
+```
+
+The `-v` flag removes the named volume, so the hit counter resets. Without `-v`, Redis data persists and the counter continues next time.
+
+## Essential Compose Commands
+
+Here are the commands you will use daily when working with multi-service stacks:
+
+| Command | What it does |
+|---|---|
+| `docker compose up -d` | Start all services in the background |
+| `docker compose down` | Stop and remove all containers (keeps volumes) |
+| `docker compose down -v` | Stop, remove containers, AND delete volumes |
+| `docker compose ps` | List running services and their status |
+| `docker compose logs -f web` | Follow logs for the `web` service |
+| `docker compose logs -f` | Follow logs for all services |
+| `docker compose exec db psql -U appuser` | Open a Postgres shell inside the `db` container |
+| `docker compose exec cache redis-cli` | Open a Redis CLI inside the `cache` container |
+| `docker compose restart web` | Restart just the web service |
+| `docker compose build` | Rebuild images (after Dockerfile changes) |
+| `docker compose up -d --build` | Rebuild images AND restart the stack |
+| `docker compose config` | Validate and show the merged Compose file |
+
+## Common Pitfalls and Tips
+
+- **"Connection refused" on startup** — your web app started before the database was ready. Add `depends_on` with `condition: service_healthy` and define a `healthcheck` for the database. This is the single most common issue in multi-service stacks.
+
+- **Forgetting the health check** — `depends_on: condition: service_healthy` does nothing without a `healthcheck` defined on the target service. Compose cannot know when your database is ready unless you tell it how to check.
+
+- **Using `links`** — the `links` key is deprecated. It was the old way to connect containers. Modern Compose uses automatic service discovery via DNS. Remove any `links` entries from your files.
+
+- **Not quoting environment values with special characters** — values like URLs (`postgres://user:pass@db:5432/db`) must be quoted: `"postgres://user:pass@db:5432/db"`. Unquoted colons and `@` symbols confuse the YAML parser.
+
+- **Expecting `depends_on` to handle crashes** — `depends_on` only controls startup order. If `db` crashes after startup, `web` will not automatically restart. Use `restart: unless-stopped` on both services for resilience.
+
+- **Editing code and nothing changes** — if you change `app.py` but used `image:` instead of `build:`, Compose will not rebuild. Use `docker compose up -d --build` to force a rebuild after code changes.
+
+- **Too many services in one file** — if your Compose file is getting long (10+ services), consider splitting it with override files or moving to a more orchestration-focused tool like Kubernetes.
+
+<Diagram config={composeMultiService} />
