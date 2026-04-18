@@ -9,6 +9,11 @@ export const dockerPsChallenge: Challenge = {
     nginxRunning: "false",
   },
   commands: {
+    docker: {
+      output: () => {
+        return `Usage: docker [COMMAND]\n\nCommon commands:\n  run       Run a container\n  ps        List containers\n  pull      Pull an image\n  stop      Stop a container\n  rm        Remove a container\n  images    List images\n  logs      View container logs\n  exec      Execute command in container\n  compose   Docker Compose\n\nType 'help' for full list.`;
+      },
+    },
     "docker ps": {
       output: () => {
         return `CONTAINER ID   IMAGE          STATUS       PORTS                  NAMES`;
