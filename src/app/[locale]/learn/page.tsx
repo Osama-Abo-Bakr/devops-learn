@@ -1,7 +1,5 @@
-import Link from "next/link";
 import { getAllModules } from "@/data/modules";
 import ModuleCard from "@/components/progress/ModuleCard";
-import { getCompletionPercentage } from "@/lib/progress";
 
 export default async function LearnPage() {
   const modules = getAllModules();
@@ -20,9 +18,6 @@ export default async function LearnPage() {
           <ModuleCard
             key={mod.slug}
             module={mod}
-            completionPercentage={getCompletionPercentage(
-              mod.lessons.map((l) => l.slug),
-            )}
           />
         ))}
       </div>

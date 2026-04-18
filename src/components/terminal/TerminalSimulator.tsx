@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from "react";
+import { useState, useRef, useCallback, type KeyboardEvent } from "react";
 import { executeCommand, validateTask } from "./CommandParser";
 import type { CommandHandler, ChallengeTask } from "@/types";
-import { useProgress } from "@/context/ProgressContext";
 
 interface TerminalLine {
   type: "input" | "output";
@@ -16,6 +15,7 @@ interface TerminalSimulatorProps {
   prompt?: string;
   tasks?: ChallengeTask[];
   onTaskComplete?: (taskId: string) => void;
+  onAllTasksComplete?: () => void;
 }
 
 export default function TerminalSimulator({
@@ -24,29 +24,16 @@ export default function TerminalSimulator({
   prompt = "$",
   tasks = [],
   onTaskComplete,
+  onAllTasksComplete,
 }: TerminalSimulatorProps) {
-  const { addXP, updateStreak, getXPReward, loaded } = useProgress();
   const [lines, setLines] = useState<TerminalLine[]>([]);
   const [input, setInput] = useState("");
   const [history, setHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [state, setState] = useState(initialState);
   const [completedTasks, setCompletedTasks] = useState<Set<string>>(new Set());
+  const allDoneFired = useRef(false);
 
-  // Award XP when all challenge tasks are completed
-  const hasAwardedXP = useRef(false);
-  useEffect(() => {
-    if (
-      loaded &&
-      tasks.length > 0 &&
-      completedTasks.size === tasks.length &&
-      !hasAwardedXP.current
-    ) {
-      hasAwardedXP.current = true;
-      addXP(getXPReward("challengeComplete"));
-      updateStreak();
-    }
-  }, [loaded, completedTasks.size, tasks.length, addXP, updateStreak, getXPReward]);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleCommand = useCallback(() => {
@@ -60,17 +47,28 @@ export default function TerminalSimulator({
     }
 
     // Check task completion
-    if (tasks.length > 0 && onTaskComplete) {
+    if (tasks.length > 0) {
+      const updatedCompleted = new Set(completedTasks);
       for (const task of tasks) {
-        if (completedTasks.has(task.id)) continue;
+        if (updatedCompleted.has(task.id)) continue;
         if (validateTask(task.id, input, commands)) {
-          setCompletedTasks((prev) => new Set(prev).add(task.id));
-          onTaskComplete(task.id);
+          updatedCompleted.add(task.id);
+          onTaskComplete?.(task.id);
           newLines.push({
             type: "output",
             content: `✅ Task completed: ${task.instruction}`,
           });
         }
+      }
+      setCompletedTasks(updatedCompleted);
+
+      // Fire onAllTasksComplete once when all tasks are done
+      if (
+        updatedCompleted.size === tasks.length &&
+        !allDoneFired.current
+      ) {
+        allDoneFired.current = true;
+        onAllTasksComplete?.();
       }
     }
 
@@ -79,7 +77,7 @@ export default function TerminalSimulator({
     setHistory((prev) => [...prev, input]);
     setHistoryIndex(-1);
     setInput("");
-  }, [input, commands, state, prompt, tasks, completedTasks, onTaskComplete]);
+  }, [input, commands, state, prompt, tasks, completedTasks, onTaskComplete, onAllTasksComplete]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLInputElement>) => {

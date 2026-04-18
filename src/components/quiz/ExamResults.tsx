@@ -34,6 +34,7 @@ export default function ExamResults({
         : "border-red-500";
   const scoreLabel =
     score >= 80 ? "Excellent!" : score >= 50 ? "Good effort!" : "Keep learning!";
+  const passed = score >= 75;
 
   return (
     <div className="space-y-6">
@@ -45,6 +46,9 @@ export default function ExamResults({
           <span className={`text-3xl font-bold ${scoreColor}`}>{score}%</span>
         </div>
         <p className="text-lg font-semibold text-white">{scoreLabel}</p>
+        <span className={`rounded-full px-3 py-1 text-sm font-semibold ${passed ? "bg-green-600/20 text-green-400" : "bg-red-600/20 text-red-400"}`}>
+          {passed ? "Pass" : "Fail"}
+        </span>
         <p className="text-sm text-gray-400">
           {correct} correct out of {total} questions
         </p>

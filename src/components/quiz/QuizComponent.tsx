@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import type { QuizQuestion } from "@/types";
-import { useProgress } from "@/context/ProgressContext";
 
 interface QuizComponentProps {
   questions: QuizQuestion[];
@@ -22,7 +21,6 @@ export default function QuizComponent({
     new Array(questions.length).fill(null),
   );
   const [isFinished, setIsFinished] = useState(false);
-  const { addXP, updateStreak, getXPReward, loaded } = useProgress();
 
   const question = questions[currentQuestion];
   const isCorrect = selectedAnswer === question.correctIndex;
@@ -51,16 +49,6 @@ export default function QuizComponent({
         (a, i) => a === questions[i].correctIndex,
       ).length;
       const score = Math.round((correct / questions.length) * 100);
-
-      // Award XP for quiz completion (only after progress is loaded)
-      if (loaded && score >= 70) {
-        addXP(getXPReward("quizPass"));
-        if (score >= 90) {
-          addXP(getXPReward("quizHighScore"));
-        }
-      }
-      if (loaded) updateStreak();
-
       onComplete?.(score);
     }
   }

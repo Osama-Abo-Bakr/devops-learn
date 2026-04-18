@@ -133,8 +133,10 @@ export default function CustomExamPage() {
   function handleExamComplete(examScore: number) {
     setScore(examScore);
 
-    // Award XP for exam completion (per question)
-    if (exam && loaded) {
+    const passed = examScore >= 75;
+
+    // Award XP for exam completion only on pass
+    if (exam && loaded && passed) {
       addXP(getXPReward("examQuestion") * exam.questions.length);
       updateStreak();
     }

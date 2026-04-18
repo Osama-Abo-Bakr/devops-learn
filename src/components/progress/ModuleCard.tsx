@@ -1,7 +1,10 @@
+"use client";
+
 import Link from "next/link";
 import type { Module } from "@/types";
 import LevelBadge from "./LevelBadge";
 import ProgressBar from "./ProgressBar";
+import { useProgress } from "@/context/ProgressContext";
 
 const moduleIcons: Record<string, string> = {
   docker: "🐳",
@@ -12,13 +15,13 @@ const moduleIcons: Record<string, string> = {
 
 interface ModuleCardProps {
   module: Module;
-  completionPercentage: number;
 }
 
-export default function ModuleCard({
-  module,
-  completionPercentage,
-}: ModuleCardProps) {
+export default function ModuleCard({ module }: ModuleCardProps) {
+  const { progress, getCompletionPercentage } = useProgress();
+  const completionPercentage = getCompletionPercentage(
+    module.lessons.map((l) => l.slug),
+  );
   const levels = [...new Set(module.lessons.map((l) => l.level))];
 
   return (
