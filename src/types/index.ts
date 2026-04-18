@@ -321,3 +321,25 @@ export interface ExamHistoryEntry {
   /** ISO timestamp of completion */
   completedAt: string;
 }
+
+// -----------------------------------------------------------
+// Gamification — Badges & Levels
+// -----------------------------------------------------------
+
+/** Lock state of a skill-node on the roadmap */
+export type SkillNodeState = "locked" | "available" | "completed";
+
+/** A badge awarded for completing a specific milestone */
+export interface Badge {
+  id: string;
+  name: string;
+  icon: string;
+  condition: string;
+}
+
+/** An XP-based progression level */
+export interface XPLevel {
+  level: number;
+  xpRequired: number;
+  title: string;
+}
