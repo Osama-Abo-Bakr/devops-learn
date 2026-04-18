@@ -11,7 +11,6 @@ const navLinks = [
   { href: "/learn/devops", label: "DevOps", icon: "🚀" },
   { href: "/playground", label: "Playground", icon: "💻" },
   { href: "/cheatsheet", label: "Cheat Sheet", icon: "📋" },
-  { href: "/custom-exam", label: "Custom Exam", icon: "📝" },
 ];
 
 export default function Navbar() {
