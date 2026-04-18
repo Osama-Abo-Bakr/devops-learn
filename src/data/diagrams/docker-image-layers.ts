@@ -3,47 +3,98 @@ import type { DiagramConfig } from "@/types";
 export const dockerImageLayers: DiagramConfig = {
   id: "docker-image-layers",
   title: "Docker Image Layers",
+  viewport: { x: 0, y: 0, zoom: 0.8 },
   nodes: [
     {
-      id: "base",
+      id: "base-os",
       position: { x: 200, y: 0 },
       data: {
-        type: "container",
-        label: "Base Layer (alpine)",
-        details: { image: "alpine:3.19", description: "Minimal base OS layer" },
+        type: "layer",
+        label: "Base OS (alpine:3.19)",
+        details: {
+          description: "Minimal base OS layer — rarely changes",
+          cacheStatus: "hit",
+        },
       },
     },
     {
-      id: "deps",
-      position: { x: 200, y: 120 },
+      id: "sys-libs",
+      position: { x: 200, y: 130 },
       data: {
-        type: "container",
-        label: "Dependencies Layer",
-        details: { description: "npm install — cached if package.json unchanged" },
+        type: "layer",
+        label: "System Libraries",
+        details: {
+          description: "System packages and libraries — cached if deps unchanged",
+          cacheStatus: "hit",
+        },
       },
     },
     {
-      id: "app",
-      position: { x: 200, y: 240 },
+      id: "app-deps",
+      position: { x: 200, y: 260 },
       data: {
-        type: "container",
-        label: "Application Code",
-        details: { description: "COPY . . — rebuilds most often" },
+        type: "layer",
+        label: "App Dependencies",
+        details: {
+          description: "npm install — cache miss when package.json changes",
+          cacheStatus: "miss",
+        },
       },
     },
     {
-      id: "final",
-      position: { x: 200, y: 360 },
+      id: "app-code",
+      position: { x: 200, y: 390 },
       data: {
-        type: "container",
-        label: "Final Image",
-        details: { image: "my-app:latest", description: "Read-only layers combined" },
+        type: "layer",
+        label: "App Code",
+        details: {
+          description: "COPY . . — rebuilds most often on every code change",
+          cacheStatus: "rebuild",
+        },
       },
     },
   ],
   edges: [
-    { id: "e-base-deps", source: "base", target: "deps", data: { type: "dataFlow" } },
-    { id: "e-deps-app", source: "deps", target: "app", data: { type: "dataFlow" } },
-    { id: "e-app-final", source: "app", target: "final", data: { type: "dataFlow" } },
+    {
+      id: "e-base-libs",
+      source: "base-os",
+      target: "sys-libs",
+      data: { type: "animatedDataFlow", label: "layered on" },
+    },
+    {
+      id: "e-libs-deps",
+      source: "sys-libs",
+      target: "app-deps",
+      data: { type: "animatedDataFlow", label: "layered on" },
+    },
+    {
+      id: "e-deps-code",
+      source: "app-deps",
+      target: "app-code",
+      data: { type: "animatedDataFlow", label: "layered on" },
+    },
   ],
+  steps: [
+    {
+      nodeIds: ["base-os"],
+      edgeIds: [],
+      label: "Base OS Layer",
+    },
+    {
+      nodeIds: ["sys-libs"],
+      edgeIds: ["e-base-libs"],
+      label: "System Libraries",
+    },
+    {
+      nodeIds: ["app-deps"],
+      edgeIds: ["e-libs-deps"],
+      label: "App Dependencies",
+    },
+    {
+      nodeIds: ["app-code"],
+      edgeIds: ["e-deps-code"],
+      label: "Application Code",
+    },
+  ],
+  d3Variant: "layerStack",
 };

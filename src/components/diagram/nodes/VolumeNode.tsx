@@ -1,5 +1,6 @@
 import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { DiagramNodeData } from "@/types";
+import MarkdownText from "../MarkdownText";
 
 export default function VolumeNode({ data }: NodeProps) {
   const nodeData = data as unknown as DiagramNodeData;
@@ -8,13 +9,11 @@ export default function VolumeNode({ data }: NodeProps) {
       <Handle type="target" position={Position.Top} className="!bg-purple-500" />
       <div className="flex items-center gap-2">
         <span className="text-lg">💾</span>
-        <div>
-          <div className="text-sm font-semibold text-white">{nodeData.label}</div>
-          {nodeData.details?.description && (
-            <div className="text-xs text-gray-400">{nodeData.details.description}</div>
-          )}
-        </div>
+        <div className="text-sm font-semibold text-white">{nodeData.label}</div>
       </div>
+      {nodeData.details?.description && (
+        <MarkdownText content={nodeData.details.description} className="mt-1" />
+      )}
       <Handle type="source" position={Position.Bottom} className="!bg-purple-500" />
     </div>
   );

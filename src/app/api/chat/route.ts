@@ -1,7 +1,7 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
 const SYSTEM_PROMPT = `You are DevOps Learn AI, an expert tutor specializing in Docker, Kubernetes, and Docker Compose.
 
@@ -30,23 +30,22 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const contents = [
+      { role: "user" as const, parts: [{ text: SYSTEM_PROMPT }] },
+      { role: "model" as const, parts: [{ text: "Got it! I'm DevOps Learn AI, ready to help with Docker, Kubernetes, and Docker Compose questions. I'll explain deeply with examples and practical tips." }] },
+      ...(history || []).map((msg: { role: string; text: string }) => ({
+        role: (msg.role === "user" ? "user" : "model") as "user" | "model",
+        parts: [{ text: msg.text }],
+      })),
+      { role: "user" as const, parts: [{ text: message }] },
+    ];
 
-    const chatHistory = (history || []).map((msg: { role: string; text: string }) => ({
-      role: msg.role === "user" ? "user" : "model",
-      parts: [{ text: msg.text }],
-    }));
-
-    const chat = model.startChat({
-      history: [
-        { role: "user", parts: [{ text: SYSTEM_PROMPT }] },
-        { role: "model", parts: [{ text: "Got it! I'm DevOps Learn AI, ready to help with Docker, Kubernetes, and Docker Compose questions. I'll explain deeply with examples and practical tips." }] },
-        ...chatHistory,
-      ],
+    const response = await genAI.models.generateContent({
+      model: "gemini-2.5-flash-lite",
+      contents,
     });
 
-    const result = await chat.sendMessage(message);
-    const text = result.response.text();
+    const text = response.text ?? "No response generated.";
 
     return NextResponse.json({ reply: text });
   } catch (error) {

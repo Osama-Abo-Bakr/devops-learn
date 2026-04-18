@@ -9,11 +9,12 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@excalidraw/excalidraw": "^0.18.0",
-    "@google/generative-ai": "^0.24.1",
+    "@google/genai": "^1.50.1",
+    "@types/d3": "^7.4.3",
     "@vercel/analytics": "^2.0.1",
     "@vercel/speed-insights": "^2.0.0",
     "@xyflow/react": "^12.10.2",
+    "d3": "^7.9.0",
     "next": "16.2.4",
     "next-intl": "^4.9.1",
     "next-mdx-remote": "^6.0.0",

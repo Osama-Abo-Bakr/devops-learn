@@ -7,7 +7,7 @@ export const dockerContainerBasics: DiagramConfig = {
   nodes: [
     {
       id: "host",
-      position: { x: 250, y: 0 },
+      position: { x: 300, y: 0 },
       data: {
         type: "container",
         label: "Host Machine",
@@ -18,7 +18,7 @@ export const dockerContainerBasics: DiagramConfig = {
     },
     {
       id: "docker-engine",
-      position: { x: 250, y: 120 },
+      position: { x: 300, y: 140 },
       data: {
         type: "network",
         label: "Docker Engine",
@@ -29,7 +29,7 @@ export const dockerContainerBasics: DiagramConfig = {
     },
     {
       id: "nginx-container",
-      position: { x: 100, y: 280 },
+      position: { x: 100, y: 300 },
       data: {
         type: "container",
         label: "nginx",
@@ -42,8 +42,31 @@ export const dockerContainerBasics: DiagramConfig = {
       },
     },
     {
-      id: "data-volume",
-      position: { x: 400, y: 280 },
+      id: "alpine-container",
+      position: { x: 400, y: 300 },
+      data: {
+        type: "container",
+        label: "alpine",
+        details: {
+          image: "alpine:3.19",
+          status: "Running",
+        },
+      },
+    },
+    {
+      id: "bridge-net",
+      position: { x: 250, y: 460 },
+      data: {
+        type: "network",
+        label: "bridge-net",
+        details: {
+          description: "Default bridge network connecting containers",
+        },
+      },
+    },
+    {
+      id: "data-vol",
+      position: { x: 100, y: 460 },
       data: {
         type: "volume",
         label: "html-data",
@@ -67,10 +90,55 @@ export const dockerContainerBasics: DiagramConfig = {
       data: { type: "dataFlow", label: "manages" },
     },
     {
+      id: "e-engine-alpine",
+      source: "docker-engine",
+      target: "alpine-container",
+      data: { type: "dataFlow", label: "manages" },
+    },
+    {
+      id: "e-nginx-net",
+      source: "nginx-container",
+      target: "bridge-net",
+      data: { type: "network", label: "connected" },
+    },
+    {
+      id: "e-alpine-net",
+      source: "alpine-container",
+      target: "bridge-net",
+      data: { type: "network", label: "connected" },
+    },
+    {
       id: "e-nginx-volume",
       source: "nginx-container",
-      target: "data-volume",
+      target: "data-vol",
       data: { type: "volumeMount", label: "mounted at /usr/share/nginx/html" },
+    },
+  ],
+  steps: [
+    {
+      nodeIds: ["host"],
+      edgeIds: [],
+      label: "Host Machine",
+    },
+    {
+      nodeIds: ["docker-engine"],
+      edgeIds: ["e-host-engine"],
+      label: "Docker Engine",
+    },
+    {
+      nodeIds: ["nginx-container", "alpine-container"],
+      edgeIds: ["e-engine-nginx", "e-engine-alpine"],
+      label: "Containers",
+    },
+    {
+      nodeIds: ["bridge-net"],
+      edgeIds: ["e-nginx-net", "e-alpine-net"],
+      label: "Network",
+    },
+    {
+      nodeIds: ["data-vol"],
+      edgeIds: ["e-nginx-volume"],
+      label: "Volumes",
     },
   ],
 };

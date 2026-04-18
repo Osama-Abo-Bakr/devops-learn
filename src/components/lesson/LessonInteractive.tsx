@@ -1,44 +1,12 @@
 "use client";
 
-import dynamic from "next/dynamic";
+import { useState } from "react";
 import { getDiagram, getChallenge, getQuiz } from "@/data";
 import DiagramCanvas from "@/components/diagram/DiagramCanvas";
+import DiagramStepBuilder from "@/components/diagram/DiagramStepBuilder";
+import DiagramViewToggle from "@/components/diagram/DiagramViewToggle";
 import TerminalSimulator from "@/components/terminal/TerminalSimulator";
 import QuizComponent from "@/components/quiz/QuizComponent";
-
-const ExcalidrawViewer = dynamic(
-  () => import("@/components/diagram/ExcalidrawViewer"),
-  { ssr: false },
-);
-
-import dockerContainerBasicsScene from "@/data/excalidraw/docker-container-basics";
-import dockerImageLayersScene from "@/data/excalidraw/docker-image-layers";
-import dockerVolumesNetworksScene from "@/data/excalidraw/docker-volumes-networks";
-import dockerMultiStageBuildScene from "@/data/excalidraw/docker-multi-stage-build";
-import dockerSecurityScene from "@/data/excalidraw/docker-security";
-import dockerProductionPatternsScene from "@/data/excalidraw/docker-production-patterns";
-import composeMultiServiceScene from "@/data/excalidraw/compose-multi-service";
-import composeNetworksVolumesScene from "@/data/excalidraw/compose-networks-volumes";
-import k8sPodsDeploymentsScene from "@/data/excalidraw/k8s-pods-deployments";
-import k8sServicesIngressScene from "@/data/excalidraw/k8s-services-ingress";
-import k8sConfigmapsSecretsScene from "@/data/excalidraw/k8s-configmaps-secrets";
-import devopsCicdPipelineScene from "@/data/excalidraw/devops-cicd-pipeline";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const excalidrawScenes: Record<string, any> = {
-  "docker-container-basics": dockerContainerBasicsScene,
-  "docker-image-layers": dockerImageLayersScene,
-  "docker-volumes-networks": dockerVolumesNetworksScene,
-  "docker-multi-stage-build": dockerMultiStageBuildScene,
-  "docker-security": dockerSecurityScene,
-  "docker-production-patterns": dockerProductionPatternsScene,
-  "compose-multi-service": composeMultiServiceScene,
-  "compose-networks-volumes": composeNetworksVolumesScene,
-  "k8s-pods-deployments": k8sPodsDeploymentsScene,
-  "k8s-services-ingress": k8sServicesIngressScene,
-  "k8s-configmaps-secrets": k8sConfigmapsSecretsScene,
-  "devops-cicd-pipeline": devopsCicdPipelineScene,
-};
 
 interface LessonInteractiveProps {
   diagramId?: string;
@@ -54,22 +22,48 @@ export default function LessonInteractive({
   const diagramConfig = diagramId ? getDiagram(diagramId) : undefined;
   const challengeConfig = challengeId ? getChallenge(challengeId) : undefined;
   const quizConfig = quizId ? getQuiz(quizId) : undefined;
-  const excalidrawScene = diagramId ? excalidrawScenes[diagramId] : undefined;
+  const [view, setView] = useState<"reactflow" | "d3">("reactflow");
 
   return (
     <>
-      {(diagramConfig || excalidrawScene) && (
+      {diagramConfig && (
         <section className="mt-8">
-          <h2 className="mb-4 text-xl font-semibold text-white">
-            Interactive Diagram
-          </h2>
-          {excalidrawScene ? (
-            <ExcalidrawViewer
-              scene={excalidrawScene}
-              title={diagramConfig?.title ?? "Diagram"}
+          <div className="mb-4 flex items-center justify-between">
+            <h2 className="text-xl font-semibold text-white">
+              Interactive Diagram
+            </h2>
+            <DiagramViewToggle
+              d3Variant={diagramConfig.d3Variant}
+              currentView={view}
+              onToggle={setView}
             />
+          </div>
+          {view === "reactflow" ? (
+            diagramConfig.steps && diagramConfig.steps.length > 0 ? (
+              <DiagramStepBuilder config={diagramConfig}>
+                {(filteredConfig, step, total, stepLabel) => (
+                  <div>
+                    <DiagramCanvas config={filteredConfig} />
+                    <div className="mt-2 flex items-center justify-between rounded-lg bg-gray-800 px-3 py-2">
+                      <div className="text-xs text-gray-400">
+                        Step {step} / {total}
+                        {stepLabel && (
+                          <span className="ml-2 text-gray-500">
+                            — {stepLabel}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </DiagramStepBuilder>
+            ) : (
+              <DiagramCanvas config={diagramConfig} />
+            )
           ) : (
-            diagramConfig && <DiagramCanvas config={diagramConfig} />
+            <div className="flex h-[500px] items-center justify-center rounded-lg border border-gray-700 bg-gray-900 text-gray-400">
+              D3 view coming soon
+            </div>
           )}
         </section>
       )}

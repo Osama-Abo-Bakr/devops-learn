@@ -94,6 +94,7 @@ const modules: Record<Topic, Module> = {
         module: "compose",
         level: "beginner",
         duration: "25 min",
+        diagram: "yaml-basics",
         description:
           "Write your first docker-compose.yml and understand the structure of Compose files.",
         order: 1,
@@ -126,6 +127,7 @@ const modules: Record<Topic, Module> = {
         module: "compose",
         level: "intermediate",
         duration: "30 min",
+        diagram: "compose-env-scaling",
         description:
           "Use .env files, variable substitution, and scale services horizontally.",
         order: 4,
@@ -136,6 +138,7 @@ const modules: Record<Topic, Module> = {
         module: "compose",
         level: "advanced",
         duration: "40 min",
+        diagram: "compose-production",
         description:
           "Override files, health checks, and deployment strategies for production Compose stacks.",
         order: 5,
@@ -190,6 +193,7 @@ const modules: Record<Topic, Module> = {
         module: "kubernetes",
         level: "intermediate",
         duration: "30 min",
+        diagram: "hpa-scaling",
         description:
           "Automatically scale your workloads with the Horizontal Pod Autoscaler.",
         order: 4,
@@ -200,6 +204,7 @@ const modules: Record<Topic, Module> = {
         module: "kubernetes",
         level: "advanced",
         duration: "45 min",
+        diagram: "rbac-network-policies",
         description:
           "Control access with RBAC and restrict network traffic with NetworkPolicies.",
         order: 5,
@@ -232,6 +237,7 @@ const modules: Record<Topic, Module> = {
         module: "devops",
         level: "intermediate",
         duration: "35 min",
+        diagram: "helm-charts",
         description:
           "Package, template, and deploy Kubernetes applications with Helm.",
         order: 2,
@@ -242,6 +248,7 @@ const modules: Record<Topic, Module> = {
         module: "devops",
         level: "advanced",
         duration: "45 min",
+        diagram: "monitoring-observability",
         description:
           "Set up Prometheus metrics, Grafana dashboards, and distributed tracing.",
         order: 3,
@@ -252,6 +259,7 @@ const modules: Record<Topic, Module> = {
         module: "devops",
         level: "advanced",
         duration: "40 min",
+        diagram: "security-best-practices",
         description:
           "Image signing, vulnerability scanning, runtime security, and supply chain hardening.",
         order: 4,

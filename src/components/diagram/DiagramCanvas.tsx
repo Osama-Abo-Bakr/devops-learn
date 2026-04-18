@@ -14,9 +14,21 @@ import PodNode from "./nodes/PodNode";
 import ServiceNode from "./nodes/ServiceNode";
 import VolumeNode from "./nodes/VolumeNode";
 import NetworkNode from "./nodes/NetworkNode";
+import LayerNode from "./nodes/LayerNode";
+import PipelineNode from "./nodes/PipelineNode";
+import SecurityNode from "./nodes/SecurityNode";
+import IngressNode from "./nodes/IngressNode";
+import ConfigNode from "./nodes/ConfigNode";
+import StageNode from "./nodes/StageNode";
+import GroupZone from "./nodes/GroupZone";
 import DataFlowEdge from "./edges/DataFlowEdge";
 import VolumeMountEdge from "./edges/VolumeMountEdge";
 import NetworkEdge from "./edges/NetworkEdge";
+import AnimatedDataFlowEdge from "./edges/AnimatedDataFlowEdge";
+import PipelineEdge from "./edges/PipelineEdge";
+import SecurityEdge from "./edges/SecurityEdge";
+import CopyFromEdge from "./edges/CopyFromEdge";
+import MarkdownText from "./MarkdownText";
 import type { DiagramConfig } from "@/types";
 
 const nodeTypes = {
@@ -25,12 +37,23 @@ const nodeTypes = {
   service: ServiceNode,
   volume: VolumeNode,
   network: NetworkNode,
+  layer: LayerNode,
+  pipeline: PipelineNode,
+  security: SecurityNode,
+  ingress: IngressNode,
+  config: ConfigNode,
+  stage: StageNode,
+  groupZone: GroupZone,
 };
 
 const edgeTypes = {
   dataFlow: DataFlowEdge,
   volumeMount: VolumeMountEdge,
   network: NetworkEdge,
+  animatedDataFlow: AnimatedDataFlowEdge,
+  pipeline: PipelineEdge,
+  securityEdge: SecurityEdge,
+  copyFrom: CopyFromEdge,
 };
 
 interface DiagramCanvasProps {
@@ -84,9 +107,7 @@ export default function DiagramCanvas({ config }: DiagramCanvasProps) {
             {selectedNodeData.data.label}
           </h4>
           {selectedNodeData.data.details.description && (
-            <p className="mb-2 text-sm text-gray-400">
-              {selectedNodeData.data.details.description}
-            </p>
+            <MarkdownText content={selectedNodeData.data.details.description} className="mb-2" />
           )}
           {selectedNodeData.data.details.image && (
             <div className="mb-2">

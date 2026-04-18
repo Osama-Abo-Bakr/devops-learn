@@ -145,7 +145,14 @@ export type DiagramNodeType =
   | "pod"
   | "service"
   | "volume"
-  | "network";
+  | "network"
+  | "layer"
+  | "pipeline"
+  | "security"
+  | "ingress"
+  | "config"
+  | "stage"
+  | "groupZone";
 
 /** Data carried by a diagram node */
 export interface DiagramNodeData {
@@ -161,11 +168,23 @@ export interface DiagramNodeData {
     image?: string;
     status?: string;
     config?: Record<string, string>;
+    cacheStatus?: "hit" | "miss" | "rebuild";
+    securityLevel?: string;
+    configType?: "configmap" | "secret";
+    mountType?: "env" | "file" | "volume";
+    stageIndex?: number;
   };
 }
 
 /** Edge type discriminators */
-export type DiagramEdgeType = "dataFlow" | "volumeMount" | "network";
+export type DiagramEdgeType =
+  | "dataFlow"
+  | "volumeMount"
+  | "network"
+  | "animatedDataFlow"
+  | "pipeline"
+  | "securityEdge"
+  | "copyFrom";
 
 /** Data carried by a diagram edge */
 export interface DiagramEdgeData {
@@ -176,7 +195,22 @@ export interface DiagramEdgeData {
   label?: string;
   /** Protocol or port info */
   protocol?: string;
+  /** Whether to animate the edge */
+  animated?: boolean;
 }
+
+/** A single step in progressive diagram building */
+export interface DiagramStep {
+  /** Node IDs revealed at this step */
+  nodeIds: string[];
+  /** Edge IDs revealed at this step */
+  edgeIds: string[];
+  /** Step label shown to the user */
+  label?: string;
+}
+
+/** D3 alternate visualization type */
+export type D3Variant = "layerStack" | "forceGraph" | "tree" | "pipeline";
 
 /** Full React Flow diagram configuration */
 export interface DiagramConfig {
@@ -194,6 +228,10 @@ export interface DiagramConfig {
   nodes: DiagramNode[];
   /** Edges connecting nodes */
   edges: DiagramEdge[];
+  /** Progressive building steps (nodes/edges revealed incrementally) */
+  steps?: DiagramStep[];
+  /** Available D3 alternate visualization */
+  d3Variant?: D3Variant;
 }
 
 /** A single node in a diagram */
