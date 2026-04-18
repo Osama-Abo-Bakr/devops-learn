@@ -3,9 +3,9 @@
 import { useState } from "react";
 import { cheatsheetData, type CheatsheetCategory } from "@/data/cheatsheet";
 
-const topics = ["docker", "compose", "kubernetes"] as const;
-const topicLabels = { docker: "Docker", compose: "Docker Compose", kubernetes: "Kubernetes" };
-const topicIcons = { docker: "🐳", compose: "📦", kubernetes: "☸️" };
+const topics = ["docker", "compose", "kubernetes", "devops"] as const;
+const topicLabels = { docker: "Docker", compose: "Docker Compose", kubernetes: "Kubernetes", devops: "DevOps / CI-CD" };
+const topicIcons = { docker: "🐳", compose: "📦", kubernetes: "☸️", devops: "🚀" };
 
 export default function CheatsheetPage() {
   const [search, setSearch] = useState("");
@@ -28,7 +28,7 @@ export default function CheatsheetPage() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-white">Quick Reference</h1>
         <p className="mt-2 text-gray-400">
-          Common Docker, Compose, and Kubernetes commands at a glance.
+          Common Docker, Compose, Kubernetes, and DevOps commands at a glance.
         </p>
       </div>
 
