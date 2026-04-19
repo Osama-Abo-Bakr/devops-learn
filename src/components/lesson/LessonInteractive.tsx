@@ -41,20 +41,17 @@ export default function LessonInteractive({
   const quizConfig = quizId ? getQuiz(quizId) : undefined;
   const [view, setView] = useState<"reactflow" | "d3">("reactflow");
 
-  const [quizCompleted, setQuizCompleted] = useState(false);
   const [quizScore, setQuizScore] = useState<number | null>(null);
-  const [challengeDone, setChallengeDone] = useState(false);
   const [lessonMarkedComplete, setLessonMarkedComplete] = useState(false);
+  const [challengeDone, setChallengeDone] = useState(false);
 
   const tryMarkComplete = useCallback(
-    (qScore: number | null, cDone: boolean) => {
+    (qScore: number | null) => {
       if (lessonMarkedComplete) return;
 
       const quizPassed = qScore !== null && qScore >= 70;
-      const noChallenge = !challengeConfig;
-      const challengeFinished = cDone;
 
-      if (quizPassed && (noChallenge || challengeFinished)) {
+      if (quizPassed) {
         setLessonMarkedComplete(true);
         if (loaded) {
           updateLessonStatus(lessonSlug, "completed");
@@ -65,7 +62,6 @@ export default function LessonInteractive({
     },
     [
       lessonMarkedComplete,
-      challengeConfig,
       lessonSlug,
       loaded,
       updateLessonStatus,
@@ -77,25 +73,13 @@ export default function LessonInteractive({
 
   const handleQuizComplete = useCallback(
     (score: number) => {
-      setQuizCompleted(true);
       setQuizScore(score);
       if (loaded) {
         updateQuizScore(lessonSlug, score);
       }
-      tryMarkComplete(score, challengeDone);
+      tryMarkComplete(score);
     },
-    [lessonSlug, loaded, updateQuizScore, tryMarkComplete, challengeDone],
-  );
-
-  const handleTaskComplete = useCallback(
-    (taskId: string) => {
-      const totalTasks = challengeConfig?.tasks.length ?? 0;
-      // We track challenge completion via a state counter
-      // The TerminalSimulator fires onTaskComplete per task
-      // We only mark the whole challenge done when all tasks complete
-      // But for simplicity, on each task we check if all are done
-    },
-    [challengeConfig],
+    [lessonSlug, loaded, updateQuizScore, tryMarkComplete],
   );
 
   const handleAllTasksComplete = useCallback(() => {
@@ -105,7 +89,6 @@ export default function LessonInteractive({
       addXP(getXPReward("challengeComplete"));
       updateStreak();
     }
-    tryMarkComplete(quizScore, true);
   }, [
     lessonSlug,
     loaded,
@@ -113,8 +96,6 @@ export default function LessonInteractive({
     addXP,
     getXPReward,
     updateStreak,
-    tryMarkComplete,
-    quizScore,
   ]);
 
   return (

@@ -16,8 +16,9 @@ export const dockerPsChallenge: Challenge = {
     },
     "docker ps": {
       output: () => {
-        return `CONTAINER ID   IMAGE          STATUS       PORTS                  NAMES`;
+        return `CONTAINER ID   IMAGE          STATUS       PORTS                  NAMES\nabc123def456   nginx:latest   Up 2 hours   0.0.0.0:8080->80/tcp   nginx-server`;
       },
+      stateChange: { containerCount: "1" },
     },
     "docker pull": {
       output: (args: string[]) => {
@@ -56,7 +57,7 @@ export const dockerPsChallenge: Challenge = {
     },
     "docker images": {
       output: () => {
-        return `REPOSITORY   TAG       IMAGE ID       SIZE\nnginx        latest    abc123def456   187MB\nalpine       latest    789ghi012jkl   7.3MB`;
+        return `REPOSITORY   TAG       IMAGE ID       SIZE\nnginx        latest    abc123def456   187 MB\nalpine       latest    789ghi012jkl   7.3 MB`;
       },
     },
     "docker logs": {
@@ -73,12 +74,12 @@ export const dockerPsChallenge: Challenge = {
     },
     "docker compose up": {
       output: () => {
-        return "[+] Running 3/3\n \u2713 Network my-app_default  Created\n \u2713 Container my-app-web-1   Started\n \u2713 Container my-app-db-1   Started";
+        return "[+] Running 3/3\n \u2713 Network my-app_default  Created\n \u2713 Container my-app-web-1  Started\n \u2713 Container my-app-db-1   Started";
       },
     },
     "docker compose down": {
       output: () => {
-        return "[+] Removing 3/3\n \u2713 Container my-app-web-1   Removed\n \u2713 Container my-app-db-1   Removed\n \u2713 Network my-app_default  Removed";
+        return "[+] Removing 3/3\n \u2713 Container my-app-web-1  Removed\n \u2713 Container my-app-db-1   Removed\n \u2713 Network my-app_default  Removed";
       },
     },
     help: {
