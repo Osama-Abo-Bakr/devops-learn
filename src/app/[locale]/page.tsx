@@ -144,6 +144,26 @@ export default function HomePage() {
           </div>
         </div>
       </section>
+
+      {/* Support Me */}
+      <section className="border-t border-gray-800 py-16">
+        <div className="mx-auto max-w-3xl px-4 text-center sm:px-6 lg:px-8">
+          <div className="mb-4 text-5xl">☕</div>
+          <h2 className="mb-3 text-2xl font-bold text-white">Support My Work</h2>
+          <p className="mb-6 text-gray-400">
+            If this platform helped you learn, consider buying me a coffee.
+            Your support helps me keep building free AI tools and open-source projects.
+          </p>
+          <a
+            href="https://ko-fi.com/osamaabobakr"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 px-6 py-3 font-medium text-white transition-opacity hover:opacity-90"
+          >
+            <span>☕</span> Buy Me a Coffee
+          </a>
+        </div>
+      </section>
     </div>
   );
 }
