@@ -12,6 +12,7 @@ import D3PipelineFlow from "@/components/diagram/d3/D3PipelineFlow";
 import TerminalSimulator from "@/components/terminal/TerminalSimulator";
 import QuizComponent from "@/components/quiz/QuizComponent";
 import { useProgress } from "@/context/ProgressContext";
+import CelebrationEffect from "@/components/celebration/CelebrationEffect";
 
 interface LessonInteractiveProps {
   diagramId?: string;
@@ -34,6 +35,7 @@ export default function LessonInteractive({
     updateStreak,
     getXPReward,
     loaded,
+    consumeRecentBadges,
   } = useProgress();
 
   const diagramConfig = diagramId ? getDiagram(diagramId) : undefined;
@@ -44,6 +46,8 @@ export default function LessonInteractive({
   const [quizScore, setQuizScore] = useState<number | null>(null);
   const [lessonMarkedComplete, setLessonMarkedComplete] = useState(false);
   const [challengeDone, setChallengeDone] = useState(false);
+  const [celebrate, setCelebrate] = useState(false);
+  const [earnedBadges, setEarnedBadges] = useState<string[]>([]);
 
   const tryMarkComplete = useCallback(
     (qScore: number | null) => {
@@ -57,6 +61,12 @@ export default function LessonInteractive({
           updateLessonStatus(lessonSlug, "completed");
           addXP(getXPReward("lessonComplete"));
           updateStreak();
+          // Defer badge check to next tick so state has settled
+          setTimeout(() => {
+            const newBadges = consumeRecentBadges();
+            if (newBadges.length > 0) setEarnedBadges(newBadges);
+            setCelebrate(true);
+          }, 100);
         }
       }
     },
@@ -68,6 +78,7 @@ export default function LessonInteractive({
       addXP,
       getXPReward,
       updateStreak,
+      consumeRecentBadges,
     ],
   );
 
@@ -88,6 +99,11 @@ export default function LessonInteractive({
       markChallengeCompleted(lessonSlug);
       addXP(getXPReward("challengeComplete"));
       updateStreak();
+      setTimeout(() => {
+        const newBadges = consumeRecentBadges();
+        if (newBadges.length > 0) setEarnedBadges(newBadges);
+        setCelebrate(true);
+      }, 100);
     }
   }, [
     lessonSlug,
@@ -96,10 +112,17 @@ export default function LessonInteractive({
     addXP,
     getXPReward,
     updateStreak,
+    consumeRecentBadges,
   ]);
 
   return (
     <>
+      <CelebrationEffect
+        trigger={celebrate}
+        score={quizScore ?? undefined}
+        newBadges={earnedBadges.length > 0 ? earnedBadges : undefined}
+        onDone={() => { setCelebrate(false); setEarnedBadges([]); }}
+      />
       {diagramConfig && (
         <section className="mt-8">
           <div className="mb-4 flex items-center justify-between">

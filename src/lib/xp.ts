@@ -96,9 +96,9 @@ export function checkBadges(progress: ProgressState): string[] {
 
   const composeCompleted = [
     "yaml-basics",
-    "multi-service-stacks",
+    "multi-service",
     "compose-networks-volumes",
-    "env-scaling",
+    "compose-env-scaling",
     "compose-production",
   ].every(
     (s) => progress.lessons[s]?.status === "completed",
@@ -119,6 +119,9 @@ export function checkBadges(progress: ProgressState): string[] {
     "helm-charts",
     "monitoring-observability",
     "security-best-practices",
+    "advanced-cicd-pipelines",
+    "cicd-at-scale-netflix-meta",
+    "container-orchestration-scale",
   ].every(
     (s) => progress.lessons[s]?.status === "completed",
   );

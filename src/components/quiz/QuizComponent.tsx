@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import type { QuizQuestion } from "@/types";
+import CelebrationEffect from "@/components/celebration/CelebrationEffect";
 
 interface QuizComponentProps {
   questions: QuizQuestion[];
@@ -21,6 +22,8 @@ export default function QuizComponent({
     new Array(questions.length).fill(null),
   );
   const [isFinished, setIsFinished] = useState(false);
+  const [celebrate, setCelebrate] = useState(false);
+  const [finalScore, setFinalScore] = useState(0);
 
   const question = questions[currentQuestion];
   const isCorrect = selectedAnswer === question.correctIndex;
@@ -49,6 +52,8 @@ export default function QuizComponent({
         (a, i) => a === questions[i].correctIndex,
       ).length;
       const score = Math.round((correct / questions.length) * 100);
+      setFinalScore(score);
+      if (score >= 70) setCelebrate(true);
       onComplete?.(score);
     }
   }
@@ -57,12 +62,35 @@ export default function QuizComponent({
     const correct = answers.filter(
       (a, i) => a === questions[i].correctIndex,
     ).length;
+    const passed = finalScore >= 70;
     return (
-      <div className="rounded-lg border border-gray-700 bg-gray-900 p-6">
-        <h3 className="mb-4 text-xl font-bold text-white">{title} — Complete!</h3>
-        <p className="text-2xl font-bold text-blue-400">
-          {correct}/{questions.length} correct ({Math.round((correct / questions.length) * 100)}%)
-        </p>
+      <>
+        <CelebrationEffect trigger={celebrate} score={finalScore} onDone={() => setCelebrate(false)} />
+        <div className={`rounded-lg border p-6 ${passed ? "border-green-500/30 bg-gradient-to-b from-gray-900 to-green-950/20" : "border-gray-700 bg-gray-900"}`}>
+          <div className="mb-4 flex items-center gap-3">
+            {passed && <span className="text-3xl">{finalScore === 100 ? "👑" : "🎉"}</span>}
+            <div>
+              <h3 className="text-xl font-bold text-white">{title} — Complete!</h3>
+              <p className="text-sm text-gray-400">
+                {passed
+                  ? finalScore === 100
+                    ? "Perfect score! You've mastered this topic!"
+                    : "Great job! You passed the quiz!"
+                  : "Keep studying and try again!"}
+              </p>
+            </div>
+          </div>
+          <div className="mb-6 flex items-center gap-4">
+            <div className={`text-3xl font-bold ${passed ? "text-green-400" : "text-red-400"}`}>
+              {finalScore}%
+            </div>
+            <div>
+              <p className="text-sm text-gray-400">{correct}/{questions.length} correct</p>
+              <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${passed ? "bg-green-600/20 text-green-400" : "bg-red-600/20 text-red-400"}`}>
+                {passed ? "Passed" : "Failed — need 70%"}
+              </span>
+            </div>
+          </div>
         <div className="mt-6 space-y-4">
           {questions.map((q, i) => (
             <div key={q.id} className="text-sm">
@@ -78,6 +106,7 @@ export default function QuizComponent({
           ))}
         </div>
       </div>
+      </>
     );
   }
 

@@ -28,6 +28,7 @@ export default function ModuleCard({ module }: ModuleCardProps) {
     <Link
       href={`/learn/${module.slug}`}
       className="group flex flex-col rounded-xl border border-gray-800 bg-gray-900 p-6 transition-all hover:border-blue-500/50 hover:bg-gray-800/80"
+      style={completionPercentage === 100 ? { borderColor: "rgb(34 197 94 / 0.5)" } : undefined}
     >
       <div className="mb-4 flex items-center gap-3">
         <span className="text-3xl">{moduleIcons[module.slug] ?? "📚"}</span>
@@ -37,6 +38,11 @@ export default function ModuleCard({ module }: ModuleCardProps) {
           </h3>
           <p className="text-sm text-gray-400">{module.lessons.length} lessons</p>
         </div>
+        {completionPercentage === 100 && (
+          <span className="ml-auto rounded-full bg-green-500/20 px-2 py-0.5 text-xs font-semibold text-green-400">
+            Complete
+          </span>
+        )}
       </div>
 
       <p className="mb-4 flex-1 text-sm text-gray-400">{module.description}</p>

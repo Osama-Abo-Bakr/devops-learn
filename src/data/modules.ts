@@ -283,6 +283,42 @@ const modules: Record<Topic, Module> = {
           "Image signing, vulnerability scanning, runtime security, and supply chain hardening.",
         order: 4,
       },
+      {
+        slug: "advanced-cicd-pipelines",
+        title: "Advanced CI/CD Pipelines",
+        module: "devops",
+        level: "advanced",
+        duration: "50 min",
+        diagram: "advanced-cicd-pipeline",
+        quiz: "advanced-cicd-quiz",
+        description:
+          "Multi-stage pipelines, canary deployments, blue/green strategies, approval gates, and automated rollback.",
+        order: 5,
+      },
+      {
+        slug: "cicd-at-scale-netflix-meta",
+        title: "CI/CD at Scale: Netflix & Meta",
+        module: "devops",
+        level: "advanced",
+        duration: "45 min",
+        diagram: "cicd-at-scale-netflix-meta",
+        quiz: "cicd-at-scale-quiz",
+        description:
+          "How Netflix (Spinnaker, Chaos Monkey, Kayenta) and Meta (Buck2, Gatekeeper, FB Trench) deploy at massive scale.",
+        order: 6,
+      },
+      {
+        slug: "container-orchestration-scale",
+        title: "Container Orchestration at Scale",
+        module: "devops",
+        level: "advanced",
+        duration: "50 min",
+        diagram: "container-orchestration-scale",
+        quiz: "container-orchestration-scale-quiz",
+        description:
+          "Multi-cluster Kubernetes, service mesh, autoscaling, ConfigMaps, Secrets, and disaster recovery patterns.",
+        order: 7,
+      },
     ],
   },
 };

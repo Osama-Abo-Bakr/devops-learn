@@ -1,4 +1,6 @@
 import type { CustomExam } from "@/types";
+import CelebrationEffect from "@/components/celebration/CelebrationEffect";
+import { useState, useEffect } from "react";
 
 interface ExamResultsProps {
   exam: CustomExam;
@@ -15,6 +17,7 @@ export default function ExamResults({
   onRetake,
   onNewExam,
 }: ExamResultsProps) {
+  const [celebrate, setCelebrate] = useState(false);
   const correct = answers.filter(
     (a, i) => a === exam.questions[i].correctIndex,
   ).length;
@@ -36,10 +39,17 @@ export default function ExamResults({
     score >= 80 ? "Excellent!" : score >= 50 ? "Good effort!" : "Keep learning!";
   const passed = score >= 75;
 
+  useEffect(() => {
+    if (passed) setCelebrate(true);
+  }, [passed]);
+
   return (
-    <div className="space-y-6">
+    <>
+      <CelebrationEffect trigger={celebrate} score={score} onDone={() => setCelebrate(false)} />
+      <div className="space-y-6">
       {/* Score card */}
-      <div className="flex flex-col items-center gap-4 rounded-lg border border-gray-700 bg-gray-900 p-8">
+      <div className={`flex flex-col items-center gap-4 rounded-lg border p-8 ${passed ? "border-green-500/30 bg-gradient-to-b from-gray-900 to-green-950/20" : "border-gray-700 bg-gray-900"}`}>
+        {passed && <span className="text-4xl">{score >= 90 ? "👑" : "🎉"}</span>}
         <div
           className={`flex h-28 w-28 items-center justify-center rounded-full border-4 ${scoreRing}`}
         >
@@ -119,5 +129,6 @@ export default function ExamResults({
         </button>
       </div>
     </div>
+    </>
   );
 }

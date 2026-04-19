@@ -1,0 +1,241 @@
+---
+title: "CI/CD at Scale: Netflix & Meta"
+module: devops
+level: advanced
+duration: "45 min"
+diagram: cicd-at-scale-netflix-meta
+description: "How Netflix (Spinnaker, Chaos Monkey, Kayenta) and Meta (Buck2, Gatekeeper, FB Trench) deploy at massive scale."
+order: 6
+---
+
+# CI/CD at Scale: Netflix & Meta
+
+Netflix serves 250 million subscribers across 190 countries. Meta operates Facebook, Instagram, and WhatsApp for billions of users on 100,000+ servers. Both deploy code hundreds of times per day with near-zero downtime. Their CI/CD systems are not just pipelines — they are engineering platforms that make safe, rapid deployment the default at a scale where a single bad deploy could affect hundreds of millions of people.
+
+This lesson examines how Netflix and Meta solved deployment at scale, and what principles you can apply regardless of your company size.
+
+## Netflix: Spinnaker and Chaos Engineering
+
+Netflix runs hundreds of microservices on Kubernetes clusters across multiple AWS regions. Their deployment platform, **Spinnaker**, was built to manage this complexity and is now used by thousands of companies worldwide.
+
+### The Spinnaker Pipeline
+
+Spinnaker treats deployment as a first-class workflow with explicit stages:
+
+```
+Git Push ──► Build ──► Bake ──► Deploy (Dev) ──► Deploy (Staging)
+               │          │                          │
+            Jenkins     AMI/Docker              Canary Analysis
+            cluster     image creation           (Kayenta)
+                                                         │
+                                                  ┌──────┴──────┐
+                                                  │  Promote?    │
+                                                  │  (automated) │
+                                                  └──────┬──────┘
+                                                         │
+                                                  Deploy (Production)
+                                                         │
+                                                  Chaos Monkey ◄── Fault injection
+                                                         │
+                                                  Monitoring (Atlas)
+```
+
+**The Bake Stage:** This is Netflix's term for creating immutable deployment artifacts. The bake stage takes build outputs and produces an AMI (for EC2) or Docker image (for Kubernetes). The baked image is **immutable** — the exact same artifact traverses every pipeline stage from dev to production without modification.
+
+```json
+{
+  "type": "bake",
+  "baseLabel": "release",
+  "baseOs": "ubuntu-focal",
+  "cloudProviderType": "aws",
+  "package": "my-service_1.2.3_all.deb",
+  "amiName": "my-service-v123-20240115"
+}
+```
+
+**Why bake matters:** If you build separate artifacts for each environment, you are not testing what you deploy. Baking once and deploying everywhere guarantees the artifact that passed staging tests is the exact artifact reaching production.
+
+### Kayenta: Automated Canary Analysis
+
+Netflix built **Kayenta** to automate canary analysis. Instead of engineers watching dashboards, Kayenta compares metrics between the canary and baseline deployments using statistical methods:
+
+```
+Canary (v1.2) ──► Metrics ──► Kayenta ──► Statistical Analysis ──► Decision
+                                                               │
+Baseline (v1.1) ──► Metrics ──►                               │
+                                                               ├── Promote (v1.2 → production)
+                                                               └── Rollback (keep v1.1)
+```
+
+**What Kayenta compares:**
+- **Latency** — p50, p95, p99 response times
+- **Error rate** — 5xx percentage
+- **CPU/Memory** — Resource utilization
+- **Custom metrics** — Application-specific (e.g., video start time, buffer rate)
+
+**Statistical approach:** Kayenta does not just check if canary metrics are worse. It uses **Mann-Whitney U tests** and **t-tests** to determine if the difference is statistically significant. This prevents false rollbacks from normal metric noise while catching genuine regressions.
+
+### Chaos Monkey: Resilience Validation
+
+Netflix's **Chaos Monkey** randomly terminates production instances during business hours. This is not an accident — it is a deliberate strategy to ensure services can handle failures gracefully.
+
+**How it fits into deployment:**
+
+1. A new version is deployed via canary.
+2. Chaos Monkey targets instances running the canary version.
+3. If the canary handles instance termination without degrading user experience, the canary is promoted.
+4. If the canary fails under chaos, it is rolled back.
+
+This is **Chaos Engineering** — injecting controlled failures to validate that your system is resilient. Netflix extended Chaos Monkey into the **Simian Army** (Chaos Monkey, Latency Monkey, Conformity Monkey, etc.) to test various failure modes.
+
+### Atlas Monitoring
+
+Netflix built **Atlas** as their in-house time-series monitoring and alerting system. Atlas handles millions of data points per second and powers all canary analysis, dashboards, and alerting.
+
+```
+Application ──► Atlas Agent ──► Atlas Backend ──► Dashboards
+                  │                                  │
+                  └──► Kayenta (canary analysis)     └──► Alerts (PagerDuty)
+```
+
+## Meta: Continuous Deployment at Billion-User Scale
+
+Meta takes a fundamentally different approach from Netflix. Instead of Kubernetes and cloud infrastructure, Meta runs on **bare-metal servers and custom VMs** in their own data centers. Their deployment system pushes new binary versions directly to 100,000+ servers.
+
+### The Meta Deployment Flow
+
+```
+Git Push ──► Buck2 Build ──► Feature Flag Check ──► A/B Test Gate ──► Gradual Rollout
+                │                  │                      │                  │
+           Incremental         Gatekeeper             Statistical       FB Trench
+           build system        (on/off)               significance      (region-by-region)
+```
+
+### Buck2 Build System
+
+Meta's **Buck2** is a Rust-based incremental build system that is 100x faster than Buck v1. Key features:
+
+- **Incremental builds** — Only rebuilds what changed. A one-line change might rebuild in seconds, not minutes.
+- **Distributed execution** — Build work is distributed across hundreds of machines.
+- **Hermetic builds** — Build outputs are deterministic. Same input always produces same output.
+
+```
+Monorepo (millions of files)
+    │
+    ├── Developer changes 1 file
+    │
+    ├── Buck2 analyzes dependency graph
+    │   (only affected targets)
+    │
+    ├── Rebuilds only changed targets
+    │   (distributed across build farm)
+    │
+    └── Binary ready in seconds/minutes
+        (not hours)
+```
+
+### Gatekeeper: Decoupling Deploy from Release
+
+Meta's **Gatekeeper** is their feature flag system. It decouples **deployment** (code is on servers) from **release** (code is visible to users).
+
+```
+Deploy to 100% of servers ──► Feature OFF ──► No users see new feature
+                                   │
+                                   ▼
+                            Gradually enable ──► 1% of users ──► 5% ──► 50% ──► 100%
+                                   │
+                                   ▼
+                            Monitor metrics at each stage
+                                   │
+                                   ├── Healthy? ──► Increase percentage
+                                   └── Unhealthy? ──► Instant disable (no redeploy needed)
+```
+
+**Why this matters:** Meta deploys code to production continuously, but product teams control when features become visible. A broken feature is disabled by flipping a flag — no rollback, no redeployment, no waiting. The code is already on every server; it just needs to be turned on.
+
+### A/B Testing Gate
+
+Before any feature reaches a wide audience, Meta runs **A/B experiments** with statistical significance checks:
+
+1. Feature is enabled for 1% of users (treatment group).
+2. Metrics are collected for the treatment and control groups.
+3. Statistical tests determine if the feature improves or harms key metrics.
+4. Only after statistical significance is reached does the feature move to wider rollout.
+
+This prevents features that look good in development from degrading the experience at scale.
+
+### FB Trench: Gradual Rollout
+
+**FB Trench** is Meta's gradual rollout system. It pushes new binary versions to servers region by region:
+
+```
+Region 1 (1%) ──► Monitor ──► Region 2 (5%) ──► Monitor ──► Region 3 (20%) ──► ...
+```
+
+At each stage, automated monitoring checks error rates, latency, and resource consumption. If any metric degrades, the rollout is paused or reversed.
+
+### ODS: On-Device Stats
+
+Meta's **ODS (On-Device Stats)** provides real-time error reporting from billions of client devices. Unlike server-side monitoring that only sees server errors, ODS captures:
+
+- Client-side crashes and errors
+- UI rendering failures
+- Network timeouts from the user's perspective
+- Device-specific issues (memory pressure, battery drain)
+
+This gives Meta a complete picture of user experience, not just server health.
+
+## Shared Principles
+
+Despite radically different architectures, Netflix and Meta share core deployment principles:
+
+### 1. Immutable Artifacts
+
+Both companies build once and deploy everywhere. The exact same artifact (AMI, Docker image, or binary) that passes tests in staging is the one deployed to production. No "special" production builds.
+
+```
+Build once ──► Test ──► Deploy same artifact to dev, staging, production
+```
+
+**Why:** If you build different artifacts for different environments, you are not testing what you deploy. Immutable artifacts eliminate the "works in staging, broken in production" problem.
+
+### 2. Automated Rollback
+
+Both systems can rollback in seconds when problems are detected. No human needs to be paged, no war room needs to be convened. The system detects the problem and reverts automatically.
+
+- **Netflix:** Kayenta detects canary degradation and triggers rollback via Spinnaker.
+- **Meta:** FB Trench pauses rollout and reverts to the previous binary version.
+
+### 3. Full Observability
+
+You cannot safely deploy at scale if you cannot see what is happening. Both companies invest heavily in monitoring:
+
+- **Netflix:** Atlas (server metrics) + Eureka (service discovery) + Edda (AWS resource tracking)
+- **Meta:** ODS (client metrics) + server-side metrics + custom dashboards
+
+**The principle:** Every deployment must be observable. If you deploy without monitoring, you are flying blind.
+
+## Applying These Principles at Any Scale
+
+You do not need Spinnaker or a custom build system to apply these principles:
+
+| Netflix/Meta Practice | Your Implementation |
+|-----------------------|---------------------|
+| Spinnaker pipelines | GitHub Actions / GitLab CI with stages |
+| Kayenta canary analysis | Argo Rollouts with metric analysis |
+| Chaos Monkey | Litmus Chaos or Chaos Mesh |
+| Gatekeeper feature flags | LaunchDarkly, Unleash, or custom flags |
+| Buck2 incremental builds | Docker layer caching + BuildKit |
+| FB Trench gradual rollout | Kubernetes canary with Flagger |
+| Atlas monitoring | Prometheus + Grafana |
+
+## Key Takeaways
+
+- **Bake once, deploy everywhere** — Immutable artifacts eliminate environment-specific bugs.
+- **Automated canary analysis** (Kayenta) replaces human dashboard-watching with statistical comparison.
+- **Chaos Engineering** validates resilience by deliberately breaking things in production.
+- **Feature flags** (Gatekeeper) decouple deployment from release — code ships without being visible.
+- **Gradual rollout** (FB Trench) limits blast radius by deploying region by region.
+- **Full observability** is non-negotiable — you cannot safely deploy what you cannot see.
+
+<Diagram config={cicdAtScaleNetflixMeta} />

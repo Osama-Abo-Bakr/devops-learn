@@ -38,6 +38,8 @@ interface ProgressContextValue {
   };
   getBadges: () => string[];
   getXPReward: (key: keyof typeof XP_REWARDS) => number;
+  recentBadges: string[];
+  consumeRecentBadges: () => string[];
 }
 
 const ProgressContext = createContext<ProgressContextValue | null>(null);
@@ -77,6 +79,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
   // to avoid SSR/client mismatch
   const [progress, setProgress] = useState<ProgressState>(getEmptyProgress);
   const [loaded, setLoaded] = useState(false);
+  const [recentBadges, setRecentBadges] = useState<string[]>([]);
 
   // Hydrate progress from localStorage after mount
   useEffect(() => {
@@ -184,6 +187,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
           ...(result.progress.badges ?? []),
           ...newBadges,
         ];
+        setRecentBadges((prev) => [...prev, ...newBadges]);
       }
       saveProgress(result.progress);
       return result.progress;
@@ -198,6 +202,7 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
       const newBadges = checkBadges(next);
       if (newBadges.length > 0) {
         next.badges = [...(next.badges ?? []), ...newBadges];
+        setRecentBadges((prev) => [...prev, ...newBadges]);
       }
       saveProgress(next);
       return next;
@@ -221,6 +226,12 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
     return XP_REWARDS[key];
   }, []);
 
+  const consumeRecentBadges = useCallback(() => {
+    const badges = [...recentBadges];
+    setRecentBadges([]);
+    return badges;
+  }, [recentBadges]);
+
   return (
     <ProgressContext.Provider
       value={{
@@ -237,6 +248,8 @@ export function ProgressProvider({ children }: { children: ReactNode }) {
         getXPInfo,
         getBadges,
         getXPReward,
+        recentBadges,
+        consumeRecentBadges,
       }}
     >
       {children}

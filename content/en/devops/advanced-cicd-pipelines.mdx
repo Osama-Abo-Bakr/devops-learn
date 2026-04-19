@@ -1,0 +1,314 @@
+---
+title: "Advanced CI/CD Pipelines"
+module: devops
+level: advanced
+duration: "50 min"
+diagram: advanced-cicd-pipeline
+description: "Multi-stage pipelines, canary deployments, blue/green strategies, approval gates, and automated rollback."
+order: 5
+---
+
+# Advanced CI/CD Pipelines
+
+A basic CI/CD pipeline builds, tests, and deploys. That is table stakes. What separates a production pipeline from a toy is how it handles **risk** — the risk of deploying broken code, the risk of downtime, the risk of a bad release reaching all your users at once. Advanced pipelines use multi-stage gates, gradual traffic shifting, automated analysis, and instant rollback to make deployments boring instead of terrifying.
+
+If your pipeline still deploys 100% of traffic to a new version and hopes for the best, this lesson is for you.
+
+## Multi-Stage Pipelines with Approval Gates
+
+A real production pipeline is not a straight line from commit to deploy. It has **environments** (dev, staging, production) and **gates** between them. A gate is a checkpoint — either automated (tests pass, scan clean) or manual (a human reviews and approves).
+
+### Pipeline Stages
+
+```
+Commit ──► Build ──► Test ──► Scan ──► Deploy (Dev)
+                                                │
+                                        Approval Gate ◄── Human review
+                                                │
+                                          Deploy (Staging)
+                                                │
+                                        Integration Tests
+                                                │
+                                        Approval Gate ◄── Change management
+                                                │
+                                          Canary (5%)
+                                                │
+                                         Auto-Analysis ──► Rollback if unhealthy
+                                                │
+                                          Production (100%)
+```
+
+**Why approval gates matter:** Not every deployment should be automatic. Database migrations, API breaking changes, and infrastructure overhauls need human eyes. Approval gates enforce change management policies without slowing down routine deployments.
+
+### Parallel Jobs
+
+Stages that do not depend on each other should run in parallel. Unit tests, integration tests, and security scans can all run against the same built artifact simultaneously:
+
+```yaml
+# .github/workflows/pipeline.yml
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm test
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm run test:integration
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+  deploy-staging:
+    needs: [unit-tests, integration-tests, security-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Deploy to staging"
+```
+
+**Key insight:** The three test/scan jobs run concurrently. The `needs` clause in `deploy-staging` waits for ALL three to pass. Total pipeline time becomes the duration of the slowest parallel job, not the sum of all jobs.
+
+## Deployment Strategies
+
+### Blue/Green Deployment
+
+Blue/green maintains two identical production environments. The **blue** environment runs the current version. The **green** environment runs the new version. Traffic switches instantly from blue to green once green passes health checks.
+
+```
+Before switch:          After switch:
+┌──────────┐           ┌──────────┐
+│  Blue     │ ◄── 100%  │  Blue     │ (idle, ready for rollback)
+│  v1.0    │           │  v1.0    │
+└──────────┘           └──────────┘
+
+┌──────────┐           ┌──────────┐
+│  Green    │           │  Green    │ ◄── 100%
+│  v1.1    │           │  v1.1    │
+└──────────┘           └──────────┘
+```
+
+**Advantages:** Instant cutover, instant rollback (switch back to blue), zero downtime.
+
+**Disadvantages:** Requires double the infrastructure. Both environments must be fully provisioned and ready.
+
+### Canary Deployment
+
+Canary deploys route a small percentage of traffic to the new version and monitor its health. If metrics look good, traffic is gradually increased. If something goes wrong, the canary is automatically rolled back.
+
+```
+Canary flow:
+
+5% ──► Analyze metrics ──► Healthy? ──► 25% ──► Analyze ──► 50% ──► 100%
+                            │
+                            Unhealthy?
+                            │
+                            ▼
+                         Rollback (0%)
+```
+
+**With Argo Rollouts:**
+
+```yaml
+# rollout.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: my-app
+spec:
+  replicas: 10
+  strategy:
+    canary:
+      steps:
+      - setWeight: 5          # Route 5% traffic to canary
+      - pause: {duration: 5m} # Observe for 5 minutes
+      - setWeight: 25         # Increase to 25%
+      - pause: {duration: 5m}
+      - setWeight: 50         # Increase to 50%
+      - pause: {duration: 5m}
+      - setWeight: 100        # Full rollout
+      canaryService: my-app-canary
+      stableService: my-app-stable
+```
+
+**With Flagger:**
+
+```yaml
+# canary.yaml
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: my-app
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: my-app
+  service:
+    port: 8080
+  analysis:
+    interval: 1m
+    threshold: 5       # Rollback after 5 failed checks
+    maxWeight: 50
+    stepWeight: 10      # Increase 10% per interval
+    metrics:
+    - name: request-success-rate
+      threshold: 99     # Require 99% success rate
+    - name: request-duration
+      threshold: 500    # Require p99 < 500ms
+```
+
+### Strategy Comparison
+
+| Strategy | Downtime | Rollback Speed | Infrastructure Cost | Risk Exposure |
+|----------|----------|---------------|---------------------|---------------|
+| Blue/Green | Zero | Instant (switch) | 2x (two environments) | Low (full env tested) |
+| Canary | Zero | Fast (reduce traffic) | 1x + canary pods | Very Low (gradual exposure) |
+| Rolling | Brief | Medium (re-roll) | 1x | Medium (all nodes get new version) |
+| Recreate | Yes | Slow (redeploy) | 1x | High (all at once) |
+
+## Automated Canary Analysis
+
+The real power of canary deployments is not the traffic shifting — it is the **automated analysis**. Instead of a human staring at dashboards, software compares canary metrics against the baseline and makes the promote/rollback decision.
+
+### What Gets Analyzed
+
+- **Error rate** — Is the canary returning more 5xx errors than baseline?
+- **Latency** — Are p50, p95, p99 response times higher in the canary?
+- **CPU/Memory** — Is the canary consuming significantly more resources?
+- **Custom metrics** — Business metrics (conversion rate, cart abandonment, etc.)
+
+### How It Works
+
+```
+Canary (5%) ──► Metrics Server ──► Analysis Engine ──► Decision
+     │                                      │
+Baseline ──► Metrics Server ──►          │
+                                              │
+                                              ├── Promote (increase traffic)
+                                              └── Rollback (restore baseline)
+```
+
+The analysis engine uses statistical methods (not just threshold checks) to determine if the canary is genuinely worse or if the difference is within normal variance. This prevents false-positive rollbacks from noisy metrics.
+
+## Automated Rollback
+
+Rollback is not a plan — it is a reflex. The moment something goes wrong, the system reverts without waiting for human intervention.
+
+### Rollback Triggers
+
+| Trigger | Detection | Action |
+|---------|-----------|--------|
+| Error rate spike | 5xx rate exceeds 1% for 2 minutes | Instant rollback |
+| Latency regression | p99 exceeds 2x baseline | Instant rollback |
+| Health check failure | Pod fails readiness probe | Scale down canary |
+| OOM kills | Container killed by OOM killer | Instant rollback |
+| Manual | Human clicks "rollback" button | Instant rollback |
+
+### Rollback Strategy with Container Images
+
+The most reliable rollback in a container-based system is **redeploying the previous image tag**. The old image is already in your registry — no rebuild, no waiting, no uncertainty.
+
+```bash
+# Instant rollback — redeploy previous version
+kubectl set image deployment/my-app \
+  my-app=registry.example.com/my-app:abc1234 \  # Previous working tag
+  --record
+```
+
+**Never revert the Git commit and rebuild.** Rebuilding produces a different image (timestamps, build IDs differ). The old image in the registry is the exact artifact that was running before — deterministic and instant.
+
+## Practical Example — Full Advanced Pipeline
+
+```yaml
+# .github/workflows/advanced-pipeline.yml
+name: Advanced CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        suite: [unit, integration, e2e]
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm run test:${{ matrix.suite }}
+
+  security:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+  deploy-staging:
+    needs: [test, security]
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - run: kubectl set image deployment/my-app my-app=ghcr.io/org/my-app:${{ github.sha }}
+
+  approval:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production-approval  # Requires manual approval in GitHub
+    steps:
+      - run: echo "Production deployment approved"
+
+  deploy-production:
+    needs: approval
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          # Deploy as canary (5%)
+          kubectl apply -f k8s/canary-rollout.yaml
+          # Monitoring handles analysis and promotion automatically
+```
+
+## Key Takeaways
+
+- **Approval gates** enforce human review for high-risk deployments without blocking routine ones.
+- **Parallel jobs** reduce wall-clock pipeline time from the sum of all stages to the duration of the slowest.
+- **Blue/green** gives instant cutover and rollback at 2x infrastructure cost; **canary** gives gradual exposure at minimal cost.
+- **Automated canary analysis** (Argo Rollouts, Flagger, Kayenta) replaces human dashboard-watching with statistical comparison.
+- **Rollback is a reflex**, not a plan — redeploy the previous immutable image tag from the registry.
+
+<Diagram config={advancedCicdPipeline} />

@@ -19,6 +19,9 @@ import { rbacNetworkPolicies } from "./diagrams/rbac-network-policies";
 import { helmCharts } from "./diagrams/helm-charts";
 import { monitoringObservability } from "./diagrams/monitoring-observability";
 import { securityBestPractices } from "./diagrams/security-best-practices";
+import { advancedCicdPipeline } from "./diagrams/advanced-cicd-pipeline";
+import { cicdAtScaleNetflixMeta } from "./diagrams/cicd-at-scale-netflix-meta";
+import { containerOrchestrationScale } from "./diagrams/container-orchestration-scale";
 import { dockerPsChallenge } from "./challenges/docker-ps-challenge";
 import { dockerBasicsQuiz } from "./quizzes/docker-basics-quiz";
 import { placementQuiz } from "./quizzes/placement-quiz";
@@ -41,6 +44,9 @@ import { cicdQuiz } from "./quizzes/cicd-quiz";
 import { helmQuiz } from "./quizzes/helm-quiz";
 import { monitoringQuiz } from "./quizzes/monitoring-quiz";
 import { securityBestPracticesQuiz } from "./quizzes/security-best-practices-quiz";
+import { advancedCicdQuiz } from "./quizzes/advanced-cicd-quiz";
+import { cicdAtScaleQuiz } from "./quizzes/cicd-at-scale-quiz";
+import { containerOrchestrationScaleQuiz } from "./quizzes/container-orchestration-scale-quiz";
 
 const diagramMap: Record<string, DiagramConfig> = {
   "docker-container-basics": dockerContainerBasics,
@@ -63,6 +69,9 @@ const diagramMap: Record<string, DiagramConfig> = {
   "helm-charts": helmCharts,
   "monitoring-observability": monitoringObservability,
   "security-best-practices": securityBestPractices,
+  "advanced-cicd-pipeline": advancedCicdPipeline,
+  "cicd-at-scale-netflix-meta": cicdAtScaleNetflixMeta,
+  "container-orchestration-scale": containerOrchestrationScale,
 };
 
 const challengeMap: Record<string, Challenge> = {
@@ -91,6 +100,9 @@ const quizMap: Record<string, Quiz> = {
   "helm-quiz": helmQuiz,
   "monitoring-quiz": monitoringQuiz,
   "security-best-practices-quiz": securityBestPracticesQuiz,
+  "advanced-cicd-quiz": advancedCicdQuiz,
+  "cicd-at-scale-quiz": cicdAtScaleQuiz,
+  "container-orchestration-scale-quiz": containerOrchestrationScaleQuiz,
 };
 
 export function getDiagram(id: string): DiagramConfig | undefined {

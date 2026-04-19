@@ -1,0 +1,431 @@
+---
+title: "Container Orchestration at Scale"
+module: devops
+level: advanced
+duration: "50 min"
+diagram: container-orchestration-scale
+description: "Multi-cluster Kubernetes, service mesh, autoscaling, ConfigMaps, Secrets, and disaster recovery patterns."
+order: 7
+---
+
+# Container Orchestration at Scale
+
+Running a single Kubernetes cluster with a few services is one thing. Running multiple clusters across regions, connecting them with a service mesh, autoscaling workloads under load, managing configuration and secrets, and ensuring disaster recovery — that is orchestration at scale. This lesson covers the patterns and tools that make production Kubernetes reliable at multi-cluster, multi-region scale.
+
+## Multi-Cluster Kubernetes
+
+A single cluster is a single point of failure. If the cluster goes down, everything goes down. Production systems run multiple clusters across regions for high availability and disaster recovery.
+
+### Active-Passive Architecture
+
+```
+┌─────────────────────────┐        ┌─────────────────────────┐
+│  Primary Cluster         │        │  DR Cluster              │
+│  (us-east-1)            │        │  (eu-west-1)             │
+│                          │        │                          │
+│  ┌──────┐  ┌──────┐    │        │  ┌──────┐  ┌──────┐    │
+│  │ Pod  │  │ Pod  │    │        │  │ Pod  │  │ Pod  │    │
+│  └──────┘  └──────┘    │        │  └──────┘  └──────┘    │
+│         100% traffic     │        │         0% traffic       │
+└─────────────────────────┘        └─────────────────────────┘
+         │                                     ▲
+         │  Failure detected                    │
+         └──────────────────────────────────────┘
+              DNS failover (Route53)
+```
+
+- **Primary** handles all traffic normally.
+- **DR (Disaster Recovery)** cluster stays warm but receives no traffic.
+- **Failover:** DNS (Route53, Cloudflare) detects primary failure and switches traffic to DR.
+- **Recovery time:** Minutes (DNS TTL) to seconds (health-check-based routing).
+
+### Active-Active Architecture
+
+```
+┌─────────────────────────┐        ┌─────────────────────────┐
+│  Cluster A               │        │  Cluster B               │
+│  (us-east-1)            │        │  (eu-west-1)             │
+│                          │        │                          │
+│  ┌──────┐  ┌──────┐    │        │  ┌──────┐  ┌──────┐    │
+│  │ Pod  │  │ Pod  │    │        │  │ Pod  │  │ Pod  │    │
+│  └──────┘  └──────┘    │        │  └──────┘  └──────┘    │
+│         60% traffic       │        │         40% traffic       │
+└─────────────────────────┘        └─────────────────────────┘
+         ▲                                     ▲
+         │           GeoDNS routing             │
+         └─────────────────────────────────────┘
+```
+
+- **Both clusters serve traffic simultaneously.**
+- **GeoDNS** routes users to the nearest cluster (latency-based routing).
+- **Benefits:** Lower latency (users hit nearest region), higher availability (either cluster can absorb the other's traffic).
+- **Cost:** Double the infrastructure + cross-cluster data replication complexity.
+
+### Federation and Control Plane
+
+For managing multiple clusters, consider a **federated control plane**:
+
+- **KubeFed** (Kubernetes Federation) — Synchronizes resources across clusters.
+- **Karmada** — Multi-cluster orchestration with scheduling policies.
+- **Liqo** — Peer-to-peer cluster sharing without a central control plane.
+
+## Service Mesh
+
+When you have services distributed across multiple clusters, they need to communicate securely and reliably. A **service mesh** provides this as infrastructure — no code changes required.
+
+### What a Service Mesh Provides
+
+| Capability | Without Service Mesh | With Service Mesh |
+|-----------|---------------------|-------------------|
+| mTLS encryption | Each service implements TLS | Automatic mTLS between all services |
+| Traffic management | Service-specific retry logic | Centralized retries, circuit breaking, timeouts |
+| Observability | Each service adds tracing | Automatic distributed tracing |
+| Cross-cluster routing | Custom DNS + load balancing | Transparent cross-cluster communication |
+| Canary routing | Custom header-based routing | Weighted traffic splitting by configuration |
+
+### Istio Architecture
+
+Istio is the most widely used service mesh. It uses a **sidecar proxy** pattern:
+
+```
+┌──────────────────────────────────────┐
+│  Pod                                  │
+│                                       │
+│  ┌─────────┐      ┌───────────────┐  │
+│  │  App     │ ◄──► │  Envoy Proxy  │  │
+│  │ Container│      │  (sidecar)    │  │
+│  └─────────┘      └───────────────┘  │
+│                         │              │
+└─────────────────────────┼──────────────┘
+                          │
+                    ┌─────┴─────┐
+                    │  Istiod    │  ◄── Control plane
+                    │  (istiod)  │      (config, certificates)
+                    └───────────┘
+```
+
+- **Envoy sidecar** intercepts all network traffic in/out of the application container.
+- **Istiod** (control plane) manages configuration, certificate rotation, and policy enforcement.
+- **mTLS:** Every connection between services is encrypted. Certificates are automatically rotated.
+- **Traffic management:** Istio can route requests across clusters, split traffic for canary deploys, and implement circuit breakers.
+
+### Cross-Cluster Communication
+
+With a service mesh, services in Cluster A can call services in Cluster B as if they were local:
+
+```yaml
+# ServiceEntry for cross-cluster discovery
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: api-svc-cluster-b
+spec:
+  hosts:
+  - api-svc.cluster-b.global
+  location: MESH_INTERNAL
+  ports:
+  - number: 8080
+    name: http
+  resolution: DNS
+  endpoints:
+  - address: ingress.cluster-b.example.com
+    ports:
+      http: 15443  # Istio cross-cluster port
+```
+
+The application code does not change. It calls `api-svc.cluster-b.global` and Istio handles routing, encryption, and load balancing across clusters.
+
+## Horizontal Pod Autoscaler (HPA)
+
+The HPA automatically scales the number of pod replicas based on observed metrics. This is how you handle traffic spikes without manual intervention.
+
+### How HPA Works
+
+```
+Metrics Server ──► HPA Controller ──► Deployment Controller ──► New Pods
+      │                  │                                           │
+  Collects CPU/    Compares against                                  │
+  memory data     target threshold                                   │
+      │                  │                                           │
+  e.g., 85% CPU    Target: 70% CPU                              Scale from
+                  Current: 85%                                  4 → 6 replicas
+                  Decision: SCALE UP
+```
+
+**HPA configuration:**
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-svc
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-svc
+  minReplicas: 2        # Never go below 2 (high availability)
+  maxReplicas: 20       # Never go above 20 (cost control)
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70   # Target 70% CPU utilization
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80   # Target 80% memory utilization
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # Wait 5 min before scaling down
+      policies:
+      - type: Percent
+        value: 10          # Remove max 10% of pods per minute
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0    # Scale up immediately
+      policies:
+      - type: Percent
+        value: 100         # Can double pod count
+        periodSeconds: 60
+      - type: Pods
+        value: 4           # Or add max 4 pods at once
+        periodSeconds: 60
+      selectPolicy: Max     # Use whichever policy adds more pods
+```
+
+**Key behaviors:**
+- **Scale up is fast** (immediate, aggressive) — you want to handle traffic spikes quickly.
+- **Scale down is slow** (5-minute stabilization, 10% max reduction) — you do not want flapping (scale up → scale down → scale up) during brief metric dips.
+
+### Custom Metrics
+
+HPA can scale on custom metrics beyond CPU/memory:
+
+```yaml
+metrics:
+- type: Pods
+  pods:
+    metric:
+      name: http_requests_per_second
+    target:
+      type: AverageValue
+      averageValue: 1000   # Target 1000 rps per pod
+```
+
+This requires the **Prometheus Adapter** to expose custom metrics from Prometheus to the Kubernetes metrics API.
+
+## ConfigMaps and Secrets
+
+### ConfigMaps: Non-Sensitive Configuration
+
+ConfigMaps store configuration data that is not secret — log levels, feature flags, API endpoints, timeouts:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  LOG_LEVEL: "info"
+  MAX_CONNECTIONS: "100"
+  CACHE_TTL: "300s"
+  API_TIMEOUT: "30s"
+```
+
+**Mounting as environment variables:**
+
+```yaml
+spec:
+  containers:
+  - name: api
+    envFrom:
+    - configMapRef:
+        name: app-config
+```
+
+**Mounting as files:**
+
+```yaml
+spec:
+  containers:
+  - name: api
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/config
+  volumes:
+  - name: config-volume
+    configMap:
+      name: app-config
+```
+
+### Secrets: Sensitive Data
+
+Secrets store credentials, API keys, and certificates. They are base64-encoded and can be restricted with RBAC:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-creds
+type: Opaque
+data:
+  POSTGRES_PASSWORD: cGFzc3dvcmQxMjM=   # base64-encoded
+  API_KEY: YWJjZGVmZ2hpams=             # base64-encoded
+```
+
+**Important:** Base64 encoding is NOT encryption. By default, Secrets are stored in etcd in base64. For production:
+
+1. **Enable encryption at rest** — Configure Kubernetes to encrypt Secrets in etcd.
+2. **Use external secret managers** — AWS Secrets Manager, HashiCorp Vault, or Azure Key Vault.
+3. **Restrict RBAC** — Only allow specific service accounts to read specific Secrets.
+4. **Use Sealed Secrets** or **External Secrets Operator** to manage Secrets via GitOps.
+
+### ConfigMap vs Secret Comparison
+
+| Feature | ConfigMap | Secret |
+|---------|-----------|--------|
+| Data type | Non-sensitive | Sensitive (passwords, keys) |
+| Encoding | Plain text | Base64 |
+| Encryption at rest | No | Configurable (requires setup) |
+| RBAC | Default access | Restricted access recommended |
+| Mount options | Env vars, files, volumes | Env vars, files, volumes |
+| Size limit | 1 MiB | 1 MiB |
+| Best practice | Feature flags, endpoints | Credentials, certificates |
+
+## Persistent Volumes
+
+Container filesystems are ephemeral — when a pod restarts, all data on the container's filesystem is lost. For stateful workloads (databases, message queues), you need **persistent storage** that outlives pod lifecycles.
+
+### The PV/PVC Pattern
+
+```
+┌─────────────────────────────────────────────────┐
+│  Kubernetes Cluster                              │
+│                                                  │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐  │
+│  │  Pod      │    │  PVC     │    │  PV       │  │
+│  │ (db-pod) │───►│ db-data  │───►│ aws-ebs   │  │
+│  └──────────┘    └──────────┘    └──────────┘  │
+│                                                  │
+│  Pod uses PVC    PVC binds to    PV is actual    │
+│  as volume       a PV           storage (EBS)   │
+└─────────────────────────────────────────────────┘
+```
+
+**PersistentVolume (PV):** Represents actual storage (AWS EBS, GCE Persistent Disk, NFS, etc.). Created by administrators or dynamically provisioned.
+
+**PersistentVolumeClaim (PVC):** A request for storage by a pod. Kubernetes matches PVCs to PVs based on size, access mode, and storage class.
+
+```yaml
+# PersistentVolumeClaim
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-data
+spec:
+  accessModes:
+  - ReadWriteOnce        # Single node read/write
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: standard  # Binds to matching StorageClass
+```
+
+```yaml
+# Pod using the PVC
+apiVersion: v1
+kind: Pod
+metadata:
+  name: db-pod
+spec:
+  containers:
+  - name: postgres
+    image: postgres:16
+    volumeMounts:
+    - name: data
+      mountPath: /var/lib/postgresql/data
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: db-data
+```
+
+**Why this matters:** When the db-pod is deleted and recreated (by a Deployment or StatefulSet), the PVC rebinds to the same PV. Data survives pod restarts, node failures, and cluster upgrades.
+
+### StatefulSets for Stateful Workloads
+
+For databases and other stateful services, use **StatefulSets** instead of Deployments:
+
+- **Stable network identity** — Pods get predictable names: `db-0`, `db-1`, `db-2`.
+- **Stable persistent storage** — Each pod gets its own PVC that survives pod recreation.
+- **Ordered deployment** — Pods are created in order (0, 1, 2) and terminated in reverse order.
+- **Ordered rolling updates** — Updates proceed one pod at a time, ensuring availability.
+
+## Disaster Recovery Patterns
+
+### Database Replication
+
+For multi-cluster DR, databases must replicate across regions:
+
+```
+Cluster A (us-east-1)                    Cluster B (eu-west-1)
+┌──────────────┐                         ┌──────────────┐
+│  PostgreSQL   │ ── Async replication ──► │  PostgreSQL   │
+│  (primary)    │                         │  (read replica)│
+└──────────────┘                         └──────────────┘
+       │                                        │
+  Read/Write                              Read-only
+  (normal operation)                      (DR: can be promoted)
+```
+
+- **Async replication:** Primary writes are replicated to the DR cluster asynchronously. Short replication lag (typically < 1 second).
+- **Promotion:** On failover, the DR replica is promoted to primary. Some writes during the replication lag window may be lost.
+- **Sync replication:** Zero data loss but adds latency (every write must be confirmed by both regions). Use for critical financial data.
+
+### Backup and Recovery
+
+Beyond replication, regular backups provide an additional safety net:
+
+```yaml
+# CronJob for PostgreSQL backups
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup
+spec:
+  schedule: "0 2 * * *"    # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup
+            image: postgres:16
+            command:
+            - /bin/sh
+            - -c
+            - |
+              pg_dump -h $DB_HOST -U $DB_USER $DB_NAME | \
+              gzip > /backups/db-$(date +%Y%m%d).sql.gz && \
+              aws s3 cp /backups/db-$(date +%Y%m%d).sql.gz \
+                s3://my-backups/postgres/
+          restartPolicy: OnFailure
+```
+
+## Key Takeaways
+
+- **Multi-cluster** is essential for high availability — a single cluster is a single point of failure.
+- **Active-passive** is simpler (DR cluster on standby); **active-active** provides lower latency and higher availability at higher complexity.
+- **Service mesh** (Istio) provides mTLS, traffic management, and cross-cluster communication without code changes.
+- **HPA** scales pods automatically on CPU/memory/custom metrics — scale up aggressively, scale down conservatively.
+- **ConfigMaps** are for non-sensitive config; **Secrets** are for credentials with base64 encoding and RBAC restrictions.
+- **PV/PVC** decouples storage from pod lifecycle — data survives pod restarts.
+- **StatefulSets** provide stable identity and persistent storage for stateful workloads.
+- **Database replication** (async or sync) across regions is the foundation of DR for stateful services.
+
+<Diagram config={containerOrchestrationScale} />
