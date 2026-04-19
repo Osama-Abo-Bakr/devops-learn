@@ -51,10 +51,16 @@ import { advancedCicdQuiz } from "./quizzes/advanced-cicd-quiz";
 import { cicdAtScaleQuiz } from "./quizzes/cicd-at-scale-quiz";
 import { containerOrchestrationScaleQuiz } from "./quizzes/container-orchestration-scale-quiz";
 import { k8sStatefulsetsJobsQuiz } from "./quizzes/k8s-statefulsets-jobs-quiz";
+import { devopsFundamentals } from "./diagrams/devops-fundamentals";
 import { gitopsArgocd } from "./diagrams/gitops-argocd";
 import { infrastructureAsCode } from "./diagrams/infrastructure-as-code";
+import { cicdBasics } from "./diagrams/cicd-basics";
+import { versionControlOps } from "./diagrams/version-control-ops";
+import { devopsFundamentalsQuiz } from "./quizzes/devops-fundamentals-quiz";
 import { gitopsArgocdQuiz } from "./quizzes/gitops-argocd-quiz";
 import { infrastructureAsCodeQuiz } from "./quizzes/infrastructure-as-code-quiz";
+import { cicdBasicsQuiz } from "./quizzes/cicd-basics-quiz";
+import { versionControlOpsQuiz } from "./quizzes/version-control-ops-quiz";
 
 const diagramMap: Record<string, DiagramConfig> = {
   "docker-container-basics": dockerContainerBasics,
@@ -69,6 +75,7 @@ const diagramMap: Record<string, DiagramConfig> = {
   "k8s-pods-deployments": k8sPodsDeployments,
   "k8s-services-ingress": k8sServicesIngress,
   "k8s-configmaps-secrets": k8sConfigmapsSecrets,
+  "devops-fundamentals": devopsFundamentals,
   "devops-cicd-pipeline": devopsCicdPipeline,
   "yaml-basics": yamlBasics,
   "compose-env-scaling": composeEnvScaling,
@@ -84,6 +91,8 @@ const diagramMap: Record<string, DiagramConfig> = {
   "k8s-statefulsets-jobs": k8sStatefulsetsJobs,
   "gitops-argocd": gitopsArgocd,
   "infrastructure-as-code": infrastructureAsCode,
+  "cicd-basics": cicdBasics,
+  "version-control-ops": versionControlOps,
 };
 
 const challengeMap: Record<string, Challenge> = {
@@ -109,6 +118,7 @@ const quizMap: Record<string, Quiz> = {
   "k8s-configmaps-secrets-quiz": k8sConfigmapsSecretsQuiz,
   "hpa-scaling-quiz": hpaScalingQuiz,
   "rbac-network-policies-quiz": rbacNetworkPoliciesQuiz,
+  "devops-fundamentals-quiz": devopsFundamentalsQuiz,
   "cicd-quiz": cicdQuiz,
   "helm-quiz": helmQuiz,
   "monitoring-quiz": monitoringQuiz,
@@ -119,7 +129,11 @@ const quizMap: Record<string, Quiz> = {
   "k8s-statefulsets-jobs-quiz": k8sStatefulsetsJobsQuiz,
   "gitops-argocd-quiz": gitopsArgocdQuiz,
   "infrastructure-as-code-quiz": infrastructureAsCodeQuiz,
+  "cicd-basics-quiz": cicdBasicsQuiz,
+  "version-control-ops-quiz": versionControlOpsQuiz,
 };
+
+export { diagramMap, challengeMap, quizMap };
 
 export function getDiagram(id: string): DiagramConfig | undefined {
   return diagramMap[id];

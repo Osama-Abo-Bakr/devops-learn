@@ -224,5 +224,12 @@ export const dockerTroubleshooting: DiagramConfig = {
       data: { type: "pipeline", label: "verified" },
     },
   ],
+  steps: [
+    { nodeIds: ["problem-detected"], edgeIds: [], label: "Problem Detected" },
+    { nodeIds: ["build-failure", "runtime-crash", "network-issue"], edgeIds: ["e-problem-build", "e-problem-runtime", "e-problem-network"], label: "Classify the Problem" },
+    { nodeIds: ["docker-logs", "docker-inspect", "docker-network-inspect"], edgeIds: ["e-build-logs", "e-runtime-inspect", "e-network-inspect"], label: "Run Diagnostic Tools" },
+    { nodeIds: ["fix-dockerfile", "adjust-resources", "fix-network-config"], edgeIds: ["e-logs-fix", "e-inspect-adjust", "e-netinspect-fix"], label: "Apply the Fix" },
+    { nodeIds: ["container-healthy"], edgeIds: ["e-fix-healthy", "e-adjust-healthy", "e-netfix-healthy"], label: "Container Healthy" },
+  ],
   d3Variant: "pipeline",
 };

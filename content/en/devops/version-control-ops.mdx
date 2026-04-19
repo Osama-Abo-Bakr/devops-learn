@@ -1,0 +1,164 @@
+---
+title: "Version Control for Ops"
+module: devops
+level: beginner
+duration: "25 min"
+diagram: version-control-ops
+description: "Apply Git workflows to operations: infrastructure repos, branching strategies, and Git-based deployments."
+---
+
+# Version Control for Ops
+
+If a server configuration breaks at 3 AM, the first question is always the same: what changed? Without version control, the answer is "someone logged in and edited a file, and we have no record of what they did." With version control, you get a precise audit trail: who changed what, when, and why (the commit message). You can roll back any change instantly. You can see the full history of every configuration file.
+
+Version control is not just for application code. Operations teams manage configs, scripts, pipeline definitions, Kubernetes manifests, Terraform files, and runbooks. All of these belong in Git. If it defines how your infrastructure works, it should be tracked, reviewed, and deployed through the same process as code.
+
+## Why Ops Needs Version Control
+
+Three reasons version control is essential for operations:
+
+- **Audit trail** — Every change has a record: who made it, when, and why. During an incident, you can trace the exact commit that introduced a problem and roll back with `git revert`.
+- **Rollback** — If a deployment breaks production, you can revert to any previous state with a single command. No more manual reconstruction from memory.
+- **Collaboration** — Multiple engineers can work on infrastructure changes simultaneously through branches and pull requests, without stepping on each other's work.
+
+Without version control, changes are made directly on servers. There is no history, no review, and no easy way to undo a mistake. This is the "snowflake server" anti-pattern — each server is a unique, fragile configuration that nobody can reproduce.
+
+## Git Basics Recap
+
+If you are new to Git, here are the commands you will use every day:
+
+- **`git add`** — Stage changes for the next commit. Selects which modifications you want to include.
+- **`git commit`** — Record staged changes with a descriptive message. This creates a permanent snapshot in your local repository.
+- **`git push`** — Send your commits to a remote repository (GitHub, GitLab). This makes your changes visible to the team.
+- **`git pull`** — Fetch and merge changes from the remote repository. Do this before starting new work to avoid conflicts.
+- **`git branch`** — Create, list, or switch between branches. Branches isolate work-in-progress from the main codebase.
+- **`git merge`** — Combine changes from one branch into another. This is how feature branches return their work to main.
+
+The daily workflow:
+
+```
+git pull                # Get latest changes
+git checkout -b fix/timeout-config   # Create a feature branch
+# ... make changes ...
+git add .              # Stage all changes
+git commit -m "fix: increase timeout to 30s"
+git push origin fix/timeout-config   # Push to remote
+# Open a pull request for review
+```
+
+## Branching Strategies
+
+How your team organizes branches has a big impact on how often you integrate and how fast changes reach production.
+
+### GitFlow
+
+GitFlow uses several long-lived branches:
+
+- **`main`** — Production-ready code. Only merged from release or hotfix branches.
+- **`develop`** — Integration branch where feature branches merge.
+- **`feature/*`** — Individual features, branched from develop.
+- **`release/*`** — Preparation for a release, branched from develop.
+- **`hotfix/*`** — Urgent production fixes, branched from main.
+
+GitFlow provides clear separation between development, release, and production code. However, the multiple long-lived branches mean changes take longer to reach production, and merge conflicts can accumulate.
+
+### Trunk-Based Development
+
+Trunk-based development uses a single main branch (the trunk) and very short-lived feature branches:
+
+- Developers create feature branches, but they merge back to main within hours, not days.
+- Feature flags control incomplete functionality in production.
+- Release branches are created from main when needed, not as a separate long-lived branch.
+
+This approach aligns best with CI/CD. Changes reach main quickly, which means they are tested and deployed quickly. The risk of merge conflicts is dramatically reduced.
+
+For most modern DevOps teams, trunk-based development with short-lived feature branches is the recommended approach.
+
+## Infrastructure as Repo
+
+The principle is simple: **everything that defines your infrastructure should be in Git.** This includes:
+
+- **Configuration files** — Server configs, nginx.conf, environment variables (non-secret).
+- **Deployment manifests** — Kubernetes YAML, Docker Compose files.
+- **Infrastructure as Code** — Terraform, Pulumi, CloudFormation templates.
+- **CI/CD pipeline definitions** — `.github/workflows/`, `.gitlab-ci.yml`, `Jenkinsfile`.
+- **Scripts** — Deployment scripts, runbooks, automation tasks.
+- **Documentation** — Architecture decisions, onboarding guides, incident response procedures.
+
+When everything is in Git, you get:
+
+1. **Reviewability** — Every change goes through a pull request. Infrastructure changes are reviewed just like application code.
+2. **Reproducibility** — Any environment can be rebuilt from the repository. No "special snowflake" servers.
+3. **Auditability** — `git log` and `git blame` show the complete history of every file.
+4. **Rollback** — `git revert` undoes any change in seconds.
+
+If it is not in Git, it does not exist. If someone makes a change on a server directly, that change is invisible, unreviewable, and will be overwritten by the next deployment.
+
+## PR-Based Review
+
+Pull requests (or merge requests in GitLab) are the mechanism for reviewing changes before they reach main:
+
+1. **Create a branch** — Isolate your work in a feature branch.
+2. **Push and open a PR** — Describe what you changed and why.
+3. **CI runs automatically** — The pipeline builds, tests, and scans your changes.
+4. **Team review** — Reviewers examine the diff, ask questions, and suggest improvements.
+5. **Address feedback** — Push follow-up commits or make requested changes.
+6. **Merge** — After approval and passing CI, the PR merges to main.
+
+For infrastructure changes, the PR review process is especially important. A misconfigured timeout, a wrong port, or a misplaced security group can take down production. Review catches these issues before they reach live systems.
+
+## Commit Conventions
+
+Good commit messages make the audit trail useful. Conventional commits provide a structured format:
+
+```
+type(scope): description
+
+[optional body]
+
+[optional footer]
+```
+
+Common types:
+
+- **feat** — A new feature (`feat(monitoring): add Prometheus scrape config`)
+- **fix** — A bug fix (`fix(nginx): increase worker_connections to 4096`)
+- **docs** — Documentation changes (`docs(runbook): add postgres recovery steps`)
+- **chore** — Maintenance tasks (`chore(deps): update Terraform provider to v4.0`)
+- **refactor** — Code restructuring without behavior change
+
+Semantic versioning works alongside conventional commits. Each commit type maps to a version bump: `feat` increments the minor version, `fix` increments the patch version, and `BREAKING CHANGE` increments the major version.
+
+## GitOps Preview
+
+**GitOps** takes "infrastructure as repo" to its logical conclusion: Git is the single source of truth for your entire system's desired state.
+
+How it works:
+
+1. **Declarative** — You describe the desired state of your infrastructure in Git (Kubernetes manifests, Helm values, Terraform configs).
+2. **Versioned** — Every change is a Git commit with a full history.
+3. **Automated sync** — A reconciliation loop (ArgoCD, Flux) watches the Git repository and continuously syncs the actual state to match the desired state.
+
+The key insight: **you never make changes directly on the cluster.** If you want to change production, you change Git. The automation handles the rest.
+
+If someone makes a manual change on the cluster, the reconciliation loop detects the drift and either alerts you or automatically reverts it. This eliminates configuration drift — the silent killer of production reliability.
+
+```
+Developer pushes change
+        │
+        ▼
+  Git repository (source of truth)
+        │
+        ▼
+  ArgoCD / Flux detects change
+        │
+        ▼
+  Syncs desired state → Actual state
+        │
+        ▼
+  Production matches Git
+```
+
+GitOps provides the strongest guarantee in operations: **if it is not in Git, it does not exist in production.** This makes audits trivial, rollbacks instant, and configuration drift impossible.
+
+<Diagram config={versionControlOps} />

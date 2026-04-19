@@ -53,4 +53,11 @@ export const advancedCicdPipeline: DiagramConfig = {
     { id: "e-prod-canary", source: "prod-deploy", target: "canary", data: { type: "animatedDataFlow", label: "canary monitoring" } },
     { id: "e-git-rollback", source: "git-repo", target: "rollback", data: { type: "pipeline", label: "revert commit" } },
   ],
+  steps: [
+    { nodeIds: ["git-repo", "webhook", "build-agent"], edgeIds: ["e-git-webhook", "e-webhook-build"], label: "Source & Build" },
+    { nodeIds: ["unit-test", "integ-test", "sec-scan"], edgeIds: ["e-build-unit", "e-build-integ", "e-build-sec"], label: "Test & Security" },
+    { nodeIds: ["registry", "approval"], edgeIds: ["e-unit-registry", "e-integ-registry", "e-sec-registry", "e-registry-approval"], label: "Registry & Approval" },
+    { nodeIds: ["staging-deploy", "staging-svc", "gz-staging"], edgeIds: ["e-approval-staging", "e-staging-svc", "e-staging-smoke"], label: "Staging" },
+    { nodeIds: ["canary", "prod-deploy", "prod-svc", "rollback", "ingress-prod", "gz-prod"], edgeIds: ["e-approval-canary", "e-canary-prod", "e-prod-svc", "e-ingress-prod", "e-canary-rollback", "e-rollback-prod", "e-rollback-registry", "e-prod-canary", "e-git-rollback"], label: "Canary & Production" },
+  ],
 };

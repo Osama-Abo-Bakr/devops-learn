@@ -257,8 +257,44 @@ const modules: Record<Topic, Module> = {
     description:
       "CI/CD pipelines, Helm charts, monitoring, and security best practices.",
     icon: "devops",
-    levels: ["intermediate", "advanced"],
+    levels: ["beginner", "intermediate", "advanced"],
     lessons: [
+      {
+        slug: "devops-fundamentals",
+        title: "DevOps Fundamentals",
+        module: "devops",
+        level: "beginner",
+        duration: "30 min",
+        diagram: "devops-fundamentals",
+        quiz: "devops-fundamentals-quiz",
+        description:
+          "Understand DevOps culture, principles, and the journey from manual ops to automated delivery.",
+        order: 1,
+      },
+      {
+        slug: "cicd-basics",
+        title: "CI/CD Basics",
+        module: "devops",
+        level: "beginner",
+        duration: "25 min",
+        diagram: "cicd-basics",
+        quiz: "cicd-basics-quiz",
+        description:
+          "Learn continuous integration and continuous delivery from scratch: pipelines, stages, and automation.",
+        order: 2,
+      },
+      {
+        slug: "version-control-ops",
+        title: "Version Control for Ops",
+        module: "devops",
+        level: "beginner",
+        duration: "25 min",
+        diagram: "version-control-ops",
+        quiz: "version-control-ops-quiz",
+        description:
+          "Apply Git workflows to operations: infrastructure repos, branching strategies, and Git-based deployments.",
+        order: 3,
+      },
       {
         slug: "cicd-containers",
         title: "CI/CD with Containers",
@@ -269,7 +305,7 @@ const modules: Record<Topic, Module> = {
         quiz: "cicd-quiz",
         description:
           "Build and deploy container images in CI/CD pipelines with GitHub Actions and GitLab CI.",
-        order: 1,
+        order: 4,
       },
       {
         slug: "helm-charts",
@@ -281,7 +317,7 @@ const modules: Record<Topic, Module> = {
         quiz: "helm-quiz",
         description:
           "Package, template, and deploy Kubernetes applications with Helm.",
-        order: 2,
+        order: 5,
       },
       {
         slug: "monitoring-observability",
@@ -293,7 +329,7 @@ const modules: Record<Topic, Module> = {
         quiz: "monitoring-quiz",
         description:
           "Set up Prometheus metrics, Grafana dashboards, and distributed tracing.",
-        order: 3,
+        order: 6,
       },
       {
         slug: "security-best-practices",
@@ -305,7 +341,7 @@ const modules: Record<Topic, Module> = {
         quiz: "security-best-practices-quiz",
         description:
           "Image signing, vulnerability scanning, runtime security, and supply chain hardening.",
-        order: 4,
+        order: 7,
       },
       {
         slug: "advanced-cicd-pipelines",
@@ -317,7 +353,7 @@ const modules: Record<Topic, Module> = {
         quiz: "advanced-cicd-quiz",
         description:
           "Multi-stage pipelines, canary deployments, blue/green strategies, approval gates, and automated rollback.",
-        order: 5,
+        order: 8,
       },
       {
         slug: "cicd-at-scale-netflix-meta",
@@ -329,7 +365,7 @@ const modules: Record<Topic, Module> = {
         quiz: "cicd-at-scale-quiz",
         description:
           "How Netflix (Spinnaker, Chaos Monkey, Kayenta) and Meta (Buck2, Gatekeeper, FB Trench) deploy at massive scale.",
-        order: 6,
+        order: 9,
       },
       {
         slug: "container-orchestration-scale",
@@ -341,7 +377,7 @@ const modules: Record<Topic, Module> = {
         quiz: "container-orchestration-scale-quiz",
         description:
           "Multi-cluster Kubernetes, service mesh, autoscaling, ConfigMaps, Secrets, and disaster recovery patterns.",
-        order: 7,
+        order: 10,
       },
       {
         slug: "gitops-argocd",
@@ -353,7 +389,7 @@ const modules: Record<Topic, Module> = {
         quiz: "gitops-argocd-quiz",
         description:
           "Declarative GitOps with ArgoCD: sync clusters from Git, handle drift, and manage multi-env deployments.",
-        order: 8,
+        order: 11,
       },
       {
         slug: "infrastructure-as-code",
@@ -365,7 +401,7 @@ const modules: Record<Topic, Module> = {
         quiz: "infrastructure-as-code-quiz",
         description:
           "Manage infrastructure declaratively with Terraform and Pulumi: state, modules, and container infrastructure.",
-        order: 9,
+        order: 12,
       },
     ],
   },

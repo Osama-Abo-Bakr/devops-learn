@@ -1,0 +1,146 @@
+---
+title: "DevOps Fundamentals"
+module: devops
+level: beginner
+duration: "30 min"
+diagram: devops-fundamentals
+description: "Understand DevOps culture, principles, and the journey from manual ops to automated delivery."
+order: 1
+---
+
+# DevOps Fundamentals
+
+DevOps is not a tool. It is not a job title. It is not a team you can hire. DevOps is a culture — a set of shared practices and principles that bring development and operations together to deliver software faster, more reliably, and with less pain. If you have ever waited days for a deployment, been paged at 3 AM for an outage caused by a manual configuration mistake, or watched developers and ops engineers blame each other over a broken release, you have seen the problems DevOps exists to solve.
+
+This lesson covers the fundamentals: what DevOps really means, the principles that drive it, and the lifecycle that turns ideas into running software and back again.
+
+## What is DevOps?
+
+DevOps started as a reaction to a broken model. In traditional organizations, developers write code and throw it over the wall to operations teams, who then deploy it, monitor it, and deal with the fallout when things break. The result is slow releases, finger-pointing during incidents, and a disconnect between the people building software and the people running it.
+
+DevOps replaces this adversarial relationship with collaboration. Developers and operations engineers share responsibility for the entire lifecycle — from planning through production. They use the same tools, the same metrics, and the same automated pipelines. When something breaks in production, the question is not "who did this?" but "how do we fix the system so this cannot happen again?"
+
+The core ideas are simple:
+
+- **Shared ownership** — Developers are on-call. Operators review code. There is no wall to throw things over.
+- **Automation** — If a human does it more than once, a machine should do it instead. Builds, tests, deployments, infrastructure provisioning — all automated.
+- **Fast feedback** — The sooner you know something is broken, the cheaper it is to fix. Automated tests, monitoring, and alerting give you feedback in minutes, not weeks.
+- **Small batches** — Ship small changes frequently instead of big bang releases. Smaller changes mean smaller blast radius and easier rollbacks.
+
+## The CALMS Framework
+
+CALMS is a maturity model for assessing how far along the DevOps journey an organization is. Each letter represents a pillar:
+
+**C — Culture**. This is the foundation. Without a culture of trust, collaboration, and shared responsibility, no amount of tooling will help. DevOps culture means blameless post-mortems, cross-functional teams, and the understanding that failure is a learning opportunity, not a firing offense.
+
+**A — Automation**. Automate everything that is repetitive, error-prone, or slow. Build pipelines, test suites, infrastructure provisioning, configuration management, and deployment processes. Automation is not about replacing people — it is about freeing them to do work that requires judgment and creativity.
+
+**L — Lean**. Borrowed from lean manufacturing: eliminate waste, work in small batches, and optimize for flow. Long-lived feature branches are waste. Manual approval gates that take days are waste. Deploying once a quarter in a release train is waste. Lean means getting changes from commit to production quickly and safely.
+
+**M — Measurement**. You cannot improve what you cannot measure. Track deployment frequency, lead time for changes, mean time to recovery (MTTR), and change failure rate. These DORA metrics tell you whether your DevOps practices are actually working.
+
+**S — Sharing**. Knowledge silos are the enemy. Share runbooks, make dashboards visible, conduct blameless post-mortems openly, and make it easy for anyone to find out what is running where. Shared understanding leads to shared ownership.
+
+## The DevOps Lifecycle
+
+DevOps is not a straight line from code to production. It is a loop — Plan, Code, Build, Test, Release, Deploy, Operate, Monitor, and back to Plan. Each stage feeds the next, and monitoring data flows back into planning to close the cycle.
+
+```
+Plan ──► Code ──► Build ──► Test ──► Release ──► Deploy ──► Operate ──► Monitor ──┐
+  ^                                                                                |
+  └──────────────────────── Feedback Loop ────────────────────────────────────────┘
+```
+
+- **Plan** — Define what to build. Prioritize work based on user feedback, incident data, and business goals.
+- **Code** — Implement features and fixes. Use version control, branching strategies, and code reviews.
+- **Build** — Compile source code, resolve dependencies, and produce an artifact. In container workflows, this is the `docker build` step.
+- **Test** — Run automated unit, integration, and end-to-end tests. Fast tests catch bugs before they leave the developer's machine.
+- **Release** — Package the tested artifact, tag it with a version, and make it available for deployment. The release is ready but not yet live.
+- **Deploy** — Push the release to the target environment. Automated deployments reduce risk and make rollbacks trivial.
+- **Operate** — Run the application in production. Handle scaling, configuration, incident response, and day-to-day maintenance.
+- **Monitor** — Collect metrics, logs, and traces. Observe system health, user behavior, and error rates. This data feeds back into planning.
+
+The loop never stops. Every deployment generates new monitoring data, which informs the next planning cycle, which drives the next set of code changes.
+
+## Continuous Integration
+
+Continuous Integration (CI) means developers merge their changes into a shared branch frequently — ideally multiple times per day. Each merge triggers an automated build and test cycle. If the build fails or a test breaks, the team knows immediately and fixes it before it compounds.
+
+CI solves the "integration hell" problem: when developers work in long-lived branches and merge weeks of code at once, conflicts are inevitable and resolution is painful. Frequent merges mean small diffs, fewer conflicts, and fast detection of problems.
+
+A solid CI pipeline:
+
+1. **Checks out the code** from the shared branch.
+2. **Builds the artifact** (compiles, bundles, creates a container image).
+3. **Runs the test suite** — unit tests, integration tests, linting.
+4. **Reports results** — pass or fail, with clear logs for debugging.
+5. **Blocks the merge** if anything fails. Broken main branches are a team-wide emergency.
+
+The faster this cycle runs, the better. A CI pipeline that takes 5 minutes provides tight feedback. One that takes 45 minutes invites context-switching and delays.
+
+## Continuous Delivery vs Deployment
+
+**Continuous Delivery** means every change that passes the automated pipeline is in a release-ready state. You can deploy to production at any time with the push of a button. The key difference from Continuous Deployment is that there is a manual gate — a person decides *when* to release.
+
+**Continuous Deployment** goes one step further: every change that passes all automated checks is deployed to production automatically. No manual approval. No "deploy Fridays." If the tests pass, the code goes live.
+
+Which one you choose depends on your risk tolerance:
+
+| Practice | Manual Gate | Best For |
+|----------|-------------|----------|
+| Continuous Delivery | Yes (human approves production) | Regulated industries, high-risk changes, teams new to automation |
+| Continuous Deployment | No (automated pipeline deploys) | Mature teams, low-risk services, companies that ship dozens of times per day |
+
+Both require the same foundation: a fully automated CI pipeline, comprehensive tests, and the ability to roll back quickly. Continuous Deployment simply removes the human from the deployment decision.
+
+## Automation Mindset
+
+The automation mindset is a principle, not a checklist. It asks: "If a human does this more than once, can a machine do it instead?"
+
+Common targets for automation:
+
+- **Builds** — `docker build`, `npm run build`, `go build`. No one should compile by hand.
+- **Tests** — Unit, integration, end-to-end. Running them manually is unsustainable and unreliable.
+- **Deployments** — Pushing artifacts to servers should be automated, repeatable, and reversible.
+- **Infrastructure** — Servers, networks, and cloud resources should be defined in code (Terraform, Pulumi, Ansible), not configured through a web console.
+- **Configuration** — Application settings, environment variables, and secrets should be managed declaratively, not edited by hand on running servers.
+
+**Infrastructure as Code (IaC)** is a key practice. Instead of clicking through a cloud console to create a server, you write code that describes the desired state:
+
+```hcl
+# Terraform example — infrastructure defined in code
+resource "aws_instance" "app" {
+  ami           = "ami-0c55b159cbfafe1f0"
+  instance_type = "t3.medium"
+  tags = {
+    Name = "app-server"
+    Env  = "production"
+  }
+}
+```
+
+This code is version-controlled, reviewable, and reproducible. If a server dies, you recreate it from the same code. No typos, no configuration drift, no "works on my machine" surprises.
+
+## Collaboration and Feedback Loops
+
+DevOps is built on collaboration and feedback. Without them, automation is just faster silos.
+
+**Collaboration** means:
+
+- **Shared on-call** — Developers and operators share pager duty. If you built it, you run it.
+- **Blameless post-mortems** — When incidents happen, the focus is on systemic causes, not individual blame. "What failed in our system?" not "who broke it?"
+- **Cross-functional teams** — Teams that can design, build, test, deploy, and operate a service end-to-end, without hand-offs.
+- **Shared tools and visibility** — The same dashboards, logs, and runbooks are accessible to everyone.
+
+**Feedback loops** are what make DevOps a cycle instead of a pipeline:
+
+- **Fast feedback** — Automated tests and CI pipelines tell you in minutes if a change breaks something.
+- **Production feedback** — Monitoring, alerting, and observability tools tell you how the system behaves under real load.
+- **User feedback** — Usage data, error reports, and support tickets tell you what matters to users.
+- **Incident feedback** — Post-mortems and retrospectives turn failures into improvements.
+
+The tighter the feedback loop, the faster the team adapts. When monitoring detects a spike in error rates, that data should flow directly into the next sprint's planning. When a deployment causes an issue, the rollback should be automated and the root cause should be documented in a post-mortem. This is how the loop closes and how teams get better over time.
+
+DevOps is not a destination — it is a practice. You do not "finish" DevOps any more than you finish fitness. You keep iterating, measuring, and improving. Start with the biggest pain point, automate it, measure the result, and move to the next one.
+
+<Diagram config={devopsFundamentals} />

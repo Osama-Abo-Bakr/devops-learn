@@ -1,0 +1,156 @@
+---
+title: "CI/CD Basics"
+module: devops
+level: beginner
+duration: "25 min"
+diagram: cicd-basics
+description: "Learn continuous integration and continuous delivery from scratch: pipelines, stages, and automation."
+---
+
+# CI/CD Basics
+
+Every time you push code, something should happen. Not "maybe someone will build it later," not "let us test before the release next month" — something immediate, automated, and reliable. That is the promise of CI/CD. It turns the risky, manual process of going from code commit to running production software into a predictable, repeatable pipeline.
+
+If you have ever spent a Friday afternoon debugging why the build works on one machine but not another, or discovered a bug in production that should have been caught weeks ago, you already understand the problem CI/CD solves.
+
+## What is Continuous Integration?
+
+**Continuous Integration (CI)** is the practice of merging developer code changes into a shared branch frequently — ideally multiple times per day — and running automated builds and tests on every merge.
+
+The key ideas:
+
+- **Frequent merges** — Instead of working in isolation for weeks and merging in a painful "integration hell" session, developers push small changes often. Smaller changes mean smaller conflicts and faster resolution.
+- **Automated builds** — Every push triggers a clean, reproducible build in a shared environment. No more "it works on my machine."
+- **Fast feedback** — The build and test results come back in minutes, not days. Developers fix problems while the context is still fresh.
+
+Without CI, integration is a big event. With CI, it is routine. The goal is to make integration so frequent and painless that it is no longer a risk.
+
+```
+Developer pushes code
+        │
+        ▼
+  CI Server detects push
+        │
+        ▼
+  Checkout code ──► Build ──► Run tests
+        │
+        ▼
+  Pass? ──► Report success
+  Fail? ──► Notify developer immediately
+```
+
+## What is Continuous Delivery and Deployment?
+
+**Continuous Delivery (CD)** extends CI by ensuring that every successful build produces a release-ready artifact that can be deployed to production at any time. A human still clicks "deploy" or approves the promotion to production.
+
+**Continuous Deployment** goes one step further: every change that passes all pipeline stages is automatically deployed to production. No manual gate. This requires high confidence in your automated testing and monitoring.
+
+| Practice | Automated Stages | Production Gate |
+|----------|-----------------|-----------------|
+| CI only | Build + Test | Manual deploy |
+| Continuous Delivery | Build + Test + Deploy to staging | Manual approval for production |
+| Continuous Deployment | Build + Test + Deploy to production | Fully automated |
+
+Most teams start with CI, add Continuous Delivery, and eventually move to Continuous Deployment when their testing and monitoring are mature enough.
+
+## Pipeline Anatomy
+
+A CI/CD pipeline is a series of stages that code passes through on its way to production. Each stage is a gate — if it fails, the pipeline stops and the change does not progress.
+
+```
+┌─────────┐   ┌─────────┐   ┌──────────┐   ┌─────────┐   ┌──────────┐
+│  Build  │──►│  Test   │──►│  Publish  │──►│  Stage  │──►│  Deploy  │
+└─────────┘   └─────────┘   └──────────┘   └─────────┘   └──────────┘
+   stage 1      stage 2       stage 3       stage 4       stage 5
+```
+
+- **Stage** — A logical group of work (Build, Test, Deploy). Stages run sequentially.
+- **Job** — A specific task within a stage (run unit tests, run integration tests). Jobs within a stage can run in parallel.
+- **Artifact** — The immutable output of a stage, passed to the next stage or stored in a registry. For example, a Docker image produced by the Build stage is an artifact consumed by the Deploy stage.
+
+A pipeline is defined in a configuration file committed to the repository:
+
+```yaml
+# .github/workflows/ci.yml
+name: CI Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci
+      - run: npm test
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t my-app:${{ github.sha }} .
+```
+
+## Build and Test Automation
+
+The build stage compiles code, resolves dependencies, and produces an artifact. The test stage validates the artifact.
+
+Common automated checks:
+
+- **Unit tests** — Test individual functions and components in isolation. Fast, run on every push.
+- **Linting** — Enforce code style and catch common errors before they become bugs.
+- **Integration tests** — Test how components work together (API calls, database queries).
+- **Security scanning** — Scan dependencies for known vulnerabilities (CVEs).
+- **Smoke tests** — Quick tests after deployment to verify the application is responding.
+
+The more you automate, the less manual testing you need before a release. But automation does not replace exploratory testing — it handles the regression and validation work that humans should not have to repeat.
+
+## Artifact Management
+
+A build artifact is the immutable output of the build stage. It could be a Docker image, a compiled binary, a JAR file, or any deployable unit. Key principles:
+
+- **Immutability** — Once created, an artifact never changes. The same Docker image that passed tests in CI is the one deployed to production. You never "rebuild" at deploy time.
+- **Versioning** — Every artifact has a unique, traceable tag. The best practice is to use the Git commit SHA (e.g., `my-app:sha-abc1234`) so you can trace any running image back to the exact source code.
+- **Registries** — Artifacts are stored in a registry (Docker Hub, AWS ECR, GitHub Container Registry). The pipeline pushes to the registry after a successful build and test, and the deploy stage pulls from it.
+
+```
+Build ──► Push artifact to registry ──► Deploy pulls from registry
+              │
+              ▼
+         Tagged with commit SHA
+         (immutable, traceable)
+```
+
+## Deployment Basics
+
+Once an artifact passes all pipeline stages, it is deployed to environments:
+
+- **Staging** — A pre-production environment that mirrors production. Used for final validation, smoke tests, and (in Continuous Delivery) manual approval.
+- **Production** — The live environment serving real users.
+
+The process of moving an artifact from staging to production is called **promotion**. The artifact is never rebuilt — it is the same one that passed all tests.
+
+Common deployment strategies:
+
+| Strategy | How It Works | Trade-off |
+|----------|-------------|-----------|
+| Rolling | Replace old instances with new ones one at a time | Gradual, zero downtime, but slow rollback |
+| Blue-green | Two identical environments; switch traffic all at once | Instant switch and rollback, but requires double resources |
+| Canary | Route a small percentage of traffic to the new version, then increase | Low risk, but requires traffic splitting |
+
+## CI/CD Tools Overview
+
+The three most widely used CI/CD platforms:
+
+- **GitHub Actions** — Built into GitHub. Define workflows in `.github/workflows/`. Uses YAML configuration. Free for public repositories. Best for projects already on GitHub.
+- **GitLab CI** — Built into GitLab. Define pipelines in `.gitlab-ci.yml`. Strong support for Docker-in-Docker and self-hosted runners. Best for teams using GitLab.
+- **Jenkins** — Open source, self-hosted. Extremely flexible with a massive plugin ecosystem. Requires more maintenance but offers the most customization. Best for complex enterprise environments.
+
+All three support the same fundamental pipeline pattern: trigger on code change, build, test, publish, deploy. The syntax differs, but the concepts are identical.
+
+<Diagram config={cicdBasics} />

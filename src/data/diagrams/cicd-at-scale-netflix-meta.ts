@@ -59,4 +59,11 @@ export const cicdAtScaleNetflixMeta: DiagramConfig = {
     { id: "e-shared-rollback-nfx", source: "shared-rollback", target: "nfx-canary", data: { type: "pipeline", label: "rollback" } },
     { id: "e-shared-rollback-meta", source: "shared-rollback", target: "meta-deploy", data: { type: "pipeline", label: "rollback" } },
   ],
+  steps: [
+    { nodeIds: ["gz-netflix", "nfx-git", "nfx-build", "nfx-bake", "nfx-spinnaker"], edgeIds: ["e-nfx-git-build", "e-nfx-build-bake", "e-nfx-bake-spin", "e-nfx-git-spin"], label: "Netflix: Source & Build" },
+    { nodeIds: ["nfx-canary", "nfx-chaos", "nfx-prod-k8s", "nfx-monitoring"], edgeIds: ["e-nfx-spin-canary", "e-nfx-canary-chaos", "e-nfx-canary-prod", "e-nfx-prod-monitor"], label: "Netflix: Deploy & Monitor" },
+    { nodeIds: ["gz-meta", "meta-git", "meta-ci", "meta-feature-flag"], edgeIds: ["e-meta-git-ci", "e-meta-ci-flag"], label: "Meta: Build & Release" },
+    { nodeIds: ["meta-ab", "meta-deploy", "meta-prod", "meta-monitoring"], edgeIds: ["e-meta-flag-ab", "e-meta-ab-deploy", "e-meta-deploy-prod", "e-meta-prod-monitor"], label: "Meta: Rollout & Monitor" },
+    { nodeIds: ["gz-principles", "shared-immutable", "shared-observability", "shared-rollback", "shared-automation"], edgeIds: ["e-nfx-prod-shared-imm", "e-meta-prod-shared-imm", "e-nfx-mon-shared-obs", "e-meta-mon-shared-obs", "e-shared-rollback-nfx", "e-shared-rollback-meta"], label: "Shared Principles" },
+  ],
 };

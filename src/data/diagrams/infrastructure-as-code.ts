@@ -292,5 +292,12 @@ export const infrastructureAsCode: DiagramConfig = {
       data: { type: "pipeline", label: "teardown" },
     },
   ],
+  steps: [
+    { nodeIds: ["terraform-code", "pulumi-code"], edgeIds: [], label: "IaC Code" },
+    { nodeIds: ["state-backend"], edgeIds: ["e-tf-state", "e-pulumi-state"], label: "State Backend" },
+    { nodeIds: ["terraform-plan", "terraform-apply", "terraform-destroy"], edgeIds: ["e-plan-apply", "e-apply-destroy"], label: "Plan → Apply" },
+    { nodeIds: ["cloud-api", "vpc", "eks-cluster", "rds", "s3-bucket", "iam-roles"], edgeIds: ["e-state-api", "e-api-vpc", "e-api-eks", "e-api-rds", "e-api-s3", "e-api-iam"], label: "Cloud Infrastructure" },
+    { nodeIds: ["drift-detection"], edgeIds: ["e-state-drift", "e-drift-api"], label: "Drift Detection" },
+  ],
   d3Variant: "forceGraph",
 };

@@ -278,5 +278,12 @@ export const gitopsArgocd: DiagramConfig = {
       data: { type: "animatedDataFlow", label: "re-sync" },
     },
   ],
+  steps: [
+    { nodeIds: ["git-repo"], edgeIds: [], label: "Git Repository" },
+    { nodeIds: ["ci-pipeline", "container-registry"], edgeIds: ["e-git-ci", "e-ci-registry"], label: "CI Pipeline & Registry" },
+    { nodeIds: ["argocd-api", "argocd-repo-server", "argocd-controller"], edgeIds: ["e-git-repo-server", "e-repo-server-controller", "e-api-controller", "e-api-repo-server"], label: "ArgoCD Components" },
+    { nodeIds: ["k8s-dev", "k8s-staging", "k8s-prod"], edgeIds: ["e-controller-dev", "e-controller-staging", "e-controller-prod", "e-dev-controller", "e-staging-controller", "e-prod-controller"], label: "Kubernetes Clusters" },
+    { nodeIds: ["app-of-apps", "sync-loop", "drift-detection", "auto-reconcile"], edgeIds: ["e-app-of-apps-controller", "e-controller-sync-loop", "e-sync-loop-drift", "e-drift-reconcile", "e-reconcile-controller"], label: "Drift Detection & Reconciliation" },
+  ],
   d3Variant: "pipeline",
 };

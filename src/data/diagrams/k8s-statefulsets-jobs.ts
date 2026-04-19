@@ -275,5 +275,12 @@ export const k8sStatefulsetsJobs: DiagramConfig = {
       data: { type: "dataFlow", label: "completions" },
     },
   ],
+  steps: [
+    { nodeIds: ["headless-svc"], edgeIds: [], label: "Headless Service" },
+    { nodeIds: ["sts-controller"], edgeIds: ["e-svc-sts"], label: "StatefulSet Controller" },
+    { nodeIds: ["stateful-app-0", "pvc-0", "stateful-app-1", "pvc-1", "stateful-app-2", "pvc-2"], edgeIds: ["e-sts-p0", "e-sts-p1", "e-sts-p2", "e-p0-v0", "e-p1-v1", "e-p2-v2"], label: "Stateful Pods with PVCs" },
+    { nodeIds: ["cronjob", "job-controller", "batch-job"], edgeIds: ["e-cj-jc", "e-jc-job"], label: "CronJob & Job Controller" },
+    { nodeIds: ["job-pod-1", "job-pod-2", "job-pod-3"], edgeIds: ["e-job-p1", "e-job-p2", "e-job-p3"], label: "Job Pods" },
+  ],
   d3Variant: "forceGraph",
 };
