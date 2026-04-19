@@ -9,7 +9,10 @@ const TerminalSimulator = dynamic(
     ssr: false,
     loading: () => (
       <div className="flex h-96 items-center justify-center rounded-lg border border-gray-700 bg-gray-950">
-        <div className="animate-pulse text-gray-500">Loading terminal...</div>
+        <div className="flex flex-col items-center gap-3">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-gray-600 border-t-blue-500" />
+          <span className="text-sm text-gray-500">Loading terminal...</span>
+        </div>
       </div>
     ),
   },
