@@ -1,0 +1,430 @@
+---
+title: "Infrastructure as Code"
+module: devops
+level: intermediate
+duration: "40 min"
+diagram: infrastructure-as-code
+description: "Manage infrastructure declaratively with Terraform and Pulumi: state, modules, and container infrastructure."
+---
+
+# Infrastructure as Code
+
+Imagine you need to set up a production environment: a VPC, a Kubernetes cluster, a database, IAM roles, and an S3 bucket. Doing this by clicking through the AWS Console takes hours, is error-prone, and impossible to reproduce. Next month, when you need a staging environment that looks identical, you start over. **Infrastructure as Code (IaC)** solves this by writing your infrastructure in configuration files that can be versioned, reviewed, tested, and applied automatically.
+
+IaC treats infrastructure the same way you treat application code: it lives in git, it is reviewed through pull requests, it is tested, and it is deployed through CI/CD. The result is infrastructure that is reproducible, auditable, and self-documenting.
+
+## Why IaC?
+
+Manual infrastructure management breaks down at scale. Here is what goes wrong:
+
+- **Configuration drift** — One engineer changes a security group in the console, another updates a subnet via CLI, and a third edits a load balancer in the web UI. Three months later, no one knows why production is configured the way it is. IaC provides a single source of truth: the code in your repository.
+
+- **No audit trail** — Who changed the RDS instance type last Tuesday? Was it intentional? Without IaC, you rely on CloudTrail logs and guesswork. With IaC, every change is a git commit with an author, a timestamp, and a pull request discussion.
+
+- **Lack of reproducibility** — Your staging environment does not match production because it was set up by different people at different times. IaC makes environments identical by default: the same code produces the same infrastructure every time.
+
+- **Slow recovery** — When disaster strikes, rebuilding from scratch takes days if the setup exists only in someone's head. IaC lets you recreate your entire infrastructure from a single `terraform apply`.
+
+## Declarative vs Imperative Approaches
+
+There are two ways to write infrastructure code:
+
+**Declarative** (Terraform, Pulumi): You describe the *desired end state*. "I want 3 EC2 instances in this VPC with these security groups." The tool figures out how to get there. If you change the desired count from 3 to 5, Terraform adds 2 instances. If you change it back to 3, it removes 2. Declarative tools handle creation, update, and deletion automatically.
+
+```hcl
+# Declarative: describe what you want
+resource "aws_instance" "web" {
+  count         = 3
+  ami           = "ami-0c55b159cbfafe1f0"
+  instance_type = "t3.micro"
+
+  tags = {
+    Name = "web-${count.index}"
+  }
+}
+```
+
+**Imperative** (shell scripts, boto3): You describe the *steps*. "Create a VPC. Create a subnet. Launch 3 instances." If you run the script twice, it creates duplicates unless you add idempotency checks. If an instance is deleted, the script does not know to replace it.
+
+```bash
+# Imperative: describe how to do it
+VPC_ID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 --query 'Vpc.VpcId' --output text)
+aws ec2 create-subnet --vpc-id $VPC_ID --cidr-block 10.0.1.0/24
+for i in 0 1 2; do
+  aws ec2 run-instances --image-id ami-0c55b159cbfafe1f0 --instance-type t3.micro
+done
+```
+
+Declarative IaC wins for most production use cases because it handles drift reconciliation, dependency resolution, and state tracking automatically. You declare what you want, and the tool makes it so.
+
+## Terraform Fundamentals
+
+Terraform is the most widely adopted IaC tool. It uses HashiCorp Configuration Language (HCL), a declarative language designed specifically for infrastructure.
+
+### Providers
+
+Providers are plugins that Terraform uses to interact with cloud APIs. Each provider wraps a cloud or service API:
+
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+```
+
+Terraform has providers for AWS, GCP, Azure, Kubernetes, Helm, GitHub, and hundreds more. You can even write custom providers.
+
+### Resources
+
+Resources are the building blocks of your infrastructure. Each resource maps to a real cloud object:
+
+```hcl
+resource "aws_vpc" "main" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_hostnames = true
+
+  tags = {
+    Name = "production-vpc"
+  }
+}
+
+resource "aws_subnet" "public" {
+  count                   = 3
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.${count.index}.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "public-subnet-${count.index}"
+  }
+}
+```
+
+Notice `aws_vpc.main.id` — Terraform understands resource dependencies automatically. The subnet references the VPC, so Terraform creates the VPC first.
+
+### Data Sources
+
+Data sources let you read existing infrastructure without managing it:
+
+```hcl
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+}
+```
+
+Data sources are read-only. Use them to look up AMI IDs, VPC IDs, subnet CIDRs, and other values that already exist in your account.
+
+## State Management
+
+Terraform state is the mapping between your configuration and the real world. It tracks which `aws_vpc.main` corresponds to `vpc-0abc123` in AWS. Without state, Terraform cannot know what resources exist or what changes to make.
+
+### Remote State Backends
+
+Never store state locally in production. Remote backends provide durability, sharing, and locking:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket         = "my-terraform-state"
+    key            = "production/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "terraform-locks"
+    encrypt        = true
+  }
+}
+```
+
+This configuration stores state in S3 and uses a DynamoDB table for state locking. Locking prevents two engineers from running `terraform apply` simultaneously, which would corrupt the state file.
+
+Common backend options:
+- **S3 + DynamoDB** (AWS) — most popular, inexpensive, integrates with IAM
+- **GCS** (GCP) — native locking, integrates with GCP IAM
+- **Azure Blob Storage** (Azure) — native locking with lease blobs
+- **Terraform Cloud** — managed service with built-in state, locking, and RBAC
+
+### State Locking
+
+State locking is critical. Without it, concurrent operations can corrupt state:
+
+```
+Error: Error acquiring the state lock
+
+Lock Info:
+  ID:        2024-04-19-14-30-00
+  Path:      production/terraform.tfstate
+  Operation: OperationTypeApply
+  Who:       engineer@laptop
+```
+
+This error means another `terraform apply` or `terraform plan` is running. Wait for it to finish. If the lock is stale (the other operation crashed), use `terraform force-unlock` with extreme caution.
+
+## Modules and Composition
+
+Modules are reusable packages of Terraform configuration. Think of them as functions: they accept inputs (variables) and produce outputs (return values).
+
+### Creating a Module
+
+```
+modules/
+└── vpc/
+    ├── main.tf       # Resources
+    ├── variables.tf  # Input variables
+    ├── outputs.tf    # Output values
+    └── versions.tf   # Provider requirements
+```
+
+**modules/vpc/variables.tf** — inputs the module accepts:
+```hcl
+variable "cidr_block" {
+  description = "CIDR block for the VPC"
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "environment" {
+  description = "Environment name (dev, staging, prod)"
+  type        = string
+}
+
+variable "public_subnet_count" {
+  description = "Number of public subnets"
+  type        = number
+  default     = 3
+}
+```
+
+**modules/vpc/outputs.tf** — values the module exposes:
+```hcl
+output "vpc_id" {
+  description = "ID of the VPC"
+  value       = aws_vpc.main.id
+}
+
+output "public_subnet_ids" {
+  description = "IDs of the public subnets"
+  value       = aws_subnet.public[*].id
+}
+```
+
+### Using a Module
+
+```hcl
+module "vpc" {
+  source  = "./modules/vpc"
+  version = "v1.2.0"
+
+  cidr_block           = "10.0.0.0/16"
+  environment          = "production"
+  public_subnet_count  = 3
+}
+
+# Reference module outputs in other resources
+resource "aws_eks_cluster" "main" {
+  name     = "production-cluster"
+  role_arn = aws_iam_role.eks.arn
+  vpc_config {
+    subnet_ids = module.vpc.public_subnet_ids
+  }
+}
+```
+
+### Versioning Modules
+
+For shared modules, use the Terraform Registry or Git tags:
+
+```hcl
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 5.0"
+
+  cidr = "10.0.0.0/16"
+  azs  = ["us-east-1a", "us-east-1b", "us-east-1c"]
+}
+```
+
+Always pin module versions. Using `~> 5.0` allows minor updates but prevents breaking changes.
+
+## Pulumi: Real Languages for Infrastructure
+
+Pulumi takes a different approach: instead of learning HCL, you write infrastructure in TypeScript, Python, or Go. This gives you loops, conditionals, classes, testing frameworks, and package managers — the full power of a programming language.
+
+### TypeScript Infrastructure
+
+```typescript
+import * as aws from "@pulumi/aws";
+import * as pulumi from "@pulumi/pulumi";
+
+// Create a VPC
+const vpc = new aws.ec2.Vpc("production-vpc", {
+  cidrBlock: "10.0.0.0/16",
+  enableDnsHostnames: true,
+  tags: { Environment: "production" },
+});
+
+// Create subnets — real loops, not count meta-arguments
+const azs = ["us-east-1a", "us-east-1b", "us-east-1c"];
+const publicSubnets = azs.map(
+  (az, i) =>
+    new aws.ec2.Subnet(`public-subnet-${i}`, {
+      vpcId: vpc.id,
+      cidrBlock: `10.0.${i}.0/24`,
+      availabilityZone: az,
+      mapPublicIpOnLaunch: true,
+      tags: { Name: `public-subnet-${i}` },
+    }),
+);
+
+// Export outputs
+export const vpcId = vpc.id;
+export const subnetIds = publicSubnets.map((s) => s.id);
+```
+
+### When to Choose Pulumi vs Terraform
+
+| Factor | Terraform | Pulumi |
+|--------|-----------|--------|
+| Language | HCL (domain-specific) | TypeScript, Python, Go, C# |
+| Learning curve | Easier for ops teams | Easier for dev teams |
+| Ecosystem | Massive provider/module registry | Growing, AWS/Azure/GCP fully supported |
+| Complex logic | Requires workarounds (for_each, dynamic blocks) | Native loops, conditionals, classes |
+| Testing | Limited (terraform plan) | Unit tests with Jest, pytest, etc. |
+| State management | State file (local or remote) | State file (Pulumi Cloud or self-managed) |
+| Team | Ops-heavy, HCL specialists | Dev-heavy, comfortable with code |
+| Imperative escape hatches | Providers, external data | Native — write imperative code when needed |
+
+Choose **Terraform** when your team values simplicity, you need the largest ecosystem of providers and modules, or your organization has standardized on it. Choose **Pulumi** when your team prefers real programming languages, needs complex conditional logic, or wants to unit-test infrastructure code.
+
+## Container Infrastructure as Code
+
+Provisioning Kubernetes clusters (EKS, AKS, GKE) with Terraform is a common production pattern. The official modules handle the complexity:
+
+### EKS on AWS
+
+```hcl
+module "eks" {
+  source  = "terraform-aws-modules/eks/aws"
+  version = "~> 20.0"
+
+  cluster_name    = "production-cluster"
+  cluster_version = "1.29"
+
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnet_ids
+
+  eks_managed_node_groups = {
+    general = {
+      instance_types = ["m5.large"]
+      min_size       = 2
+      max_size       = 5
+      desired_size   = 3
+    }
+  }
+}
+```
+
+### AKS on Azure
+
+```hcl
+module "aks" {
+  source  = "Azure/aks/azurerm"
+  version = "~> 8.0"
+
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  cluster_name        = "production-aks"
+
+  kubernetes_version = "1.28"
+  node_count         = 3
+  vm_size            = "Standard_D2s_v3"
+
+  network_plugin = "azure"
+}
+```
+
+### GKE on GCP
+
+```hcl
+module "gke" {
+  source  = "terraform-google-modules/kubernetes-engine/google"
+  version = "~> 33.0"
+
+  project_id = var.project_id
+  name       = "production-gke"
+  region     = "us-east1"
+
+  network         = module.vpc.network
+  subnetwork      = module.vpc.subnetwork
+  ip_range_pods   = "pods"
+  ip_range_services = "services"
+
+  node_pools = [{
+    name         = "general"
+    machine_type = "e2-medium"
+    min_count    = 2
+    max_count    = 5
+  }]
+}
+```
+
+These modules handle IAM roles, security groups, node group configuration, and addon management. Provisioning a production-ready cluster is a module call instead of hundreds of lines of raw resource definitions.
+
+## Drift Detection and Remediation
+
+**Configuration drift** happens when the real infrastructure diverges from your IaC declarations. Common causes: someone edited a resource in the console, an autoscaling event changed instance counts, or an incident response team made an emergency change.
+
+### Detecting Drift
+
+```bash
+# Check what has changed without applying
+terraform plan
+
+# Expected output when drift exists:
+# ~ aws_instance.web
+#     instance_type: "t3.micro" => "t3.small"  # manually changed in console
+```
+
+`terraform plan` compares the desired state (your .tf files) against the actual state (what exists in the cloud). Any difference is drift.
+
+### Remediation
+
+```bash
+# Reconcile drift — apply brings actual state back to declared state
+terraform apply
+```
+
+Running `terraform apply` reconciles the actual state to match the declared state. The manually changed instance type reverts to `t3.micro`.
+
+### Preventing Drift
+
+- **Restrict console access** — Use IAM policies to deny manual changes on production resources. Require all changes through IaC and CI/CD.
+- **Enable drift detection alerts** — Terraform Cloud and some CI/CD pipelines can run `terraform plan` on a schedule and alert when drift is detected.
+- **Use `prevent_destroy`** — Add `lifecycle { prevent_destroy = true }` to critical resources to avoid accidental deletion.
+- **Code review infrastructure changes** — Every `terraform apply` should go through a pull request. Use `terraform plan` output in PR comments so reviewers can see exactly what will change.
+
+```hcl
+lifecycle {
+  prevent_destroy = true       # Protect against accidental deletion
+  ignore_changes  = [tags]     # Ignore drift on tags (e.g., auto-tagged by AWS)
+}
+```
+
+IaC is not just a tool — it is a practice. Write your infrastructure in code, review it, test it, and deploy it through CI/CD. Your future self, troubleshooting at 3 AM, will thank you.

@@ -71,5 +71,19 @@ export const volumesNetworksQuiz: Quiz = {
       explanation:
         "The `--network container:other_container` flag joins a new container to the network namespace of an existing container. They share the same IP address and port space, useful for sidecar patterns where two containers must communicate over `localhost`.",
     },
+    {
+      id: "q6",
+      question:
+        "You have a container running a database with data stored in a named volume. You delete the container with `docker rm` and recreate it with the same volume mount. What happens to the data?",
+      options: [
+        "The data is lost because the container that created it was removed",
+        "The data persists because volumes are independent of the container lifecycle",
+        "The data is restored from a Docker-internal backup",
+        "The volume is automatically converted to a bind mount after the container is removed",
+      ],
+      correctIndex: 1,
+      explanation:
+        "Docker volumes have a lifecycle independent of containers. Removing a container with `docker rm` does NOT delete its named volumes — the data remains intact in Docker's storage area (`/var/lib/docker/volumes/`). When you recreate the container with the same volume mount (`-v mydata:/var/lib/postgresql/data`), it reconnects to the existing volume and all data is available. Volumes are only removed explicitly with `docker volume rm` or `docker volume prune`.",
+    },
   ],
 };

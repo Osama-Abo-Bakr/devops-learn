@@ -75,5 +75,19 @@ export const cicdQuiz: Quiz = {
       explanation:
         "Use immutable tags (commit SHA or full semver) for Production. The `latest` tag is mutable — it can point to different images over time, making rollbacks difficult and deployments non-reproducible. A tag like `sha-abc1234` guarantees you always get the exact same image.",
     },
+    {
+      id: "q6",
+      question:
+        "Your team's CI/CD pipeline takes 45 minutes to build and deploy. The build step takes 30 minutes because it reinstalls all npm dependencies every time, even for a one-line fix. What is the most effective optimization?",
+      options: [
+        "Reduce the number of dependencies in package.json",
+        "Cache dependencies between builds (use Docker layer caching or CI cache mounts) and use multi-stage builds so only changed layers are rebuilt",
+        "Run the pipeline less frequently to reduce overall cost",
+        "Switch from npm to a faster package manager like pnpm without changing the pipeline",
+      ],
+      correctIndex: 1,
+      explanation:
+        "Caching dependencies between builds (via Docker layer caching, CI cache mounts like `--mount=type=cache`, or persistent volume caches) avoids redundant downloads. Combined with multi-stage builds, only the changed layers are rebuilt. This can reduce build time from 30 minutes to under 5 minutes for small changes.",
+    },
   ],
 };

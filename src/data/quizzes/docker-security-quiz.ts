@@ -72,5 +72,47 @@ export const dockerSecurityQuiz: Quiz = {
       explanation:
         "Linux capabilities break root privileges into fine-grained units. By default Docker drops many capabilities, but you can further restrict with `--cap-drop ALL` and add back only what's needed with `--cap-add`. For example, a web server likely doesn't need `CAP_SYS_ADMIN`.",
     },
+    {
+      id: "q6",
+      question:
+        "Your team needs to pass a database password to a container running in a Docker Swarm service. What is the most secure approach?",
+      options: [
+        "Store the password in the Dockerfile as an ENV variable",
+        "Pass the password as a command-line argument when running the container",
+        "Use Docker secrets (`docker secret create` and reference it in the service) so the password is encrypted and never written to disk in plaintext",
+        "Store the password in a config map mounted as a file inside the container",
+      ],
+      correctIndex: 2,
+      explanation:
+        "Docker Swarm secrets (`docker secret create`) encrypt credentials at rest and in transit. Secrets are only decrypted and mounted in-memory (`/run/secrets/`) inside the container, never written to disk in plaintext. Use `docker secret ls` to list secrets and reference them in a service with `--secret` flag. Environment variables and command-line arguments are visible in `docker inspect` and process listings, making them less secure.",
+    },
+    {
+      id: "q7",
+      question:
+        "What does setting `DOCKER_CONTENT_TRUST=1` enable when pulling or pushing images?",
+      options: [
+        "It forces Docker to only use images from Docker Hub official repositories",
+        "It enables image signing and verification so that only signed, trusted images can be pulled or pushed",
+        "It encrypts the container filesystem at rest",
+        "It scans images for vulnerabilities before allowing them to run",
+      ],
+      correctIndex: 1,
+      explanation:
+        "Docker Content Trust (DCT) uses Notary to sign image tags with digital keys. When `DOCKER_CONTENT_TRUST=1` is set, Docker will only pull images that have valid signatures and will sign images on push. You can inspect signatures with `docker trust inspect <image>`. This prevents supply-chain attacks where a tampered image is substituted for a legitimate one.",
+    },
+    {
+      id: "q8",
+      question:
+        "What do CIS Docker Bench benchmarks check, and why are they important?",
+      options: [
+        "They benchmark container CPU and memory performance against industry standards",
+        "They validate container networking throughput and latency thresholds",
+        "They audit Docker host and daemon configuration against security best practices (e.g., restricting socket permissions, enabling user namespace remapping, enforcing TLS)",
+        "They measure how quickly Docker images can be built in CI/CD pipelines",
+      ],
+      correctIndex: 2,
+      explanation:
+        "The CIS Docker Bench for Security is an automated script that checks whether a Docker host complies with the Center for Internet Security benchmarks. It audits configurations like Docker daemon socket permissions (avoiding `777` on `/var/run/docker.sock`), enabling TLS for the daemon, using user namespace remapping, setting appropriate log drivers, and ensuring containers run with minimal capabilities. Running these benchmarks regularly helps maintain a hardened Docker infrastructure.",
+    },
   ],
 };

@@ -75,5 +75,19 @@ export const securityBestPracticesQuiz: Quiz = {
       explanation:
         "Runtime security monitors live container behavior — process execution, syscalls, network connections, and file access — to detect anomalies like reverse shells, privilege escalation, or unexpected binary execution. Tools like `Falco` use kernel-level probes (eBPF or kernel module) to generate alerts on suspicious activity. Build-time scanning and signing are supply chain security, not runtime security.",
     },
+    {
+      id: "q6",
+      question:
+        "Your CI/CD pipeline builds Docker images and pushes them to a registry. A security audit reveals that images are being deployed without verifying their integrity. An attacker could potentially push a tampered image. What should you implement?",
+      options: [
+        "Add a firewall rule to block unauthorized registry access",
+        "Enable Docker Content Trust (`DOCKER_CONTENT_TRUST=1`), use `cosign` for keyless signing in CI, and configure admission controllers like Gatekeeper or Kyverno to verify signatures before pulling images",
+        "Store images in a private registry and rely on network isolation for protection",
+        "Scan images with Trivy after deployment to detect tampering",
+      ],
+      correctIndex: 1,
+      explanation:
+        "Image signing and verification ensures supply chain integrity. Enable Docker Content Trust (`DOCKER_CONTENT_TRUST=1`) to enforce image signing in CI. Use `cosign` (from Sigstore) for keyless signing — it integrates with OIDC identity for automatic signing in CI pipelines. Then configure admission controllers like Gatekeeper or Kyverno to verify signatures at deploy time, rejecting any unsigned or tampered images.",
+    },
   ],
 };

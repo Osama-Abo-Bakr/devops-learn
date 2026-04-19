@@ -5,6 +5,7 @@ import { dockerVolumesNetworks } from "./diagrams/docker-volumes-networks";
 import { dockerMultiStageBuild } from "./diagrams/docker-multi-stage-build";
 import { dockerSecurity } from "./diagrams/docker-security";
 import { dockerProductionPatterns } from "./diagrams/docker-production-patterns";
+import { dockerTroubleshooting } from "./diagrams/docker-troubleshooting";
 import { composeMultiService } from "./diagrams/compose-multi-service";
 import { composeNetworksVolumes } from "./diagrams/compose-networks-volumes";
 import { k8sPodsDeployments } from "./diagrams/k8s-pods-deployments";
@@ -22,6 +23,7 @@ import { securityBestPractices } from "./diagrams/security-best-practices";
 import { advancedCicdPipeline } from "./diagrams/advanced-cicd-pipeline";
 import { cicdAtScaleNetflixMeta } from "./diagrams/cicd-at-scale-netflix-meta";
 import { containerOrchestrationScale } from "./diagrams/container-orchestration-scale";
+import { k8sStatefulsetsJobs } from "./diagrams/k8s-statefulsets-jobs";
 import { dockerPsChallenge } from "./challenges/docker-ps-challenge";
 import { dockerBasicsQuiz } from "./quizzes/docker-basics-quiz";
 import { placementQuiz } from "./quizzes/placement-quiz";
@@ -30,6 +32,7 @@ import { volumesNetworksQuiz } from "./quizzes/volumes-networks-quiz";
 import { multiStageQuiz } from "./quizzes/multi-stage-quiz";
 import { dockerSecurityQuiz } from "./quizzes/docker-security-quiz";
 import { productionPatternsQuiz } from "./quizzes/production-patterns-quiz";
+import { dockerTroubleshootingQuiz } from "./quizzes/docker-troubleshooting-quiz";
 import { yamlBasicsQuiz } from "./quizzes/yaml-basics-quiz";
 import { multiServiceQuiz } from "./quizzes/multi-service-quiz";
 import { composeNetworksVolumesQuiz } from "./quizzes/compose-networks-volumes-quiz";
@@ -47,6 +50,11 @@ import { securityBestPracticesQuiz } from "./quizzes/security-best-practices-qui
 import { advancedCicdQuiz } from "./quizzes/advanced-cicd-quiz";
 import { cicdAtScaleQuiz } from "./quizzes/cicd-at-scale-quiz";
 import { containerOrchestrationScaleQuiz } from "./quizzes/container-orchestration-scale-quiz";
+import { k8sStatefulsetsJobsQuiz } from "./quizzes/k8s-statefulsets-jobs-quiz";
+import { gitopsArgocd } from "./diagrams/gitops-argocd";
+import { infrastructureAsCode } from "./diagrams/infrastructure-as-code";
+import { gitopsArgocdQuiz } from "./quizzes/gitops-argocd-quiz";
+import { infrastructureAsCodeQuiz } from "./quizzes/infrastructure-as-code-quiz";
 
 const diagramMap: Record<string, DiagramConfig> = {
   "docker-container-basics": dockerContainerBasics,
@@ -55,6 +63,7 @@ const diagramMap: Record<string, DiagramConfig> = {
   "docker-multi-stage-build": dockerMultiStageBuild,
   "docker-security": dockerSecurity,
   "docker-production-patterns": dockerProductionPatterns,
+  "docker-troubleshooting": dockerTroubleshooting,
   "compose-multi-service": composeMultiService,
   "compose-networks-volumes": composeNetworksVolumes,
   "k8s-pods-deployments": k8sPodsDeployments,
@@ -72,6 +81,9 @@ const diagramMap: Record<string, DiagramConfig> = {
   "advanced-cicd-pipeline": advancedCicdPipeline,
   "cicd-at-scale-netflix-meta": cicdAtScaleNetflixMeta,
   "container-orchestration-scale": containerOrchestrationScale,
+  "k8s-statefulsets-jobs": k8sStatefulsetsJobs,
+  "gitops-argocd": gitopsArgocd,
+  "infrastructure-as-code": infrastructureAsCode,
 };
 
 const challengeMap: Record<string, Challenge> = {
@@ -86,6 +98,7 @@ const quizMap: Record<string, Quiz> = {
   "multi-stage-quiz": multiStageQuiz,
   "docker-security-quiz": dockerSecurityQuiz,
   "production-patterns-quiz": productionPatternsQuiz,
+  "docker-troubleshooting-quiz": dockerTroubleshootingQuiz,
   "yaml-basics-quiz": yamlBasicsQuiz,
   "multi-service-quiz": multiServiceQuiz,
   "compose-networks-volumes-quiz": composeNetworksVolumesQuiz,
@@ -103,6 +116,9 @@ const quizMap: Record<string, Quiz> = {
   "advanced-cicd-quiz": advancedCicdQuiz,
   "cicd-at-scale-quiz": cicdAtScaleQuiz,
   "container-orchestration-scale-quiz": containerOrchestrationScaleQuiz,
+  "k8s-statefulsets-jobs-quiz": k8sStatefulsetsJobsQuiz,
+  "gitops-argocd-quiz": gitopsArgocdQuiz,
+  "infrastructure-as-code-quiz": infrastructureAsCodeQuiz,
 };
 
 export function getDiagram(id: string): DiagramConfig | undefined {

@@ -60,5 +60,19 @@ export const dockerBasicsQuiz: Quiz = {
       explanation:
         "The `-d` flag runs a container in detached mode (in the background). Common combinations include `-it` for interactive mode and `-dit` for detached interactive with a TTY.",
     },
+    {
+      id: "q6",
+      question:
+        "You run `docker run -d -p 8080:80 nginx` but get a 'port already in use' error. Another container is already using port 8080 on the host. What is the best solution?",
+      options: [
+        "Restart Docker to free up port 8080",
+        "Change the host port mapping (e.g., `-p 8081:80`) or stop the conflicting container",
+        "Use `-p 80:8080` to reverse the port order",
+        "Add the `--port-force` flag to override the conflict",
+      ],
+      correctIndex: 1,
+      explanation:
+        "The `-p` flag uses `HOST:CONTAINER` format, so `-p 8080:80` maps host port 8080 to container port 80. If another process or container already occupies host port 8080, you can either map to a different host port (e.g., `-p 8081:80`) or stop the conflicting container. The container port (80) must stay the same — only the host side can change.",
+    },
   ],
 };

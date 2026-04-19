@@ -72,5 +72,19 @@ export const composeEnvScalingQuiz: Quiz = {
       explanation:
         "If a service maps a static host port (e.g., `ports: \"8080:80\"`), scaling it to 3 instances fails because all three would try to bind host port 8080. Either omit host-side port mapping (let Docker assign ephemeral ports) or use a reverse proxy to distribute traffic.",
     },
+    {
+      id: "q6",
+      question:
+        "Your team uses `.env` for local development and a different set of variables for production. Developers keep accidentally committing `.env` with production secrets. How should you manage this?",
+      options: [
+        "Store all secrets directly in the Compose file under the `environment` key",
+        "Use `.env` for local defaults only, use `docker-compose.override.yml` for local dev overrides, and use `docker compose -f docker-compose.yml -f docker-compose.prod.yml` for production overrides — never put secrets in `.env`",
+        "Encrypt the `.env` file with a password and decrypt it at runtime",
+        "Use a single `.env` file and comment out the production secrets before committing",
+      ],
+      correctIndex: 1,
+      explanation:
+        "The `.env` file should only contain local defaults — never secrets. Use `docker-compose.override.yml` (auto-merged) for dev-specific settings and explicit multi-file composition (`-f docker-compose.yml -f docker-compose.prod.yml`) for production. For secrets, use Docker Secrets or a vault solution instead of committing them to version control.",
+    },
   ],
 };

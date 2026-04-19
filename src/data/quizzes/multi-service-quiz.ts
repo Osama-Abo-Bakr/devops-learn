@@ -72,5 +72,19 @@ export const multiServiceQuiz: Quiz = {
       explanation:
         "The recommended approach is to define a custom network and assign both services to it. Docker's DNS lets them reach each other by service name. This avoids hardcoded IPs and keeps traffic off the host network, improving isolation and security.",
     },
+    {
+      id: "q6",
+      question:
+        "You start a Compose stack with `docker-compose up -d` but the web service keeps restarting. You check the logs and see 'Connection refused' to the database host. The database service is still starting up. What is the best solution?",
+      options: [
+        "Add a `restart: always` policy to the web service so it keeps retrying until the database is ready",
+        "Use a shell script wrapper that sleeps for 30 seconds before starting the web container",
+        "Use `depends_on` with `condition: service_healthy` so the web service waits until the database passes its health check before starting",
+        "Hardcode the database IP address in the web service's environment variables",
+      ],
+      correctIndex: 2,
+      explanation:
+        "The plain `depends_on` key only controls startup order — it doesn't wait for the service to actually be ready. By adding `condition: service_healthy`, Compose waits until the database's health check passes before starting the web service. This requires defining a `healthcheck` on the database service (e.g., `test: [\"CMD\", \"pg_isready\", \"-U\", \"postgres\"]`). This is the robust way to handle service readiness in Compose, avoiding crashes caused by services starting before their dependencies are truly available.",
+    },
   ],
 };

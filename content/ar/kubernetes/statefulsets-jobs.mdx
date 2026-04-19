@@ -1,0 +1,420 @@
+---
+title: "StatefulSets and Jobs"
+module: kubernetes
+level: advanced
+duration: "40 min"
+diagram: k8s-statefulsets-jobs
+description: "Run stateful workloads with StatefulSets and batch processes with Jobs and CronJobs."
+---
+
+# StatefulSets و Jobs
+
+الـ Deployments ممتازة للخوادم عديمة الحالة — النسخ المتماثلة قابلة للتبديل، وإذا ماتت واحدة، تأخذ أخرى مكانها. لكن ماذا عن قواعد البيانات، وطوابير الرسائل، والأنظمة الموزعة مثل Elasticsearch أو Kafka؟ هذه أحمال العمل تحتاج إلى **هويات شبكة مستقرة**، و**بدء تشغيل مرتب**، و**تخزين دائم لكل نسخة**. هنا يأتي دور الـ StatefulSets.
+
+وماذا عن المعالجة الدفعية — تشغيل ترحيل بيانات مرة واحدة، أو مهمة نسخ احتياطي كل ليلة الساعة 2 صباحًا؟ هنا تتألق الـ Jobs و CronJobs. على عكس الـ Deployments التي تبقي الـ Pods تعمل إلى الأبد، الـ Jobs تعمل حتى الإكمال ثم تتوقف.
+
+## لماذا StatefulSets؟
+
+أحمال العمل ذات الحالة لها متطلبات لا تستطيع الـ Deployments تلبيتها:
+
+1. **هوية شبكة مستقرة** — الـ PostgreSQL الأساسي يحتاج اسم DNS يمكن التنبؤ به حتى تتمكن النسخ المتماثلة من اكتشافه. في الـ Deployment، أسماء الـ Pods عشوائية (`web-7b89f4c6d2-x9kz3`). في الـ StatefulSet، مرتبة ويمكن التنبؤ بها (`postgres-0`، `postgres-1`، `postgres-2`).
+
+2. **نشر وتوسع مرتب** — عندما توسّع مجموعة Kafka من 3 إلى 5 وسطاء، يجب أن يبدأ الوسيط-3 والوسيط-4 **بعد** أن يصبح الوسيط-2 جاهزًا. الـ StatefulSets تفرض هذا الترتيب. الـ Deployments تنشئ جميع الـ Pods في وقت واحد.
+
+3. **تخزين دائم لكل نسخة** — كل نسخة قاعدة بيانات تحتاج وحدة تخزين خاصة بها. إذا أُعيد جدولة الـ pod-1 إلى عقدة مختلفة، يجب أن يُعيد ربط **نفس** الـ PVC الذي كان لديه سابقًا. الـ StatefulSets توفر ذلك عبر `volumeClaimTemplates`. الـ Deployystems تشارك PVC واحدًا أو تستخدم تخزينًا مؤقتًا.
+
+4. **التراجع المرتب** — عند تحديث الـ StatefulSet، تُحدّث الـ Pods بترتيب عكسي (pod-2، ثم pod-1، ثم pod-0). هذا يضمن أن الأساسي يُحدّث أخيرًا، مما يقلل وقت التوقف.
+
+إذا لم يحتاج حمل العمل الخاص بك هذه الضمانات، استخدم الـ Deployment — فهو أبسط وأكثر مرونة.
+
+## تشريح الـ StatefulSet
+
+الـ StatefulSet له عدة حقول رئيسية تميزه عن الـ Deployment:
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres-headless          # مطلوب: الـ Headless Service الذي يحكم هذا الـ StatefulSet
+  replicas: 3                             # عدد النسخ المتماثلة
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+  volumeClaimTemplates:                   # كل نسخة تحصل على PVC الخاص بها
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+```
+
+الحقول الحرجة:
+
+| الحقل | الغرض | ما يعادله في الـ Deployment |
+|-------|-------|---------------------------|
+| `serviceName` | يشير إلى الـ Headless Service لأسماء DNS المستقرة | غير قابل للتطبيق |
+| `volumeClaimTemplates` | ينشئ PVC واحد لكل نسخة | غير متوفر |
+| `podManagementPolicy` | `OrderedReady` (الافتراضي) أو `Parallel` | دائمًا متوازي |
+| `updateStrategy` | `RollingUpdate` (مرتب) أو `OnDelete` | `RollingUpdate` (غير مرتب) |
+
+## التدحرجات المرتبة وهويات الشبكة المستقرة
+
+عند إنشاء الـ StatefulSet مع `replicas: 3`، تُطلق الـ Pods بالتتابع:
+
+```text
+1. postgres-0 created → ينتظر حتى Running & Ready
+2. postgres-1 created → ينتظر حتى Running & Ready
+3. postgres-2 created → ينتظر حتى Running & Ready
+```
+
+كل Pod يحصل على اسم مستقر يمكن التنبؤ به بناءً على اسم الـ StatefulSet والفهرس الترتيبي. هذا الاسم **مضمون** — حتى لو أُعيد جدولة الـ Pod إلى عقدة مختلفة، فإنه يحتفظ بنفس الاسم.
+
+عند تقليص الحجم، تُنهى الـ Pods بترتيب عكسي: postgres-2 أولاً، ثم postgres-1، ثم postgres-0.
+
+### سياسات إدارة الـ Pods
+
+يمكنك تغيير ترتيب الإنشاء/الإنهاء باستخدام `podManagementPolicy`:
+
+```yaml
+spec:
+  podManagementPolicy: Parallel    # الافتراضي هو OrderedReady
+```
+
+| السياسة | السلوك | حالة الاستخدام |
+|---------|--------|----------------|
+| **OrderedReady** | إنشاء pod-0، الانتظار حتى Ready، إنشاء pod-1، الانتظار حتى Ready، ... | قواعد البيانات، ZooKeeper، Kafka — أحمال عمل حيث الترتيب مهم |
+| **Parallel** | إنشاء جميع الـ Pods في وقت واحد، بدون انتظار | Elasticsearch، Cassandra — أحمال عمل يمكن للنسخ المتماثلة فيها البدء بشكل مستقل |
+
+### استراتيجيات التحديث
+
+استراتيجية `RollingUpdate` في الـ StatefulSets تُحدّث الـ Pods بترتيب ترتيبي عكسي:
+
+```yaml
+spec:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 1        # حدّث فقط الـ pods ذات الفهرس >= قيمة partition
+```
+
+تعيين `partition: 1` يعني أن postgres-1 و postgres-2 فقط يحصلان على التحديث، بينما يبقى postgres-0 على الإصدار القديم. هذا مفيد لاختبار الكناري — تُحدّث النسخ المتماثلة أولاً وتبقي الأساسي على الإصدار المستقر.
+
+## الـ Headless Services للـ StatefulSets
+
+الـ **Headless Service** هو Service مع `clusterIP: None`. بدلاً من توزيع الحمل عبر جميع الـ Pods، يُرجع عناوين IP الفردية للـ Pods مباشرة. هذا ما يمنح الـ Pods في الـ StatefulSet أسماء DNS مستقرة.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+spec:
+  clusterIP: None                    # هذا ما يجعله headless
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+```
+
+مع هذا الـ Service، كل Pod يحصل على اسم DNS يمكن التنبؤ به:
+
+```text
+postgres-0.postgres-headless.default.svc.cluster.local
+postgres-1.postgres-headless.default.svc.cluster.local
+postgres-2.postgres-headless.default.svc.cluster.local
+```
+
+الـ Pods الأخرى في الكتلة يمكنها مخاطبة نسخة متماثلة محددة بالاسم. على سبيل المثال، يمكن لنسخة PostgreSQL الاتصال بالأساسي في `postgres-0.postgres-headless:5432`.
+
+**لماذا لا نستخدم Service عادي؟** الـ Service العادي مع ClusterIP يوزّع الحمل عبر جميع الـ Pods. ستتصل بـ `postgres-headless:5432` وتصيب نسخة متماثلة عشوائية. لكن لأحمال العمل ذات الحالة، غالبًا تحتاج للوصول إلى **نسخة متماثلة محددة** — الأساسي، وليس أي Pod عشوائي.
+
+## الـ PersistentVolumeClaim لكل Pod
+
+حقل `volumeClaimTemplates` فريد للـ StatefulSets. ينشئ PVC واحد لكل نسخة متماثلة، مسمى بالنمط `<pvc-name>-<statefulset-name>-<ordinal>`:
+
+```yaml
+volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+```
+
+هذا ينشئ ثلاثة PVCs:
+
+| اسم الـ PVC | مرتبط بـ | مُستخدم من قبل |
+|-------------|----------|---------------|
+| `data-postgres-0` | PV-0 (مثل `pvc-abc123`) | postgres-0 |
+| `data-postgres-1` | PV-1 (مثل `pvc-def456`) | postgres-1 |
+| `data-postgres-2` | PV-2 (مثل `pvc-ghi789`) | postgres-2 |
+
+عند إعادة جدولة postgres-1، فإنه **يعيد ربط** `data-postgres-1` — ليس وحدة تخزين جديدة، وليس وحدة تخزين عشوائية، بل نفسها. هذا هو الفرق الأساسي عن الـ Deployments، حيث الـ PVCs غير مرتبطة بنسخ متماثلة محددة.
+
+**مهم:** حذف الـ StatefulSet لا **يحذف** الـ PVCs. يجب حذفها يدويًا. هذا مصمم هكذا — بياناتك تبقى بعد حذف الـ StatefulSet.
+
+```bash
+# حذف الـ PVCs بعد إزالة الـ StatefulSet
+kubectl delete pvc -l app=postgres
+# أو حذف بنمط الاسم
+kubectl delete pvc data-postgres-0 data-postgres-1 data-postgres-2
+```
+
+## الـ Jobs: تشغيل أحمال العمل الدفعية حتى الإكمال
+
+الـ **Job** ينشئ Pod واحد أو أكثر ويضمن أن عددًا محددًا منها يُكمل بنجاح. بمجرد الوصول إلى عدد الإكمالات المطلوب، يُعلّم الـ Job كمكتمل. هذا يختلف جذريًا عن الـ Deployment الذي يبقي الـ Pods تعمل إلى الأبد.
+
+### خيارات تكوين الـ Job
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: data-migration
+spec:
+  completions: 3                    # إجمالي عمليات إكمال الـ Pod الناجحة المطلوبة
+  parallelism: 1                    # كم Pod يعمل في نفس الوقت
+  activeDeadlineSeconds: 3600      # أقصى وقت يمكن أن يعمله الـ Job (ساعة واحدة)
+  backoffLimit: 6                   # أقصى عدد من المحاولات قبل تعليم الـ Job كفاشل
+  template:
+    spec:
+      restartPolicy: OnFailure     # OnFailure أو Never (ليس Always)
+      containers:
+        - name: migrate
+          image: myapp-migrate:v2
+          command: ["python", "migrate.py"]
+```
+
+| الحقل | الوصف | مثال |
+|-------|-------|-------|
+| `completions` | إجمالي عمليات إكمال الـ Pod الناجحة المطلوبة | `3` — يحتاج 3 Pods تنجح |
+| `parallelism` | أقصى عدد من الـ Pods تعمل في وقت واحد | `1` — يعمل واحدًا في كل مرة |
+| `activeDeadlineSeconds` | مهلة زمنية للـ Job بالكامل | `3600` — يفشل بعد ساعة واحدة |
+| `backoffLimit` | أقصى محاولات إعادة المحاولة قبل تعليم الـ Job كفاشل | `6` — يتخلى بعد 6 إخفاقات |
+| `restartPolicy` | كيفية التعامل مع فشل حاوية الـ Pod | `OnFailure` — إعادة تشغيل في مكانه، `Never` — إنشاء Pod جديد |
+
+### أنماط الـ Job الشائعة
+
+**Pod واحد حتى الإكمال:**
+
+```yaml
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: backup
+          image: backup-tool:v1
+          command: ["./backup.sh"]
+```
+
+حذف `completions` و `parallelism` يعيين كليهما إلى 1 — تشغيل Pod واحد حتى ينجح.
+
+**المعالجة المتوازية:**
+
+```yaml
+spec:
+  completions: 10      # يحتاج 10 إكمالات ناجحة
+  parallelism: 3       # تشغيل حتى 3 Pods في وقت واحد
+```
+
+هذا ينشئ طابورًا: 3 Pods تبدأ فورًا. عند اكتمال كل واحد، يُطلق التالي حتى تنجح جميع الـ 10.
+
+**نمط طابور العمل:**
+
+```yaml
+spec:
+  completions: 1       # غير مطلوب — حذفه يعني 1
+  parallelism: 5       # تشغيل 5 عمال بالتوازي
+```
+
+تعيين `parallelism` أعلى من `completions` وكل Pod يسحب العمل من طابور مشترك (مثل قائمة Redis أو طابور SQS). أول Pod يُكمل يُشبع الـ Job.
+
+## الـ CronJobs: الـ Jobs المجدولة
+
+الـ **CronJob** ينشئ Jobs وفق جدول زمني باستخدام صيغة cron القياسية. فكر فيه كـ `cron` لـ Kubernetes.
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-backup
+spec:
+  schedule: "0 2 * * *"                   # كل يوم الساعة 2:00 صباحًا
+  timeZone: "America/New_York"            # اختياري: المنطقة الزمنية (Kubernetes 1.27+)
+  concurrencyPolicy: Forbid               # عدم تشغيل Jobs متداخلة
+  successfulJobsHistoryLimit: 3           # الاحتفاظ بـ 3 Jobs مكتملة فقط
+  failedJobsHistoryLimit: 1               # الاحتفاظ بـ Job فاشلة واحدة فقط
+  startingDeadlineSeconds: 200            # إذا لم يبدأ الـ Job في 200 ثانية، تخطه
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: postgres:16
+              command: ["pg_dump", "-h", "postgres-headless", "-U", "admin", "mydb"]
+```
+
+### صيغة جدول الـ Cron
+
+حقل الجدول يتبع صيغة cron القياسية: `دقيقة ساعة يوم-الشهر شهر يوم-الأسبوع`
+
+| الجدول | المعنى |
+|--------|--------|
+| `0 2 * * *` | كل يوم الساعة 2:00 صباحًا |
+| `*/5 * * * *` | كل 5 دقائق |
+| `0 */2 * * *` | كل ساعتين |
+| `0 0 1 * *` | اليوم الأول من كل شهر عند منتصف الليل |
+| `0 0 * * 0` | كل يوم أحد عند منتصف الليل |
+
+### سياسات التزامن
+
+| السياسة | السلوك |
+|---------|--------|
+| **Allow** | الـ Jobs الجديدة تعمل حتى لو السابقة لم تنتهِ (الافتراضي) |
+| **Forbid** | تخطي إنشاء Job جديد إذا السابقة لا تزال تعمل |
+| **Replace** | حذف الـ Job الحالي وبدء واحد جديد |
+
+استخدم `Forbid` للنسخ الاحتياطية والمهام الأخرى التي لا يجب أن تتداخل. استخدم `Replace` لمهام المراقبة حيث النتيجة الأخيرة فقط هي المهمة.
+
+## معالجة الفشل: backoffLimit، restartPolicy، activeDeadlineSeconds
+
+الـ Jobs و CronJobs لها آليات متعددة للتعامل مع الفشل:
+
+### restartPolicy
+
+| القيمة | السلوك | حالة الاستخدام |
+|--------|--------|----------------|
+| **OnFailure** | إعادة تشغيل الحاوية داخل نفس الـ Pod | أخطاء عابرة — انقطاع الشبكة، حدود الموارد المؤقتة |
+| **Never** | تعليم الـ Pod كفاشل وإنشاء Pod جديد | أخطاء قد تكون خاصة بالعقدة — يُعاد جدولة الـ Pod إلى عقدة مختلفة |
+
+```yaml
+# OnFailure: حاوية الـ Pod تُعاد تشغيلها في مكانها
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+```
+
+```yaml
+# Never: Pod جديد يُنشأ على عقدة مختلفة محتملة
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+```
+
+### backoffLimit
+
+يعين `backoffLimit` أقصى عدد من محاولات إعادة المحاولة قبل تعليم الـ Job كفاشل. كل محاولة تنشئ Pod جديدًا (مع `restartPolicy: Never`) أو تعيد تشغيل الحاوية (مع `OnFailure`).
+
+```yaml
+spec:
+  backoffLimit: 6      # بعد 6 إخفاقات، علّم الـ Job كفاشل
+```
+
+### activeDeadlineSeconds
+
+هذا هو الحد الزمني المطلق للـ Job بالكامل. إذا عمل الـ Job لفترة أطول من هذا، تُنهى جميع الـ Pods ويُعلّم الـ Job كفاشل.
+
+```yaml
+spec:
+  activeDeadlineSeconds: 3600    # أقصى وقت تشغيل ساعة واحدة
+```
+
+### جمعها معًا: Job نسخ احتياطي متين
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: database-backup
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      activeDeadlineSeconds: 1800
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: postgres:16
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  pg_dump -h postgres-0.postgres-headless -U admin mydb > /backup/mydb-$(date +%Y%m%d).sql
+                  echo "Backup completed successfully"
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backup
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-pvc
+```
+
+هذا الـ Job:
+- يعمل كل ليلة الساعة 2 صباحًا
+- لا يسمح بالتشغيل المتداخل (`concurrencyPolicy: Forbid`)
+- يُعيد المحاولة حتى 3 مرات عند الفشل
+- لديه حد زمني 30 دقيقة
+- يعيد تشغيل الحاوية في مكانها عند الأخطاء العابرة
+
+## مرجع الأوامر الرئيسية
+
+```bash
+# StatefulSets
+kubectl get statefulset                         # قائمة جميع الـ StatefulSets
+kubectl describe statefulset postgres            # معلومات مفصلة عن الـ StatefulSet
+kubectl scale statefulset postgres --replicas=5  # توسع إلى 5 نسخ متماثلة (مرتب)
+kubectl delete statefulset postgres             # حذف الـ StatefulSet (الـ PVCs تبقى!)
+
+# Jobs
+kubectl get jobs                                 # قائمة جميع الـ Jobs
+kubectl describe job data-migration              # معلومات مفصلة عن الـ Job (الإكمالات، الإخفاقات)
+kubectl logs job/data-migration                  # عرض سجلات الـ Job Pod
+kubectl delete job data-migration                # حذف الـ Job والـ Pods الخاصة به
+
+# CronJobs
+kubectl get cronjob                              # قائمة جميع الـ CronJobs
+kubectl describe cronjob nightly-backup          # معلومات مفصلة عن الـ CronJob
+kubectl create job --from=cronjob/nightly-backup manual-backup  # تشغيل CronJob يدويًا
+
+# PersistentVolumeClaims
+kubectl get pvc                                  # قائمة جميع الـ PVCs
+kubectl get pvc -l app=postgres                  # قائمة الـ PVCs لتطبيق محدد
+```
+
+<Diagram config={k8sStatefulsetsJobs} />

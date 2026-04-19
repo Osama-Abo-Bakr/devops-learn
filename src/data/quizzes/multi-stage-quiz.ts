@@ -72,5 +72,19 @@ export const multiStageQuiz: Quiz = {
       explanation:
         "By default the last `FROM` instruction defines the final image. However, you can use `docker build --target <stage>` to stop at a specific stage, making any named stage the final image. This is useful for debugging intermediate build stages.",
     },
+    {
+      id: "q6",
+      question:
+        "Your Docker image is 1.2 GB because it includes the Go compiler and source code. You want to reduce it to under 50 MB. What is the best approach?",
+      options: [
+        "Use `docker image prune` to remove unused layers",
+        "Use multi-stage builds — build in one stage with the full Go SDK, then COPY the compiled binary to a minimal alpine or scratch image",
+        "Compress the image with `docker save` and `gzip` before distributing",
+        "Split the application into multiple smaller containers and connect them over a network",
+      ],
+      correctIndex: 1,
+      explanation:
+        "Multi-stage builds are the standard solution for bloated images. You define a build stage (e.g., `FROM golang:1.21 AS builder`) that compiles your binary, then a final runtime stage (e.g., `FROM alpine:3.19` or `FROM scratch`) that only receives the compiled binary via `COPY --from=builder`. The Go compiler, source code, and build tools stay in the discarded build stage, reducing the final image from 1.2 GB to well under 50 MB.",
+    },
   ],
 };

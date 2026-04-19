@@ -82,6 +82,18 @@ const modules: Record<Topic, Module> = {
           "Best practices for running containers in production: health checks, logging, and resource limits.",
         order: 6,
       },
+      {
+        slug: "docker-troubleshooting",
+        title: "Docker Troubleshooting",
+        module: "docker",
+        level: "intermediate",
+        duration: "35 min",
+        diagram: "docker-troubleshooting",
+        quiz: "docker-troubleshooting-quiz",
+        description:
+          "Diagnose and fix common Docker issues: build failures, runtime errors, networking problems, and performance debugging.",
+        order: 7,
+      },
     ],
   },
 
@@ -224,6 +236,18 @@ const modules: Record<Topic, Module> = {
           "Control access with RBAC and restrict network traffic with NetworkPolicies.",
         order: 5,
       },
+      {
+        slug: "statefulsets-jobs",
+        title: "StatefulSets and Jobs",
+        module: "kubernetes",
+        level: "advanced",
+        duration: "40 min",
+        diagram: "k8s-statefulsets-jobs",
+        quiz: "k8s-statefulsets-jobs-quiz",
+        description:
+          "Run stateful workloads with StatefulSets and batch processes with Jobs and CronJobs.",
+        order: 6,
+      },
     ],
   },
 
@@ -318,6 +342,30 @@ const modules: Record<Topic, Module> = {
         description:
           "Multi-cluster Kubernetes, service mesh, autoscaling, ConfigMaps, Secrets, and disaster recovery patterns.",
         order: 7,
+      },
+      {
+        slug: "gitops-argocd",
+        title: "GitOps and ArgoCD",
+        module: "devops",
+        level: "intermediate",
+        duration: "40 min",
+        diagram: "gitops-argocd",
+        quiz: "gitops-argocd-quiz",
+        description:
+          "Declarative GitOps with ArgoCD: sync clusters from Git, handle drift, and manage multi-env deployments.",
+        order: 8,
+      },
+      {
+        slug: "infrastructure-as-code",
+        title: "Infrastructure as Code",
+        module: "devops",
+        level: "intermediate",
+        duration: "40 min",
+        diagram: "infrastructure-as-code",
+        quiz: "infrastructure-as-code-quiz",
+        description:
+          "Manage infrastructure declaratively with Terraform and Pulumi: state, modules, and container infrastructure.",
+        order: 9,
       },
     ],
   },

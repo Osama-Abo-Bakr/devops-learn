@@ -1,0 +1,325 @@
+---
+title: "استكشاف أخطاء Docker"
+module: docker
+level: intermediate
+duration: "35 min"
+diagram: docker-troubleshooting
+description: "Diagnose and fix common Docker issues: build failures, runtime errors, networking problems, and performance debugging."
+---
+
+# استكشاف أخطاء Docker
+
+الأشياء تعطب. الحاويات ترفض العمل، عمليات البناء تفشل بأخطاء غامضة، الخدمات لا تستطيع الوصول لبعضها، وأحمال العمل في الإنتاج تُقتل دون تحذير. الفرق بين المبتدئ والمستخدم المتمرس في Docker ليس في تجنب المشاكل — بل في معرفة كيفية تشخيصها بسرعة.
+
+هذا الدرس يأخذك في منهجية منهجية لاستكشاف الأخطاء: حدد فئة المشكلة، استخدم الأداة المناسبة، افهم المخرجات، وطبّق الإصلاح الموجه.
+
+## قراءة سجلات الحاوية
+
+أول أمر يجب أن تلجأ إليه عندما تتصرف حاوية بشكل غير طبيعي هو `docker logs`. يعرض هذا الأمر مخرجات stdout وstderr التي يكتبها تطبيقك داخل الحاوية.
+
+```bash
+# عرض جميع السجلات من حاوية
+docker logs my-container
+
+# متابعة السجلات في الوقت الحقيقي (مثل tail -f)
+docker logs -f my-container
+
+# عرض آخر 100 سطر
+docker logs --tail 100 my-container
+
+# عرض السجلات منذ تاريخ محدد
+docker logs --since "2025-01-15T10:00:00" my-container
+
+# إضافة طوابع زمنية لكل سطر سجل
+docker logs -t my-container
+```
+
+**فهم stdout مقابل stderr:** يلتقط Docker كلا التدفقين بشكل منفصل. في معظم الإعدادات، تذهب رسائل السجل إلى stdout ورسائل الخطأ إلى stderr. عند تشغيل `docker logs`، يتم دمج التدفقين. بعض برامج تشغيل السجلات وأنظمة تجميع السجلات يمكنها فصلهما للتصفية.
+
+**أخطاء شائعة:**
+- إذا كان تطبيقك يسجل في ملف بدلاً من stdout/stderr، فلن يعرض `docker logs` شيئاً. اضبط تطبيقك للتسجيل في stdout/stderr، أو استخدم مشغل سجلات يقرأ ملفات السجل.
+- سجلات مطولة جداً؟ استخدم `--tail` و`--since` لتضييق النافذة الزمنية. لا تطغى ملايين الأسطر على الطرفية.
+- تُفقد السجلات عند إزالة الحاوية. استخدم مشغل سجلات (json-file مع التدوير، أو local، أو أرسل إلى جامع مركزي) للاحتفاظ طويل الأمد.
+
+## فحص الحاويات
+
+عما لا تخبرك به السجلات بالكامل، يكشف `docker inspect` عن التكوين الكامل وحالة وقت التشغيل للحاوية — عنوان IP، نقاط التحميل، متغيرات البيئة، رموز الخروج، والمزيد.
+
+```bash
+# مخرجات فحص JSON كاملة
+docker inspect my-container
+
+# استخراج حقول محددة باستخدام --format
+docker inspect --format '{{.State.ExitCode}}' my-container
+docker inspect --format '{{.State.OOMKilled}}' my-container
+docker inspect --format '{{.NetworkSettings.IPAddress}}' my-container
+docker inspect --format '{{.HostConfig.Memory}}' my-container
+
+# عرض جميع متغيرات البيئة
+docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' my-container
+
+# عرض جميع وحدات التخزين المركبة
+docker inspect --format '{{json .Mounts}}' my-container | python3 -m json.tool
+```
+
+المخرجات هي مصفوفة JSON. كل عنصر يمثل حاوية (أو صورة، إذا كنت تفحص صورة). الأقسام الرئيسية هي:
+
+| القسم | ما يحتويه |
+|-------|-----------|
+| `.State` | حالة التشغيل، رمز الخروج، OOMKilled، startedAt، finishedAt |
+| `.Config` | متغيرات البيئة، Cmd، Entrypoint، الصورة، المنافذ المكشوفة |
+| `.HostConfig` | حدود الموارد (Memory، NanoCpus)، سياسة إعادة التشغيل، ربط المنافذ |
+| `.NetworkSettings` | عنوان IP، البوابة، الشبكات المتصلة |
+| `.Mounts` | وحدات التخزين المركبة، ربط التحميل، مصدرها ومسارها الوجهة |
+
+استخدم `--format` (صيغة قالب Go) لاستخراج ما تحتاجه بالضبط بدلاً من التمرير عبر صفحات من JSON.
+
+## أعطال البناء الشائعة
+
+أعطال البناء محبطة لأن الخطأ يمكن أن يكون في أي طبقة. إليك الأسباب الأكثر شيوعاً وكيفية إصلاحها:
+
+### إبطال ذاكرة التخزين المؤقت للطبقات
+
+يخزن Docker كل طبقة مؤقتاً. إذا تغيرت طبقة، تُعاد بناء جميع الطبقات اللاحقة. لهذا السبب يجب أن يأتي `COPY package.json` قبل `COPY .` — لا تريد إبطال طبقة تثبيت التبعيات عندما يتغير ملف مصدر.
+
+```dockerfile
+# سيئ: أي تغيير في ملف يبطل npm install
+COPY . /app
+RUN npm install
+
+# جيد: فقط تغيير package.json يبطل npm install
+COPY package.json package-lock.json /app/
+RUN npm install
+COPY . /app
+```
+
+### التبعيات المفقودة ومشاكل سياق البناء
+
+إذا فشل `COPY` مع "no such file or directory"، فإن الملف ليس في سياق البناء. تحقق من `.dockerignore` — قد يستبعد ملفات مطلوبة.
+
+```bash
+# تصحيح: شاهد ما في سياق البناء
+docker build --progress=plain .
+
+# تحقق من .dockerignore
+cat .dockerignore
+```
+
+أخطاء `.dockerignore` شائعة:
+- استبعاد ملفات `.env` التي يحتاجها البناء (استخدم `ARG` متعدد المراحل بدلاً من ذلك)
+- استبعاد `node_modules` ثم تشغيل `npm install` الذي يتوقع حزم محلية
+- استخدام أنماط واسعة جداً مثل `**/*.json` التي تستبعد `package.json`
+
+### أعطال COPY في البناء متعدد المراحل
+
+في البناء متعدد المراحل، يجب أن يشير `COPY --from=` إلى اسم مرحلة أو فهرس صالح. خطأ مطبعي في اسم المرحلة ينتج خطأ غامضاً:
+
+```dockerfile
+# مرحلة مسماة "builder"
+FROM node:20 AS builder
+RUN npm run build
+
+# خطأ: خطأ مطبعي في اسم المرحلة
+COPY --from=buidler /app/dist /app/dist
+
+# صحيح: يطابق اسم المرحلة بالضبط
+COPY --from=builder /app/dist /app/dist
+```
+
+## أعطال وقت التشغيل ورموز الخروج
+
+عندما تتوقف حاوية، يسجل Docker رمز خروج. هذا هو الدليل الأكثر أهمية لديك:
+
+| رمز الخروج | المعنى | السبب الشائع |
+|------------|--------|-------------|
+| 0 | نجاح | خرج التطبيق عمداً (إيقاف طبيعي) |
+| 1 | خطأ في التطبيق | استثناء غير معالج، إعداد مفقود، خطأ فادح |
+| 137 | SIGKILL (128+9) | OOMKilled — الحاوية تجاوزت حد الذاكرة، أو قُتلت يدوياً |
+| 139 | خطأ في التقسيم (128+11) | انتهاك الوصول إلى الذاكرة، غالباً خطأ في التطبيق أو مكتبة |
+| 143 | SIGTERM (128+15) | إيقاف سلس — تم استدعاء `docker stop` |
+
+**التحقق من رمز الخروج:**
+
+```bash
+docker inspect --format '{{.State.ExitCode}}' my-container
+```
+
+### قتل بسبب نفاد الذاكرة (OOMKilled)
+
+إذا كان رمز الخروج 137، تحقق من حالة OOM:
+
+```bash
+docker inspect --format '{{.State.OOMKilled}}' my-container
+```
+
+إذا كانت `true`، فُتلت الحاوية لأنها تجاوزت حد الذاكرة. الحلول:
+1. زيادة حد الذاكرة: `docker run --memory=1g ...`
+2. إصلاح تسرب الذاكرة في تطبيقك
+3. ضبط جمع القمامة (لـ Go، Java، Node.js)
+
+### أخطاء التقسيم
+
+رمز الخروج 139 يعني خطأ في التقسيم. هذا دائماً تقريباً خطأ — في الكود، أو تبعية أصلية، أو مكتبة. التصحيح بـ:
+1. التحقق مما إذا كانت الصورة تستخدم بنية متوافقة (`amd64` مقابل `arm64`)
+2. التشغيل مع `docker run --rm -it my-image /bin/sh` وإعادة إنتاج الخطأ تفاعلياً
+3. فحص الملفات الأساسية إن وجدت
+
+## تصحيح أخطاء الشبكة
+
+الحاويات التي لا تستطيع التحدث مع بعضها أو مع العالم الخارجي هي من أكثر مشاكل Docker شيوعاً.
+
+### فحص تكوين الشبكة
+
+```bash
+# عرض جميع الشبكات
+docker network ls
+
+# فحص شبكة محددة
+docker network inspect my-network
+
+# التحقق من الحاويات المتصلة
+docker network inspect my-network --format '{{range .Containers}}{{.Name}} {{end}}'
+```
+
+### مشاكل تحليل DNS
+
+على الشبكات المعرّفة من قبل المستخدم، يوفر Docker تحليل DNS تلقائي باستخدام أسماء الحاويات. على شبكة الجسر الافتراضية، يمكن للحاويات التواصل فقط بعنوان IP — وليس بالاسم.
+
+```bash
+# إنشاء شبكة معرّفة من قبل المستخدم
+docker network create my-app-net
+
+# تشغيل حاويات عليها
+docker run --network my-app-net --name api my-api-image
+docker run --network my-app-net --name db my-db-image
+
+# من حاوية api، يمكنك الوصول إلى db بالاسم:
+docker exec api ping db
+```
+
+### مشاكل تعيين المنافذ
+
+إذا كانت الخدمة غير قابلة للوصول من المضيف:
+
+```bash
+# التحقق من المنافذ المنشورة
+docker port my-container
+
+# التحقق من ربط المنافذ في الفحص
+docker inspect --format '{{json .HostConfig.PortBindings}}' my-container
+
+# اختبار الاتصال من داخل الحاوية
+docker exec my-container curl -s http://localhost:8080/health
+```
+
+أخطاء شائعة:
+- نشر المنفذ الخطأ: `-p 8080:80` يربط منفذ المضيف 8080 بمنفذ الحاوية 80، وليس العكس
+- الربط بـ `127.0.0.1` فقط: `-p 127.0.0.1:8080:80` يجعله غير قابل للوصول من أجهزة أخرى
+- التطبيق يستمع على منفذ مختلف عما يوثقه `EXPOSE`
+
+## مراقبة الموارد
+
+يوفر Docker أدوات مدمجة لمراقبة استخدام الموارد:
+
+```bash
+# استخدام الموارد الحي (المعالج، الذاكرة، الشبكة، إدخال/إخراج القرص)
+docker stats
+
+# لقطة واحدة (بدون بث مباشر)
+docker stats --no-stream
+
+# حاوية محددة فقط
+docker stats my-container
+
+# تفصيل استخدام القرص
+docker system df
+
+# استخدام القرص التفصيلي (لكل صورة، حاوية، وحدة تخزين)
+docker system df -v
+```
+
+### تنظيف مساحة القرص
+
+بمرور الوقت، يتراكم Docker صوراً غير مستخدمة، وحاويات متوقفة، وذاكرة تخزين مؤقت للبناء:
+
+```bash
+# إزالة الحاويات المتوقفة، الشبكات غير المستخدمة، الصور المعلقة، ذاكرة التخزين المؤقت للبناء
+docker system prune
+
+# إزالة أيضاً جميع الصور غير المستخدمة (ليس فقط المعلقة)
+docker system prune -a
+
+# إزالة وحدات التخزين أيضاً (تحذير: يحذف البيانات)
+docker system prune -a --volumes
+```
+
+### تعيين حدود الموارد
+
+منع الحاويات المتفلتة من استهلاك موارد المضيف:
+
+```bash
+# تحديد الذاكرة بـ 512 ميجابايت والمعالج بنواة واحدة
+docker run --memory=512m --cpus=1.0 my-image
+
+# تعيين حجز ذاكرة (حد مرن)
+docker run --memory=1g --memory-reservation=512m my-image
+```
+
+## التصحيح التفاعلي
+
+عندما لا تكفي السجلات والفحص، تحتاج الدخول إلى داخل الحاوية:
+
+### الوصول إلى الصدفة مع docker exec
+
+```bash
+# فتح صدفة تفاعلية
+docker exec -it my-container /bin/sh
+
+# إذا كانت bash متاحة
+docker exec -it my-container /bin/bash
+
+# تشغيل أمر تشخيصي واحد
+docker exec my-container cat /etc/os-release
+docker exec my-container env
+docker exec my-container ps aux
+```
+
+### استخراج الملفات باستخدام docker cp
+
+```bash
+# نسخ ملف من الحاوية إلى المضيف
+docker cp my-container:/var/log/app.log ./app.log
+
+# نسخ ملف من المضيف إلى الحاوية
+docker cp ./config.yaml my-container:/app/config.yaml
+
+# نسخ دليل كامل
+docker cp my-container:/var/log ./logs-from-container
+```
+
+### تجاوز نقطة الدخول للتصحيح
+
+إذا خرجت الحاوية فوراً ولم تستطع `exec` الدخول إليها، تجاوز نقطة الدخول للحصول على صدفة:
+
+```bash
+# استبدال نقطة الدخول بصدفة
+docker run --rm -it --entrypoint /bin/sh my-image
+
+# مع صورة مبنية على Alpine (بدون bash)
+docker run --rm -it --entrypoint /bin/sh my-image
+
+# فحص نظام الملفات قبل بدء التطبيق
+docker run --rm -it --entrypoint /bin/sh my-image -c "ls -la /app && cat /app/config.json"
+```
+
+تتيح لك هذه التقنية استكشاف نظام ملفات الحاوية، والتحقق من متغيرات البيئة، وتشغيل التطبيق يدوياً لترى بالضبط ما الذي يفشل.
+
+## الخلاصة
+
+- **`docker logs`** هو محطتك الأولى — يعرض مخرجات stdout/stderr للتطبيق. استخدم `--tail` و`--since` و`-f` للتصفية.
+- **`docker inspect`** يكشف عن التكوين والحالة — رموز الخروج، حالة OOM، عناوين IP، وحدات التخزين، متغيرات البيئة.
+- **رموز الخروج** تخبرك لماذا توقفت الحاوية: 0 (نجاح)، 1 (خطأ في التطبيق)، 137 (OOMKilled)، 139 (خطأ تقسيم)، 143 (SIGTERM).
+- **أعطال البناء** غالباً تأتي من إبطال ذاكرة التخزين المؤقت، مشاكل `.dockerignore`، أو مسارات `COPY` خاطئة في البناء متعدد المراحل.
+- **مشاكل الشبكة** عادة حول كونها على الشبكة الخطأ، DNS لا يحل، أو أخطاء في تعيين المنافذ.
+- **`docker system df`** و**`docker system prune`** تساعد في إدارة مساحة القرص.
+- **`docker exec -it`** و**`docker cp`** هي أدوات التصحيح التفاعلي. تجاوز نقطة الدخول إذا كانت الحاوية لا تستمر في العمل.

@@ -73,5 +73,19 @@ export const composeNetworksVolumesQuiz: Quiz = {
       explanation:
         "Docker networks provide isolation by default — services on different networks cannot resolve each other's names or communicate directly. By placing groups on separate custom networks, you enforce network boundaries. To allow cross-group communication, explicitly add the service to both networks.",
     },
+    {
+      id: "q6",
+      question:
+        "Two services in your Compose file need to communicate, but one cannot reach the other by its service name. You verify both are on the same custom network. What is the most likely cause?",
+      options: [
+        "The target service has `network_mode: host` set, bypassing the custom network",
+        "The service trying to connect is starting before the target service is ready — it needs a health check and `depends_on` with `condition: service_healthy`",
+        "Docker Compose does not support DNS resolution on custom networks",
+        "The custom network driver does not support inter-service communication",
+      ],
+      correctIndex: 1,
+      explanation:
+        "Even on the same network, if the calling service starts before the target is ready, connections fail. DNS resolution works once both containers are attached, but the application may attempt connections before the target service is listening. Adding a health check to the target and using `depends_on` with `condition: service_healthy` ensures the caller waits until the target is truly ready.",
+    },
   ],
 };

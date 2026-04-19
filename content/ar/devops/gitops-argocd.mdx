@@ -1,0 +1,363 @@
+---
+title: "GitOps and ArgoCD"
+module: devops
+level: intermediate
+duration: "40 min"
+diagram: gitops-argocd
+description: "Declarative GitOps with ArgoCD: sync clusters from Git, handle drift, and manage multi-env deployments."
+order: 8
+---
+
+# GitOps و ArgoCD
+
+إذا سبق لك نشر تطبيق بتشغيل `kubectl apply` أو `helm upgrade` من حاسوبك، فقد اختبرت المشكلة التي يحلها GitOps: حالة المجموعة تعيش في تاريخ طرفية شخص ما، وليس في مكان يمكن للفريق تدقيقه أو إعادة إنتاجه أو تسويته تلقائيًا. GitOps يجعل Git المصدر الوحيد للحقيقة حول ما يجب أن يعمل في مجموعتك. ArgoCD هو أشهر أداة مفتوحة المصدر تطبق GitOps لـ Kubernetes.
+
+الفكرة الأساسية بسيطة: تعلن عما تريده في Git، وArgoCD يضمن تطابق مجموعتك مع هذا الإعلان. إذا غيّر شخص ما المجموعة يدويًا، يكتشف ArgoCD الانحراف ويصححه. إذا كنت تريد نشر نسخة جديدة، تحدّث Git، وArgoCD يلتقط التغيير تلقائيًا. لا `kubectl apply` من CI، ولا SSH إلى الإنتاج، ولا نصوص تنكسر في الثانية صباحًا.
+
+## ما هو GitOps؟
+
+GitOps مبني على أربع مبادئ:
+
+1. **إعلاني (Declarative)** — حالة النظام بالكامل تُوصف بشكل إعلاني. تكتب بيانات Kubernetes أو مخططات Helm أو تراكبات Kustomize، وليس نصوصًا أمرية. الإعدادات الإعلانية قابلة للتدقيق والاختلاف والمراجعة في طلبات السحب.
+
+2. **مُصدَّر وغير قابل للتغيير (Versioned and immutable)** — الحالة المرغوبة مُخزَّنة في نظام تحكم بالإصدارات (Git). كل تغيير له تجزئة التزام ومؤلف وطابع زمني. يمكنك التراجع عن أي حالة سابقة بعكس التزام. هذا هو مسرح التدقيق الخاص بك.
+
+3. **مُسحوب تلقائيًا (Pulled automatically)** — وكلاء برمجيون يعملون داخل المجموعة يسحبون الحالة المرغوبة من Git. خط أنابيب CI يدفع الصور إلى سجل الحاويات والوسوم إلى Git، لكنه لا ينشر مباشرةً. وكيل النشر (ArgoCD) يراقب Git ويسحب التغييرات.
+
+4. **مُسوى باستمرار (Continuously reconciled)** — الوكيل يقارن باستمرار الحالة الفعلية في المجموعة مع الحالة المرغوبة في Git. إذا اختلفوا — لأن شخصًا شغّل `kubectl edit`، أو فشلت عقدة، أو انحرفت إعدادات — الوكيل يصحح الانحراف تلقائيًا.
+
+**فوائد مقارنة بالـ CI/CD التقليدي:**
+
+- **مسار تدقيق** — كل نشر يتوافق مع التزام Git. تعرف بالضبط من غيّر ماذا ومتى.
+- **استعادة الكوارث** — إذا ماتت المجموعة، أنشئ واحدة جديدة، وجّه ArgoCD إلى نفس مستودع Git، وكل شيء يعود.
+- **أمان** — خطوط أنابيب CI لا تحتاج بيانات اعتماد المجموعة. ArgoCD يعمل داخل المجموعة ويمتلك بيانات الاعتماد. لا مزيد لتسريبات kubeconfig في سجلات CI.
+- **خدمة ذاتية للمطورين** — المطورون ينشئون طلب سحب للنشر. مهندسو المنصة يراجعون الطلب. لا حاجة لنصوص نشر أو وصول للمجموعة.
+
+## معمارية ArgoCD
+
+ArgoCD يحتوي على ثلاثة مكونات أساسية تعمل معًا:
+
+### متحكم التطبيقات (Application Controller)
+
+متحكم التطبيقات هو العقل. يشغّل حلقة تسوية مستمرة تقارن الحالة المرغوبة (من Git) مع الحالة الحية (من المجموعة). عندما يكتشف اختلافًا، يعلّم التطبيق كـ `OutOfSync`. إذا كانت المزامنة التلقائية مفعّلة، يطلق عملية مزامنة لإعادة المجموعة إلى الحالة المرغوبة.
+
+### خادم المستودعات (Repo Server)
+
+خادم المستودعات يستنسخ مستودعات Git، يخزنها مؤقتًا، ويُصيّر البيانات. عندما تستخدم مخططات Helm أو تراكبات Kustomize، خادم المستودعات يشغّل `helm template` أو `kustomize build` لإنتاج بيانات Kubernetes خام. هذا التصيير يحدث داخل ArgoCD، ليس في خط أنابيب CI الخاص بك.
+
+### خادم API (API Server)
+
+خادم API يعرض واجهة مستخدم ArgoCD وCLI. يتعامل مع المصادقة والتفويض وإدارة التطبيقات. عندما تشغّل `argocd app sync` أو تنقر "Sync" في واجهة المستخدم، خادم API يستقبل الطلب ويبلغ متحكم التطبيقات لأداء المزامنة.
+
+**كيف يعملون معًا:**
+
+1. متحكم التطبيقات يطلب من خادم المستودعات الحالة المرغوبة.
+2. خادم المستودعات يستنسخ مستودع Git، يصيّر القوالب، ويعيد البيانات.
+3. متحكم التطبيقات يستعلم عن الحالة الحية من Kubernetes API.
+4. يقارن المرغوبة مع الحية ويحدد حالة المزامنة (Synced أو OutOfSync).
+5. إذا كانت المزامنة التلقائية مفعّلة، يطبّق الحالة المرغوبة على المجموعة.
+
+## مورد Application CRD
+
+مورد Application CRD هو المورد الأساسي في ArgoCD. يحدد ماذا ينشر وأين:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app
+  namespace: argocd
+spec:
+  # Source — حيث تجد الحالة المرغوبة
+  source:
+    repoURL: https://github.com/my-org/gitops-configs.git
+    targetRevision: main
+    path: apps/my-app
+
+    # اختياري: تجاوزات قيم Helm
+    helm:
+      valueFiles:
+        - values-prod.yaml
+
+    # اختياري: تراكبات Kustomize
+    # kustomize:
+    #   namePrefix: prod-
+
+  # Destination — أين تنشر
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+
+  # Sync policy — كيف ومتى يتم المزامنة
+  syncPolicy:
+    automated:
+      prune: true       # حذف الموارد التي لم تعد في Git
+      selfHeal: true     # تصحيح الانحراف تلقائيًا
+    syncOptions:
+      - CreateNamespace=true
+```
+
+حقل `source` يخبر ArgoCD *ماذا* ينشر (أي مستودع Git، أي مسار، أي مراجعة). حقل `destination` يخبره *أين* (أي مجموعة، أي مساحة أسماء). حقل `syncPolicy` يتحكم *كيف* يتعامل ArgoCD مع المزامنات.
+
+## سياسات المزامنة
+
+ArgoCD يدعم وضعي مزامنة:
+
+### مزامنة تلقائية
+
+عندما يكون `automated` مفعّلًا، ArgoCD يزامن تلقائيًا كلما اكتشف تغييرًا في Git. مع `selfHeal: true`، يصحح أي انحراف في المجموعة. مع `prune: true`، يحذف الموارد الموجودة في المجموعة لكنها لم تعد معرّفة في Git.
+
+```yaml
+spec:
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - PrunePropagationPolicy=foreground
+```
+
+**متى تستخدم المزامنة التلقائية:** بيئات الإنتاج حيث تريد عمليات نشر بدون تدخل. أي التزام Git على الفرع المراقب يطلق نشرًا خلال ثوانٍ. إذا حرّر شخص ما موردًا يدويًا عبر `kubectl`، ArgoCD يتراجع عن التغيير.
+
+### مزامنة يدوية
+
+بدون `automated`، ArgoCD يكتشف الانحراف ويعرض `OutOfSync`، لكنه لا يتخذ إجراءً. يجب النقر على "Sync" في واجهة المستخدم أو تشغيل `argocd app sync <app-name>`.
+
+**متى تستخدم المزامنة اليدوية:** البيئات التي تتطلب بوابات موافقة (مثلًا الإنتاج قبل إطلاق الكناري)، أو عندما تريد مراجعة كل تغيير قبل وصوله للمجموعة.
+
+### خيارات المزامنة الشائعة
+
+| الخيار | التأثير |
+|-------|---------|
+| `CreateNamespace=true` | إنشاء مساحة الأسماء تلقائيًا إذا لم تكن موجودة |
+| `ServerSideApply=true` | استخدام التطبيق من جانب الخادم للموارد الأكبر وحل التعارضات بشكل أفضل |
+| `PrunePropagationPolicy=foreground` | حذف الموارد التابعة قبل تقليم الأصل |
+| `Replace=true` | استخدام `kubectl replace` بدلاً من `kubectl apply` (للموارد التي لا يمكن ترقيعها) |
+
+## نمط App-of-Apps
+
+عندما لديك عشرات التطبيقات، إنشاء وإدارة كل Application CRD بشكل فردي ممل. نمط App-of-Apps يحل هذا بإنشاء تطبيق أب واحد يدير جميع التطبيقات الأبناء.
+
+**هيكل المجلدات:**
+
+```
+gitops-configs/
+├── apps/
+│   ├── api-app.yaml          # Application CR للتطبيق API
+│   ├── web-app.yaml           # Application CR لواجهة الويب
+│   ├── worker-app.yaml        # Application CR لعامل الخلفية
+│   └── monitoring-app.yaml    # Application CR لـ Prometheus + Grafana
+└── app-of-apps.yaml           # التطبيق الأب الذي يراقب apps/
+```
+
+**التطبيق الأب (app-of-apps.yaml):**
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: app-of-apps
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/my-org/gitops-configs.git
+    targetRevision: main
+    path: apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+عندما يزامن ArgoCD التطبيق الأب، يقرأ كل ملف YAML في مجلد `apps/` وينشئ تطبيقات أبناء. إضافة تطبيق جديد بسيطة مثل إضافة ملف YAML ودفع إلى Git. لا `kubectl apply`، ولا أوامر CLI.
+
+**الفوائد:**
+- **التزام Git واحد** لإضافة أو إزالة تطبيقات
+- **سياسات مزامنة متسقة** مطبقة على جميع التطبيقات الأبناء
+- **عمليات مجمعة** — مزامنة كل التطبيقات دفعة واحدة بمزامنة الأب
+
+## اكتشاف الانحراف والتسوية
+
+الانحراف هو عندما تتباعد حالة المجموعة الحية عن الحالة المرغودة في Git. ArgoCD يكتشف الانحراف بطريقتين:
+
+1. **الاستقصاء** — افتراضيًا، ArgoCD يستقصي مستودعات Git كل 3 دقائق (قابل للتكوين عبر `status.refreshTime`). كما يستقصي Kubernetes API عن تغييرات الحالة الحية.
+
+2. **خطافات الويب (Webhooks)** — يمكنك تكوين خطافات ويب من Git بحيث يتم إخطار ArgoCD فورًا عند الدفع، مما يقلل زمن استجابة المزامنة من دقائق إلى ثوانٍ.
+
+**كيف تعمل التسوية:**
+
+1. ArgoCD يقارن الحالة المرغوبة (البيانات المُصيَّرة من Git) مع الحالة الحية (الموارد في المجموعة).
+2. إذا تطابقوا، التطبيق `Synced` و`Healthy`.
+3. إذا اختلفوا، التطبيق يصبح `OutOfSync`. واجهة المستخدم تعرض أي موارد انحرفت والاختلاف الدقيق.
+4. إذا كان `selfHeal` مفعّلًا، ArgoCD يطبّق الحالة المرغوبة تلقائيًا، مصححًا الانحراف.
+5. إذا كان `selfHeal` معطلًا، ArgoCD ينتظر مزامنة يدوية.
+
+**أسباب شائعة للانحراف:**
+- شخص ما شغّل `kubectl edit` أو `kubectl scale` مباشرة على المجموعة
+- أداة Horizontal Pod Autoscaler غيّرت أعداد النسخ
+- CronJob أنشأ موارد ليست في Git
+- مشغّل (مثل cert-manager) عدّل تعليقات توضيحية أو أسرار
+
+**أفضل ممارسة:** فعّل `selfHeal` في الإنتاج. إذا كانت التغييرات اليدوية ضرورية، اجعلها في Git أولًا، وليس على المجموعة. Git هو المصدر الوحيد للحقيقة.
+
+## التسليم التدريجي مع Argo Rollouts
+
+ArgoCD يزامن البيانات إلى المجموعات، لكنه لا يتحكم في *كيف* يُحوَّل المرور أثناء التحديث. هنا يأتي دور Argo Rollouts. يحل مورد `Deployment` الخاص بـ Kubernetes بمورد `Rollout` الذي يدعم استراتيجيات الكناري والأزرق-الأخضر مع الترويج القائم على المقاييس.
+
+### استراتيجية الكناري مع التحليل
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: my-app
+spec:
+  replicas: 10
+  strategy:
+    canary:
+      steps:
+        - setWeight: 20          # توجيه 20% من المرور إلى الكناري
+        - pause: { duration: 5m } # انتظار 5 دقائق
+        - analysis:
+            templates:
+              - templateName: success-rate
+        - setWeight: 50          # توجيه 50% من المرور إلى الكناري
+        - pause: { duration: 5m }
+        - analysis:
+            templates:
+              - templateName: success-rate
+        - setWeight: 100         # ترقية الكناري إلى الإنتاج الكامل
+```
+
+### قالب التحليل
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+spec:
+  metrics:
+    - name: success-rate
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring:9090
+          query: |
+            sum(rate(http_requests_total{status!~"5.."}[1m]))
+            /
+            sum(rate(http_requests_total[1m]))
+      successCondition: result[0] >= 0.99
+      failureLimit: 3
+      interval: 30s
+```
+
+إذا انخفض معدل النجاح عن 99% أثناء التحليل، Argo Rollouts يجهض النشر تلقائيًا ويعود إلى النسخة السابقة. لا حاجة لتدخل بشري.
+
+### استراتيجية الأزرق-الأخضر
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: my-app
+spec:
+  replicas: 10
+  strategy:
+    blueGreen:
+      activeService: my-app-active
+      previewService: my-app-preview
+      autoPromotionEnabled: false
+      scaleDownDelaySeconds: 60
+```
+
+في الأزرق-الأخضر، النسخة الجديدة (خضراء) تعمل جنبًا إلى جنب مع النسخة القديمة (زرقاء). يُحوَّل المرور من الزرقاء إلى الخضراء فقط بعد التحقق. إذا حدث خطأ، تعيد تحويل المرور فورًا.
+
+## استراتيجيات متعددة المجموعات ومتعددة البيئات
+
+ArgoCD يمكنه النشر إلى مجموعات متعددة من نسخة واحدة. هذا ضروري لإدارة بيئات التطوير والتجهيز والإنتاج من لوحة تحكم واحدة.
+
+### تسجيل المجموعات
+
+```bash
+# تسجيل مجموعة (يستخدم سياق kubeconfig الخاص بك)
+argocd cluster add my-staging-cluster
+
+# التحقق من التسجيل
+argocd cluster list
+```
+
+### هيكل مجلدات متعدد البيئات
+
+```
+gitops-configs/
+├── base/
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   └── kustomization.yaml
+├── overlays/
+│   ├── dev/
+│   │   ├── kustomization.yaml
+│   │   └── patch-replicas.yaml
+│   ├── staging/
+│   │   ├── kustomization.yaml
+│   │   └── patch-replicas.yaml
+│   └── production/
+│       ├── kustomization.yaml
+│       └── patch-replicas.yaml
+```
+
+### تطبيق لكل بيئة
+
+```yaml
+# Dev — مزامنة تلقائية، تكرار سريع
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app-dev
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/my-org/gitops-configs.git
+    targetRevision: main
+    path: overlays/dev
+  destination:
+    name: dev-cluster
+    namespace: my-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+```yaml
+# Production — مزامنة يدوية، بوابات موافقة
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app-prod
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/my-org/gitops-configs.git
+    targetRevision: v1.2.3   # مثبت على وسم إصدار
+    path: overlays/production
+  destination:
+    name: prod-cluster
+    namespace: my-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+**الاختلافات الأساسية بين البيئات:**
+- **Dev** يزامن تلقائيًا من فرع `main` للتكرار السريع
+- **Staging** يزامن تلقائيًا لكن يتطلب موافقة يدوية قبل الترويج للإنتاج
+- **Production** يُثبَّت على وسم إصدار (`targetRevision: v1.2.3`) ويتطلب ترويجًا صريحًا
+
+هذا النهج بمستودع واحد وتراكبات متعددة يضمن الاتساق عبر البيئات مع السماح بتجاوزات خاصة بكل بيئة (أعداد النسخ، حدود الموارد، أعلام الميزات).

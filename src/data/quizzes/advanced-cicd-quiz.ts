@@ -65,5 +65,19 @@ export const advancedCicdQuiz: Quiz = {
       correctIndex: 1,
       explanation: "Immutable container images mean the previous working version is always available in the registry. Redeploying the previous tag is instant and deterministic — no rebuild needed, no risk of different build output.",
     },
+    {
+      id: "aq6",
+      question:
+        "Your canary deployment sends 5% of traffic to the new version, but after 10 minutes, the error rate spikes from 0.1% to 5%. Your automated canary analysis (Kayenta) detects the anomaly. What should happen next and how is this configured in a Spinnaker pipeline?",
+      options: [
+        "The canary should continue running so engineers can manually investigate the error rate spike",
+        "Kayenta should automatically fail the canary analysis, and the pipeline should trigger a rollback to the baseline version — traffic shifts back and the canary deployment is scaled down",
+        "The pipeline should increase canary traffic to 100% to gather more data points for analysis",
+        "Kayenta should send a Slack notification and wait for manual approval before taking any action",
+      ],
+      correctIndex: 1,
+      explanation:
+        "In Spinnaker, the canary stage with Kayenta analysis is configured to automatically fail when metrics breach thresholds. On failure, the pipeline triggers a rollback: traffic shifts back to the baseline version, and the canary deployment is scaled down. This automated response prevents prolonged exposure to a faulty version.",
+    },
   ],
 };

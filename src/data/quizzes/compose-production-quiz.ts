@@ -71,5 +71,19 @@ export const composeProductionQuiz: Quiz = {
       explanation:
         "The multi-file pattern keeps a shared base in `docker-compose.yml` and environment-specific overrides in separate files. For production, run `docker compose -f docker-compose.yml -f docker-compose.prod.yml up`. This avoids duplication and keeps each environment's differences explicit and version-controlled.",
     },
+    {
+      id: "q6",
+      question:
+        "Your production Compose stack keeps running even when the health check fails. You have `HEALTHCHECK` defined in the Dockerfile but the container never gets marked unhealthy. What is missing?",
+      options: [
+        "The Dockerfile `HEALTHCHECK` instruction is not supported in Compose — you must define it only in `docker-compose.yml`",
+        "Compose health checks alone don't restart unhealthy containers — you need `restart: unless-stopped` or `restart: on-failure` combined with health checks, and optionally `depends_on` with `condition: service_healthy`",
+        "You must add `--health-cmd` to the `docker compose up` command",
+        "Health checks only work in Docker Swarm mode, not in standalone Compose",
+      ],
+      correctIndex: 1,
+      explanation:
+        "Defining a `HEALTHCHECK` in the Dockerfile (or `healthcheck` in Compose) tells Docker how to check container health, but it does not automatically restart unhealthy containers. You need a restart policy like `restart: unless-stopped` so that when the container becomes unhealthy and exits, Compose restarts it. Additionally, `depends_on` with `condition: service_healthy` ensures dependent services wait for healthy containers.",
+    },
   ],
 };

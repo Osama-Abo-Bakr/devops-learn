@@ -73,5 +73,47 @@ export const dockerfileQuiz: Quiz = {
       explanation:
         "`docker build -t myapp:v1 .` builds an image from the Dockerfile in the current directory (`.`) and tags it as `myapp:v1`. The `-t` flag (or `--tag`) assigns a name and optional tag to the image.",
     },
+    {
+      id: "q6",
+      question:
+        "You have a Dockerfile with `ENTRYPOINT [\"python\"]` and you run `docker run myapp app.py`. What happens?",
+      options: [
+        "Docker ignores the ENTRYPOINT and runs `app.py` as a shell command",
+        "Docker runs `python app.py` because arguments after the image name are appended to ENTRYPOINT as CMD",
+        "Docker throws an error because ENTRYPOINT and CMD cannot coexist",
+        "Docker overrides ENTRYPOINT with `app.py` and runs it directly",
+      ],
+      correctIndex: 1,
+      explanation:
+        "When both ENTRYPOINT and CMD are present, Docker combines them by appending the CMD arguments to the ENTRYPOINT. So `ENTRYPOINT [\"python\"]` combined with the run-time argument `app.py` (which becomes the CMD) results in `python app.py`. This is the exec-form ENTRYPOINT pattern — ENTRYPOINT defines the executable, and CMD (or run-time arguments) supply the parameters.",
+    },
+    {
+      id: "q7",
+      question:
+        "What is the key difference between ARG and ENV in a Dockerfile?",
+      options: [
+        "ARG sets environment variables at runtime; ENV sets them at build time",
+        "They are identical — both persist into the running container",
+        "ARG is available only during the build stage and does not persist in the final image; ENV is baked into the image and available in the running container",
+        "ARG can only hold numeric values; ENV can hold strings",
+      ],
+      correctIndex: 2,
+      explanation:
+        "ARG defines build-time variables that are only available during `docker build`. They do not persist in the final image and cannot be accessed by the running container. ENV defines runtime environment variables that are baked into the image and persist into the running container. A common pattern is to use ARG during build (e.g., `ARG VERSION=1.0` for installing a specific version) and ENV for runtime configuration (e.g., `ENV NODE_ENV=production`).",
+    },
+    {
+      id: "q8",
+      question:
+        "In a multi-stage Dockerfile, how do you copy an artifact from a previous build stage named `builder` into the final stage?",
+      options: [
+        "COPY builder:/app/dist /app/dist",
+        "COPY --from=builder /app/dist /app/dist",
+        "ADD --stage=builder /app/dist /app/dist",
+        "FETCH builder /app/dist /app/dist",
+      ],
+      correctIndex: 1,
+      explanation:
+        "The `COPY --from=<stage>` instruction copies files from a previous build stage into the current stage. You reference the stage by its name (set with `FROM ... AS builder`) or its zero-based index. This is the core mechanism of multi-stage builds — you compile or build artifacts in one stage, then copy only the necessary outputs into a slim final image, dramatically reducing image size.",
+    },
   ],
 };

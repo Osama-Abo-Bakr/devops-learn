@@ -75,5 +75,19 @@ export const monitoringQuiz: Quiz = {
       explanation:
         "Distributed tracing tracks a request as it flows through multiple services. Each service adds a `span` to the trace with timing and metadata. Jaeger visualizes the full trace as a waterfall diagram, making it easy to identify which service is slow or failing. Use OpenTelemetry for instrumentation: it auto-generates spans and exports to Jaeger.",
     },
+    {
+      id: "q6",
+      question:
+        "Your Prometheus alert for high error rate fires at 3 AM. You check Grafana and see errors spiking, but the underlying pods are healthy and CPU/memory are normal. The alert resolves itself after 5 minutes. What is the most likely cause and how should you tune the alert?",
+      options: [
+        "The pods are silently failing — increase the alert sensitivity and add a second alert for pod restarts",
+        "This is likely a transient spike (retry storm, brief network glitch, or deployment-related). Add `for: 5m` to the alert rule so it only fires if the condition persists for 5 minutes, preventing flapping alerts from temporary spikes",
+        "Replace the error rate alert with a CPU-based alert since CPU is more reliable",
+        "Set the alert threshold higher so it does not fire during low-traffic periods",
+      ],
+      correctIndex: 1,
+      explanation:
+        "Transient spikes from retry storms, brief network issues, or rolling deployments can trigger alerts that resolve quickly. Adding `for: 5m` (or similar duration) to the Prometheus alert rule ensures the condition must persist continuously for that window before firing. This prevents flapping alerts from temporary spikes while still catching genuine sustained issues.",
+    },
   ],
 };

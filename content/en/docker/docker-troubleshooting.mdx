@@ -1,0 +1,325 @@
+---
+title: "Docker Troubleshooting"
+module: docker
+level: intermediate
+duration: "35 min"
+diagram: docker-troubleshooting
+description: "Diagnose and fix common Docker issues: build failures, runtime errors, networking problems, and performance debugging."
+---
+
+# Docker Troubleshooting
+
+Things break. Containers refuse to start, builds fail with cryptic errors, services can't reach each other, and production workloads get killed without warning. The difference between a beginner and an experienced Docker user isn't avoiding problems — it's knowing how to diagnose them quickly.
+
+This lesson walks through a systematic troubleshooting methodology: identify the problem category, reach for the right tool, interpret the output, and apply a targeted fix.
+
+## Reading Container Logs
+
+The first command you should reach for when a container misbehaves is `docker logs`. It streams the stdout and stderr output that your application writes inside the container.
+
+```bash
+# View all logs from a container
+docker logs my-container
+
+# Follow logs in real time (like tail -f)
+docker logs -f my-container
+
+# Show the last 100 lines
+docker logs --tail 100 my-container
+
+# Show logs since a specific timestamp
+docker logs --since "2025-01-15T10:00:00" my-container
+
+# Add timestamps to each log line
+docker logs -t my-container
+```
+
+**Understanding stdout vs. stderr:** Docker captures both streams separately. In most setups, application log messages go to stdout and error messages go to stderr. When you run `docker logs`, both streams are interleaved. Some log drivers and logging stacks can separate them for filtering.
+
+**Common pitfalls:**
+- If your application logs to a file instead of stdout/stderr, `docker logs` shows nothing. Configure your app to log to stdout/stderr, or use a logging driver that reads log files.
+- Very verbose logs? Use `--tail` and `--since` to narrow the window. Don't dump millions of lines into your terminal.
+- Logs are lost when the container is removed. Use a log driver (json-file with rotation, local, or send to a central collector) for long-term retention.
+
+## Inspecting Containers
+
+When logs don't tell the full story, `docker inspect` reveals the container's full configuration and runtime state — IP address, mount points, environment variables, exit codes, and more.
+
+```bash
+# Full JSON inspect output
+docker inspect my-container
+
+# Extract specific fields with --format
+docker inspect --format '{{.State.ExitCode}}' my-container
+docker inspect --format '{{.State.OOMKilled}}' my-container
+docker inspect --format '{{.NetworkSettings.IPAddress}}' my-container
+docker inspect --format '{{.HostConfig.Memory}}' my-container
+
+# List all environment variables
+docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' my-container
+
+# Show all mounted volumes
+docker inspect --format '{{json .Mounts}}' my-container | python3 -m json.tool
+```
+
+The output is a JSON array. Each element represents a container (or image, if you inspect an image). The key sections are:
+
+| Section | What It Contains |
+|---------|-----------------|
+| `.State` | Running status, exit code, OOMKilled, startedAt, finishedAt |
+| `.Config` | Env vars, Cmd, Entrypoint, Image, ExposedPorts |
+| `.HostConfig` | Resource limits (Memory, NanoCpus), restart policy, port bindings |
+| `.NetworkSettings` | IP address, gateway, connected networks |
+| `.Mounts` | Volume mounts, bind mounts, their source and destination paths |
+
+Use `--format` (Go template syntax) to extract exactly what you need instead of scrolling through pages of JSON.
+
+## Common Build Failures
+
+Build failures are frustrating because the error can be in any layer. Here are the most common causes and how to fix them:
+
+### Layer Cache Invalidation
+
+Docker caches each layer. If a layer changes, all subsequent layers are rebuilt. This is why `COPY package.json` should come before `COPY .` — you don't want to invalidate the dependency installation layer when a source file changes.
+
+```dockerfile
+# BAD: any file change invalidates npm install
+COPY . /app
+RUN npm install
+
+# GOOD: only package.json changes invalidate npm install
+COPY package.json package-lock.json /app/
+RUN npm install
+COPY . /app
+```
+
+### Missing Dependencies and Build Context Issues
+
+If `COPY` fails with "no such file or directory," the file isn't in the build context. Check your `.dockerignore` — it might be excluding required files.
+
+```bash
+# Debug: see what's in the build context
+docker build --progress=plain .
+
+# Check .dockerignore
+cat .dockerignore
+```
+
+Common `.dockerignore` mistakes:
+- Excluding `.env` files that the build needs (use multi-stage `ARG` instead)
+- Excluding `node_modules` but then running `npm install` that expects local packages
+- Using overly broad patterns like `**/*.json` that exclude `package.json`
+
+### Multi-Stage COPY Failures
+
+In multi-stage builds, `COPY --from=` must reference a valid stage name or index. A typo in the stage name produces a cryptic error:
+
+```dockerfile
+# Stage named "builder"
+FROM node:20 AS builder
+RUN npm run build
+
+# WRONG: typo in stage name
+COPY --from=buidler /app/dist /app/dist
+
+# CORRECT: matches the stage name exactly
+COPY --from=builder /app/dist /app/dist
+```
+
+## Runtime Crashes and Exit Codes
+
+When a container stops, Docker records an exit code. This is your single most important clue:
+
+| Exit Code | Meaning | Common Cause |
+|-----------|---------|--------------|
+| 0 | Success | Application exited intentionally (normal shutdown) |
+| 1 | Application error | Uncaught exception, missing config, fatal error |
+| 137 | SIGKILL (128+9) | OOMKilled — container exceeded memory limit, or manually killed |
+| 139 | Segmentation fault (128+11) | Memory access violation, often a bug in the application or a library |
+| 143 | SIGTERM (128+15) | Graceful shutdown — `docker stop` was called |
+
+**Checking the exit code:**
+
+```bash
+docker inspect --format '{{.State.ExitCode}}' my-container
+```
+
+### OOMKilled
+
+If exit code is 137, check OOM status:
+
+```bash
+docker inspect --format '{{.State.OOMKilled}}' my-container
+```
+
+If `true`, the container was killed because it exceeded its memory limit. Solutions:
+1. Increase the memory limit: `docker run --memory=1g ...`
+2. Fix the memory leak in your application
+3. Tune garbage collection (for Go, Java, Node.js)
+
+### Segfaults
+
+Exit code 139 means a segmentation fault. This is almost always a bug — in your code, a native dependency, or a library. Debug by:
+1. Checking if the image uses a compatible architecture (`amd64` vs `arm64`)
+2. Running with `docker run --rm -it my-image /bin/sh` and reproducing the crash interactively
+3. Examining core dumps if available
+
+## Network Debugging
+
+Containers that can't talk to each other or the outside world are one of the most common Docker headaches.
+
+### Inspecting Network Configuration
+
+```bash
+# List all networks
+docker network ls
+
+# Inspect a specific network
+docker network inspect my-network
+
+# Check which containers are connected
+docker network inspect my-network --format '{{range .Containers}}{{.Name}} {{end}}'
+```
+
+### DNS Resolution Issues
+
+On user-defined networks, Docker provides automatic DNS resolution using container names. On the default bridge network, containers can only communicate by IP address — not by name.
+
+```bash
+# Create a user-defined network
+docker network create my-app-net
+
+# Run containers on it
+docker run --network my-app-net --name api my-api-image
+docker run --network my-app-net --name db my-db-image
+
+# From the api container, you can reach db by name:
+docker exec api ping db
+```
+
+### Port Mapping Problems
+
+If a service is unreachable from the host:
+
+```bash
+# Check published ports
+docker port my-container
+
+# Verify the port binding in inspect
+docker inspect --format '{{json .HostConfig.PortBindings}}' my-container
+
+# Test connectivity from inside the container
+docker exec my-container curl -s http://localhost:8080/health
+```
+
+Common mistakes:
+- Publishing the wrong port: `-p 8080:80` maps host 8080 to container 80, not the other way around
+- Binding to `127.0.0.1` only: `-p 127.0.0.1:8080:80` makes it unreachable from other machines
+- The application listens on a different port than what `EXPOSE` documents
+
+## Resource Monitoring
+
+Docker provides built-in tools for monitoring resource usage:
+
+```bash
+# Live resource usage (CPU, memory, network, disk I/O)
+docker stats
+
+# One-time snapshot (no streaming)
+docker stats --no-stream
+
+# Specific container only
+docker stats my-container
+
+# Disk usage breakdown
+docker system df
+
+# Detailed disk usage (per image, container, volume)
+docker system df -v
+```
+
+### Cleaning Up Disk Space
+
+Over time, Docker accumulates unused images, stopped containers, and build cache:
+
+```bash
+# Remove stopped containers, unused networks, dangling images, build cache
+docker system prune
+
+# Also remove all unused images (not just dangling)
+docker system prune -a
+
+# Remove volumes too (WARNING: deletes data)
+docker system prune -a --volumes
+```
+
+### Setting Resource Constraints
+
+Prevent runaway containers from consuming host resources:
+
+```bash
+# Limit memory to 512MB and CPU to 1 core
+docker run --memory=512m --cpus=1.0 my-image
+
+# Set a memory reservation (soft limit)
+docker run --memory=1g --memory-reservation=512m my-image
+```
+
+## Interactive Debugging
+
+When logs and inspect aren't enough, you need to get inside the container:
+
+### Shell Access with docker exec
+
+```bash
+# Open an interactive shell
+docker exec -it my-container /bin/sh
+
+# If bash is available
+docker exec -it my-container /bin/bash
+
+# Run a single diagnostic command
+docker exec my-container cat /etc/os-release
+docker exec my-container env
+docker exec my-container ps aux
+```
+
+### Extracting Files with docker cp
+
+```bash
+# Copy a file from container to host
+docker cp my-container:/var/log/app.log ./app.log
+
+# Copy a file from host to container
+docker cp ./config.yaml my-container:/app/config.yaml
+
+# Copy an entire directory
+docker cp my-container:/var/log ./logs-from-container
+```
+
+### Overriding the Entrypoint for Debugging
+
+If the container exits immediately and you can't `exec` into it, override the entrypoint to get a shell:
+
+```bash
+# Replace the entrypoint with a shell
+docker run --rm -it --entrypoint /bin/sh my-image
+
+# With an Alpine-based image (no bash)
+docker run --rm -it --entrypoint /bin/sh my-image
+
+# Inspect the filesystem before the app starts
+docker run --rm -it --entrypoint /bin/sh my-image -c "ls -la /app && cat /app/config.json"
+```
+
+This technique lets you explore the container's filesystem, check environment variables, and manually run the application to see exactly what's failing.
+
+## Summary
+
+- **`docker logs`** is your first stop — it shows application stdout/stderr. Use `--tail`, `--since`, and `-f` to filter.
+- **`docker inspect`** reveals configuration and state — exit codes, OOM status, IP addresses, volumes, env vars.
+- **Exit codes** tell you why a container stopped: 0 (success), 1 (app error), 137 (OOMKilled), 139 (segfault), 143 (SIGTERM).
+- **Build failures** often come from cache invalidation, `.dockerignore` issues, or wrong `COPY` paths in multi-stage builds.
+- **Network problems** are usually about being on the wrong network, DNS not resolving, or port mapping mistakes.
+- **`docker system df`** and `docker system prune` help manage disk space.
+- **`docker exec -it`** and **`docker cp`** are your interactive debugging tools. Override the entrypoint if the container won't stay running.

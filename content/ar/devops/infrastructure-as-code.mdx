@@ -1,0 +1,430 @@
+---
+title: "Infrastructure as Code"
+module: devops
+level: intermediate
+duration: "40 min"
+diagram: infrastructure-as-code
+description: "Manage infrastructure declaratively with Terraform and Pulumi: state, modules, and container infrastructure."
+---
+
+# البنية التحتية ككود (Infrastructure as Code)
+
+تخيل أنك تحتاج لإعداد بيئة إنتاج: VPC، مجموعة Kubernetes، قاعدة بيانات، أدوار IAM، ومخزن S3. القيام بذلك عبر النقر في وحدة تحكم AWS يستغرق ساعات، وعرضة للأخطاء، ومستحيل إعادة إنتاجه. الشهر القادم، عندما تحتاج بيئة تجهيز مطابقة، تبدأ من الصفر. **البنية التحتية ككود (IaC)** تحل هذه المشكلة بكتابة البنية التحتية في ملفات إعدادات يمكن إصدارها ومراجعتها واختبارها وتطبيقها تلقائيًا.
+
+تتعامل IaC مع البنية التحتية بنفس طريقة التعامل مع كود التطبيق: تعيش في git، تُراجع عبر طلبات السحب، تُختبر، وتُنشر عبر CI/CD. النتيجة هي بنية تحتية قابلة لإعادة الإنتاج وقابلة للتدقيق وموثقة ذاتيًا.
+
+## لماذا IaC؟
+
+إدارة البنية التحتية يدويًا تنهار عند التوسع. إليك ما يحدث خطأ:
+
+- **انحراف الإعدادات** — مهندس يغير مجموعة أمان في وحدة التحكم، آخر يحدث شبكة فرعية عبر CLI، وثالث يعدل موازن تحميل في واجهة الويب. بعد ثلاثة أشهر، لا أحد يعرف لماذا تم إعداد الإنتاج بهذه الطريقة. توفر IaC مصدر حقيقة واحد: الكود في مستودعك.
+
+- **لا سجل تدقيق** — من غيّر نوع مثيل RDS يوم الثلاثاء الماضي؟ هل كان مقصودًا؟ بدون IaC، تعتمد على سجلات CloudTrail والتخمين. مع IaC، كل تغيير هو التزام git بكاتب وطابع زمني ونقاش في طلب سحب.
+
+- **غياب إمكانية إعادة الإنتاج** — بيئة التجهيز لا تتطابق مع الإنتاج لأنها أُعدت بواسطة أشخاص مختلفين في أوقات مختلفة. تجعل IaC البيئات متطابقة افتراضيًا: نفس الكود ينتج نفس البنية التحتية في كل مرة.
+
+- **استرداد بطيء** — عند وقوع كارثة، إعادة البناء من الصفر تستغرق أيام إذا كان الإعداد موجودًا فقط في رأس شخص ما. تتيح لك IaC إعادة إنشاء بنيتك التحتية بالكامل من `terraform apply` واحد.
+
+## النهج التصريحي مقابل الأمري
+
+هناك طريقتان لكتابة كود البنية التحتية:
+
+**التصريحي** (Terraform، Pulumi): تصف *حالة النهاية المطلوبة*. "أريد 3 مثيلات EC2 في هذا VPC مع مجموعات الأمان هذه." الأداة تحدد كيفية الوصول إلى هناك. إذا غيّرت العدد المطلوب من 3 إلى 5، يضيف Terraform مثيلين. إذا غيّرته للعودة إلى 3، يزيل اثنين. تتعامل الأدوات التصريحية مع الإنشاء والتحديث والحذف تلقائيًا.
+
+```hcl
+# التصريحي: صِف ما تريده
+resource "aws_instance" "web" {
+  count         = 3
+  ami           = "ami-0c55b159cbfafe1f0"
+  instance_type = "t3.micro"
+
+  tags = {
+    Name = "web-${count.index}"
+  }
+}
+```
+
+**الأمري** (برامج shell النصية، boto3): تصف *الخطوات*. "أنشئ VPC. أنشئ شبكة فرعية. أطلق 3 مثيلات." إذا شغّلت البرنامج النصي مرتين، ينشئ نسخًا مكررة ما لم تضيف فحوصات idempotency. إذا حُذف مثيل، لا يعرف البرنامج النصي أنه يجب استبداله.
+
+```bash
+# الأمري: صِف كيف تفعل ذلك
+VPC_ID=$(aws ec2 create-vpc --cidr-block 10.0.0.0/16 --query 'Vpc.VpcId' --output text)
+aws ec2 create-subnet --vpc-id $VPC_ID --cidr-block 10.0.1.0/24
+for i in 0 1 2; do
+  aws ec2 run-instances --image-id ami-0c55b159cbfafe1f0 --instance-type t3.micro
+done
+```
+
+تفوز IaC التصريحية في معظم حالات الاستخدام الإنتاجي لأنها تتعامل مع تسوية الانحراف وحل التبعيات وتتبع الحالة تلقائيًا. أنت تعلن ما تريد، والأداة تجعله حقيقة.
+
+## أساسيات Terraform
+
+Terraform هي أكثر أدوات IaC تبنيًا. تستخدم لغة إعدادات HashiCorp (HCL)، وهي لغة تصريحية مصممة خصيصًا للبنية التحتية.
+
+### المزودون (Providers)
+
+المزودون هم إضافات يستخدمها Terraform للتفاعل مع واجهات برمجة تطبيقات السحابة. كل مزود يغلف واجهة برمجة تطبيقات سحابة أو خدمة:
+
+```hcl
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+provider "aws" {
+  region = "us-east-1"
+}
+```
+
+لدى Terraform مزودون لـ AWS وGCP وAzure وKubernetes وHelm وGitHub ومئات غيرهم. يمكنك حتى كتابة مزودين مخصصين.
+
+### الموارد (Resources)
+
+الموارد هي اللبنات الأساسية لبنيتك التحتية. كل مورد يُعين كائن سحابي حقيقي:
+
+```hcl
+resource "aws_vpc" "main" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_hostnames = true
+
+  tags = {
+    Name = "production-vpc"
+  }
+}
+
+resource "aws_subnet" "public" {
+  count                   = 3
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.${count.index}.0/24"
+  availability_zone       = data.aws_availability_zones.available.names[count.index]
+  map_public_ip_on_launch = true
+
+  tags = {
+    Name = "public-subnet-${count.index}"
+  }
+}
+```
+
+لاحظ `aws_vpc.main.id` — يفهم Terraform تبعيات الموارد تلقائيًا. الشبكة الفرعية تشير إلى VPC، لذلك ينشئ Terraform الـ VPC أولاً.
+
+### مصادر البيانات (Data Sources)
+
+تتيح لك مصادر البيانات قراءة البنية التحتية الموجودة دون إدارتها:
+
+```hcl
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
+data "aws_ami" "ubuntu" {
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
+  }
+}
+```
+
+مصادر البيانات للقراءة فقط. استخدمها للبحث عن معرفات AMI ومعرفات VPC ونطاقات CIDR للشبكات الفرعية والقيم الأخرى الموجودة مسبقًا في حسابك.
+
+## إدارة الحالة
+
+حالة Terraform هي التعيين بين إعداداتك والعالم الحقيقي. تتتبع أي `aws_vpc.main` يقابل `vpc-0abc123` في AWS. بدون الحالة، لا يستطيع Terraform معرفة الموارد الموجودة أو التغييرات المطلوب إجراؤها.
+
+### واجهات تخزين الحالة البعيدة
+
+لا تخزّن الحالة محليًا في الإنتاج أبدًا. توفر واجهات التخزين البعيدة المتانة والمشاركة والقفل:
+
+```hcl
+terraform {
+  backend "s3" {
+    bucket         = "my-terraform-state"
+    key            = "production/terraform.tfstate"
+    region         = "us-east-1"
+    dynamodb_table = "terraform-locks"
+    encrypt        = true
+  }
+}
+```
+
+هذا الإعداد يخزن الحالة في S3 ويستخدم جدول DynamoDB لقفل الحالة. القفل يمنع مهندسين من تشغيل `terraform apply` في وقت واحد، مما سيفسد ملف الحالة.
+
+خيارات واجهة التخزين الشائعة:
+- **S3 + DynamoDB** (AWS) — الأكثر شعبية، غير مكلفة، تتكامل مع IAM
+- **GCS** (GCP) — قفل مدمج، تتكامل مع GCP IAM
+- **Azure Blob Storage** (Azure) — قفل مدمج مع lease blobs
+- **Terraform Cloud** — خدمة مُدارة مع حالة مدمجة وقفل وRBAC
+
+### قفل الحالة
+
+قفل الحالة أمر بالغ الأهمية. بدونه، العمليات المتزامنة يمكن أن تُفسد الحالة:
+
+```
+Error: Error acquiring the state lock
+
+Lock Info:
+  ID:        2024-04-19-14-30-00
+  Path:      production/terraform.tfstate
+  Operation: OperationTypeApply
+  Who:       engineer@laptop
+```
+
+يعني هذا الخطأ أن `terraform apply` أو `terraform plan` آخر قيد التشغيل. انتظر حتى ينتهي. إذا كان القفل عالقًا (تعطلت العملية الأخرى)، استخدم `terraform force-unlock` بحذر شديد.
+
+## الوحدات والتركيب
+
+الوحدات هي حزم قابلة لإعادة الاستخدام من إعدادات Terraform. فكر فيها كدوال: تقبل مدخلات (متغيرات) وتنتج مخرجات (قيم إرجاع).
+
+### إنشاء وحدة
+
+```
+modules/
+└── vpc/
+    ├── main.tf       # Resources
+    ├── variables.tf  # Input variables
+    ├── outputs.tf    # Output values
+    └── versions.tf   # Provider requirements
+```
+
+**modules/vpc/variables.tf** — المدخلات التي تقبلها الوحدة:
+```hcl
+variable "cidr_block" {
+  description = "CIDR block for the VPC"
+  type        = string
+  default     = "10.0.0.0/16"
+}
+
+variable "environment" {
+  description = "Environment name (dev, staging, prod)"
+  type        = string
+}
+
+variable "public_subnet_count" {
+  description = "Number of public subnets"
+  type        = number
+  default     = 3
+}
+```
+
+**modules/vpc/outputs.tf** — القيم التي تكشفها الوحدة:
+```hcl
+output "vpc_id" {
+  description = "ID of the VPC"
+  value       = aws_vpc.main.id
+}
+
+output "public_subnet_ids" {
+  description = "IDs of the public subnets"
+  value       = aws_subnet.public[*].id
+}
+```
+
+### استخدام وحدة
+
+```hcl
+module "vpc" {
+  source  = "./modules/vpc"
+  version = "v1.2.0"
+
+  cidr_block           = "10.0.0.0/16"
+  environment          = "production"
+  public_subnet_count  = 3
+}
+
+# الإشارة إلى مخرجات الوحدة في موارد أخرى
+resource "aws_eks_cluster" "main" {
+  name     = "production-cluster"
+  role_arn = aws_iam_role.eks.arn
+  vpc_config {
+    subnet_ids = module.vpc.public_subnet_ids
+  }
+}
+```
+
+### إصدار الوحدات
+
+للوحدات المشتركة، استخدم سجل Terraform أو علامات Git:
+
+```hcl
+module "vpc" {
+  source  = "terraform-aws-modules/vpc/aws"
+  version = "~> 5.0"
+
+  cidr = "10.0.0.0/16"
+  azs  = ["us-east-1a", "us-east-1b", "us-east-1c"]
+}
+```
+
+ثبّت إصدارات الوحدات دائمًا. استخدام `~> 5.0` يسمح بالتحديثات الطفيفة لكنه يمنع التغييرات المكسرة.
+
+## Pulumi: لغات برمجة حقيقية للبنية التحتية
+
+تتخذ Pulumi نهجًا مختلفًا: بدلاً من تعلم HCL، تكتب البنية التحتية بـ TypeScript أو Python أو Go. يمنحك هذا الحلقات والشرطيات والفئات وأطر الاختبار ومديري الحزم — القوة الكاملة للغة برمجة.
+
+### بنية تحتية بـ TypeScript
+
+```typescript
+import * as aws from "@pulumi/aws";
+import * as pulumi from "@pulumi/pulumi";
+
+// Create a VPC
+const vpc = new aws.ec2.Vpc("production-vpc", {
+  cidrBlock: "10.0.0.0/16",
+  enableDnsHostnames: true,
+  tags: { Environment: "production" },
+});
+
+// Create subnets — real loops, not count meta-arguments
+const azs = ["us-east-1a", "us-east-1b", "us-east-1c"];
+const publicSubnets = azs.map(
+  (az, i) =>
+    new aws.ec2.Subnet(`public-subnet-${i}`, {
+      vpcId: vpc.id,
+      cidrBlock: `10.0.${i}.0/24`,
+      availabilityZone: az,
+      mapPublicIpOnLaunch: true,
+      tags: { Name: `public-subnet-${i}` },
+    }),
+);
+
+// Export outputs
+export const vpcId = vpc.id;
+export const subnetIds = publicSubnets.map((s) => s.id);
+```
+
+### متى تختار Pulumi مقابل Terraform
+
+| العامل | Terraform | Pulumi |
+|--------|-----------|--------|
+| اللغة | HCL (خاصة بالمجال) | TypeScript، Python، Go، C# |
+| منحنى التعلم | أسهل لفرق العمليات | أسهل لفرق التطوير |
+| النظام البيئي | سجل مزودين/وحدات ضخم | متنامٍ، AWS/Azure/GCP مدعومة بالكامل |
+| المنطق المعقد | يتطلب حيل بديلة (for_each، dynamic blocks) | حلقات، شرطيات، فئات أصلية |
+| الاختبار | محدود (terraform plan) | اختبارات وحدة مع Jest، pytest، إلخ |
+| إدارة الحالة | ملف حالة (محلي أو بعيد) | ملف حالة (Pulumi Cloud أو مُدار ذاتيًا) |
+| الفريق | ثقيل العمليات، متخصصو HCL | ثقيل التطوير، مرتاح مع الكود |
+| مخارج أمري | مزودون، بيانات خارجية | أصلية — اكتب كودًا أمريًا عند الحاجة |
+
+اختر **Terraform** عندما يقدر فريقك البساطة، أو تحتاج أكبر نظام بيئي من المزودين والوحدات، أو عندما يكون لدى مؤسستك معيار موحد عليها. اختر **Pulumi** عندما يفضل فريقك لغات برمجة حقيقية، أو يحتاج منطقًا شرطيًا معقدًا، أو يريد اختبار كود البنية التحتية كوحدة.
+
+## البنية التحتية للحاويات ككود
+
+توفير مجموعات Kubernetes (EKS، AKS، GKE) مع Terraform هو نمط إنتاجي شائع. الوحدات الرسمية تتعامل مع التعقيد:
+
+### EKS على AWS
+
+```hcl
+module "eks" {
+  source  = "terraform-aws-modules/eks/aws"
+  version = "~> 20.0"
+
+  cluster_name    = "production-cluster"
+  cluster_version = "1.29"
+
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnet_ids
+
+  eks_managed_node_groups = {
+    general = {
+      instance_types = ["m5.large"]
+      min_size       = 2
+      max_size       = 5
+      desired_size   = 3
+    }
+  }
+}
+```
+
+### AKS على Azure
+
+```hcl
+module "aks" {
+  source  = "Azure/aks/azurerm"
+  version = "~> 8.0"
+
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+  cluster_name        = "production-aks"
+
+  kubernetes_version = "1.28"
+  node_count         = 3
+  vm_size            = "Standard_D2s_v3"
+
+  network_plugin = "azure"
+}
+```
+
+### GKE على GCP
+
+```hcl
+module "gke" {
+  source  = "terraform-google-modules/kubernetes-engine/google"
+  version = "~> 33.0"
+
+  project_id = var.project_id
+  name       = "production-gke"
+  region     = "us-east1"
+
+  network         = module.vpc.network
+  subnetwork      = module.vpc.subnetwork
+  ip_range_pods   = "pods"
+  ip_range_services = "services"
+
+  node_pools = [{
+    name         = "general"
+    machine_type = "e2-medium"
+    min_count    = 2
+    max_count    = 5
+  }]
+}
+```
+
+تتعامل هذه الوحدات مع أدوار IAM ومجموعات الأمان وإعداد مجموع العقد وإدارة الإضافات. توفير مجموعة جاهزة للإنتاج هو استدعاء وحدة بدلاً من مئات الأسطر من تعريفات الموارد الخام.
+
+## كشف الانحراف والمعالجة
+
+**انحراف الإعدادات** يحدث عندما تتباعد البنية التحتية الحقيقية عن إعلانات IaC. الأسباب الشائعة: شخص عدّل موردًا في وحدة التحكم، أو حدث تحجيم تلقائي غيّر عدد المثيلات، أو فريق استجابة للحوادث أجرى تغييرًا طارئًا.
+
+### كشف الانحراف
+
+```bash
+# تحقق مما تغير دون تطبيق
+terraform plan
+
+# المخرجات المتوقعة عند وجود انحراف:
+# ~ aws_instance.web
+#     instance_type: "t3.micro" => "t3.small"  # غُيّر يدويًا في وحدة التحكم
+```
+
+يقارن `terraform plan` الحالة المطلوبة (ملفات .tf الخاصة بك) مع الحالة الفعلية (ما هو موجود في السحابة). أي اختلاف هو انحراف.
+
+### المعالجة
+
+```bash
+# تسوية الانحراف — التطبيق يعيد الحالة الفعلية لمطابقة الحالة المُعلنة
+terraform apply
+```
+
+تشغيل `terraform apply` يسوي الحالة الفعلية لمطابقة الحالة المُعلنة. نوع المثيل الذي غُيّر يدويًا يعود إلى `t3.micro`.
+
+### منع الانحراف
+
+- **قيّد الوصول إلى وحدة التحكم** — استخدم سياسات IAM لرفض التغييرات اليدوية على موارد الإنتاج. اطلب أن تمر جميع التغييرات عبر IaC وCI/CD.
+- **فعّل تنبيهات كشف الانحراف** — يمكن لـ Terraform Cloud وبعض خطوط CI/CD تشغيل `terraform plan` وفق جدول زمني والتنبيه عند كشف انحراف.
+- **استخدم `prevent_destroy`** — أضف `lifecycle { prevent_destroy = true }` للموارد الحرجة لتجنب الحذف العرضي.
+- **راجع الكود لتغييرات البنية التحتية** — كل `terraform apply` يجب أن يمر عبر طلب سحب. استخدم مخرجات `terraform plan` في تعليقات طلب السحب ليرى المراجعون التغيير بالضبط.
+
+```hcl
+lifecycle {
+  prevent_destroy = true       # الحماية من الحذف العرضي
+  ignore_changes  = [tags]     # تجاهل الانحراف في الوسوم (مثل الوسوم التلقائية من AWS)
+}
+```
+
+IaC ليست مجرد أداة — بل هي ممارسة. اكتب بنيتك التحتية في كود، راجعها، اختبرها، وانشرها عبر CI/CD. ذاتك المستقبلية، التي تستكشف الأخطاء في الثالثة صباحًا، ستشكرك.

@@ -75,5 +75,19 @@ export const rbacNetworkPoliciesQuiz: Quiz = {
       explanation:
         "Follow the principle of least privilege: create dedicated ServiceAccounts for each workload, bind narrow Roles with only the permissions needed, and avoid using `cluster-admin` or wildcard (`*`) verbs and resources. Audit RBAC with `kubectl auth can-i --list` to verify what a ServiceAccount can actually do.",
     },
+    {
+      id: "q6",
+      question:
+        "A new developer joins your team and needs to view pods in the 'staging' namespace but should not be able to delete them or access the 'production' namespace. How do you implement this?",
+      options: [
+        "Create a ClusterRole with pod permissions and bind it with a ClusterRoleBinding",
+        "Create a Role with `get`, `list`, `watch` permissions for pods in the staging namespace, then bind it to the developer's user with a RoleBinding",
+        "Add the developer to the default ServiceAccount in the staging namespace",
+        "Create a NetworkPolicy that blocks the developer from the production namespace",
+      ],
+      correctIndex: 1,
+      explanation:
+        "Create a Role scoped to the 'staging' namespace with only `get`, `list`, and `watch` verbs on the `pods` resource — this allows viewing but not deleting. Then create a RoleBinding in the same namespace to bind this Role to the developer's user. Since Roles are namespace-scoped, there is no risk of the developer accessing the production namespace unless a separate binding is created there.",
+    },
   ],
 };

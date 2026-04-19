@@ -75,5 +75,19 @@ export const k8sConfigmapsSecretsQuiz: Quiz = {
       explanation:
         "Setting `immutable: true` makes all data fields read-only. You cannot change the data — you must delete and recreate the resource. This improves performance because the kubelet does not need to watch for changes, and it protects against accidental modifications to critical configuration.",
     },
+    {
+      id: "q6",
+      question:
+        "Your application needs database credentials in production. You store them in a Secret, but during a code review, a developer points out that the Secret data is just base64-encoded and anyone can decode it with `echo <data> | base64 -d`. What additional measures should you take?",
+      options: [
+        "Base64 is sufficient encryption for production — no further action is needed",
+        "Enable encryption at rest for Secrets, use RBAC to restrict access, and consider external secret managers like Vault or AWS Secrets Manager",
+        "Move the credentials to a ConfigMap instead, since ConfigMaps are encrypted by default",
+        "Store credentials in a Pod spec directly so they are not visible in etcd",
+      ],
+      correctIndex: 1,
+      explanation:
+        "Base64 is encoding, not encryption — it provides no security. Enable encryption at rest for Secrets (`encryptionConfiguration` in the API server) so they are stored encrypted in etcd. Use RBAC to restrict who can read Secrets. For production workloads, consider external secret managers like HashiCorp Vault or AWS Secrets Manager, which provide stronger access controls, audit logging, and secret rotation.",
+    },
   ],
 };

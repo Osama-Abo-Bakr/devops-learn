@@ -71,5 +71,19 @@ export const yamlBasicsQuiz: Quiz = {
       explanation:
         "Compose uses `${VAR_NAME}` syntax for variable interpolation. Values are resolved from the shell environment or a `.env` file in the same directory. Use `$${VAR_NAME}` to escape and include a literal `$` in the value.",
     },
+    {
+      id: "q6",
+      question:
+        "Your `docker-compose.yml` fails with 'services.networks must be a mapping' error. You look at the file and notice the networks section under a service is written as a list (e.g., `- frontend`) instead of key:value pairs. What does this mean and how do you fix it?",
+      options: [
+        "The YAML file is corrupted — regenerate it with `docker-compose config`",
+        "It is a YAML syntax error — networks under a service should use mapping format, not a list. Change `- frontend` to `frontend:` under the networks key",
+        "The Docker Compose version is too old — upgrade to v2.0 or higher",
+        "The network name 'frontend' is reserved — rename it to something else",
+      ],
+      correctIndex: 1,
+      explanation:
+        "Docker Compose expects certain keys like `networks`, `environment`, and `volumes` to be mappings (key:value) or specific formats, not plain lists. The error 'must be a mapping' means YAML structure doesn't match what Compose expects. The fix is to change the list syntax (`- frontend`) to mapping syntax (`frontend:`) under the service's `networks` key. Understanding YAML data types — scalars, lists, and mappings — is essential for writing valid Compose files.",
+    },
   ],
 };

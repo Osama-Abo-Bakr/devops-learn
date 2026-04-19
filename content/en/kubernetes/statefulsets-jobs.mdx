@@ -1,0 +1,420 @@
+---
+title: "StatefulSets and Jobs"
+module: kubernetes
+level: advanced
+duration: "40 min"
+diagram: k8s-statefulsets-jobs
+description: "Run stateful workloads with StatefulSets and batch processes with Jobs and CronJobs."
+---
+
+# StatefulSets and Jobs
+
+Deployments are great for stateless web servers — replicas are interchangeable, and if one dies, another takes its place. But what about databases, message queues, and distributed systems like Elasticsearch or Kafka? These workloads need **stable identities**, **ordered startup**, and **persistent storage per replica**. That's where StatefulSets come in.
+
+And what about batch processing — running a data migration once, or a backup job every night at 2 AM? That's where Jobs and CronJobs shine. Unlike Deployments that keep Pods running forever, Jobs run to completion and then stop.
+
+## Why StatefulSets?
+
+Stateful workloads have requirements that Deployments cannot meet:
+
+1. **Stable network identity** — A PostgreSQL primary needs a predictable DNS name so replicas can discover it. In a Deployment, Pod names are random (`web-7b89f4c6d2-x9kz3`). In a StatefulSet, they're ordered and predictable (`postgres-0`, `postgres-1`, `postgres-2`).
+
+2. **Ordered deployment and scaling** — When you scale a Kafka cluster from 3 to 5 brokers, broker-3 and broker-4 must start **after** broker-2 is Ready. StatefulSets enforce this ordering. Deployments create all Pods simultaneously.
+
+3. **Persistent storage per replica** — Each database replica needs its own data volume. If pod-1 is rescheduled to a different node, it must reattach the **same** PVC it had before. StatefulSets provide this through `volumeClaimTemplates`. Deployments share a single PVC or use ephemeral storage.
+
+4. **Ordered rollback** — When updating a StatefulSet, Pods are updated in reverse order (pod-2, then pod-1, then pod-0). This ensures the primary is updated last, minimizing downtime.
+
+If your workload doesn't need these guarantees, use a Deployment — it's simpler and more flexible.
+
+## StatefulSet Anatomy
+
+A StatefulSet has several key fields that differentiate it from a Deployment:
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres-headless          # Required: the Headless Service governing this StatefulSet
+  replicas: 3                             # Number of replicas
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+  volumeClaimTemplates:                   # Each replica gets its own PVC
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+```
+
+The critical fields:
+
+| Field | Purpose | Deployment Equivalent |
+|-------|---------|---------------------|
+| `serviceName` | References the Headless Service for stable DNS names | Not applicable |
+| `volumeClaimTemplates` | Creates one PVC per replica | Not available |
+| `podManagementPolicy` | `OrderedReady` (default) or `Parallel` | Always parallel |
+| `updateStrategy` | `RollingUpdate` (ordered) or `OnDelete` | `RollingUpdate` (unordered) |
+
+## Ordered Rollouts and Stable Network Identities
+
+When a StatefulSet with `replicas: 3` is created, Pods are launched sequentially:
+
+```text
+1. postgres-0 created → waits until Running & Ready
+2. postgres-1 created → waits until Running & Ready
+3. postgres-2 created → waits until Running & Ready
+```
+
+Each Pod gets a stable, predictable name based on the StatefulSet name and its ordinal index. This naming is **guaranteed** — even if the Pod is rescheduled to a different node, it keeps the same name.
+
+When scaled down, Pods are terminated in reverse order: postgres-2 first, then postgres-1, then postgres-0.
+
+### Pod Management Policies
+
+You can change the creation/deletion order with `podManagementPolicy`:
+
+```yaml
+spec:
+  podManagementPolicy: Parallel    # Default is OrderedReady
+```
+
+| Policy | Behavior | Use Case |
+|--------|----------|----------|
+| **OrderedReady** | Create pod-0, wait for Ready, create pod-1, wait for Ready, ... | Databases, ZooKeeper, Kafka — workloads where order matters |
+| **Parallel** | Create all Pods simultaneously, no waiting | Elasticsearch, Cassandra — workloads where replicas can bootstrap independently |
+
+### Update Strategies
+
+The `RollingUpdate` strategy in StatefulSets updates Pods in reverse ordinal order:
+
+```yaml
+spec:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      partition: 1        # Only update pods with ordinal >= partition value
+```
+
+Setting `partition: 1` means only postgres-1 and postgres-2 get the update, while postgres-0 stays on the old version. This is useful for canary testing — you update the replicas first and keep the primary on the stable version.
+
+## Headless Services for StatefulSets
+
+A **Headless Service** is a Service with `clusterIP: None`. Instead of load-balancing across all Pods, it returns the individual Pod IPs directly. This is what gives StatefulSet Pods their stable DNS names.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-headless
+spec:
+  clusterIP: None                    # This makes it headless
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+```
+
+With this Service, each Pod gets a predictable DNS name:
+
+```text
+postgres-0.postgres-headless.default.svc.cluster.local
+postgres-1.postgres-headless.default.svc.cluster.local
+postgres-2.postgres-headless.default.svc.cluster.local
+```
+
+Other Pods in the cluster can address a specific replica by name. For example, a PostgreSQL replica can connect to the primary at `postgres-0.postgres-headless:5432`.
+
+**Why not use a regular Service?** A regular Service with a ClusterIP load-balances across all Pods. You'd connect to `postgres-headless:5432` and hit a random replica. But for stateful workloads, you often need to reach a **specific** replica — the primary, not any random Pod.
+
+## PersistentVolumeClaim per Pod
+
+The `volumeClaimTemplates` field is unique to StatefulSets. It creates one PVC per replica, named with the pattern `<pvc-name>-<statefulset-name>-<ordinal>`:
+
+```yaml
+volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+```
+
+This creates three PVCs:
+
+| PVC Name | Bound To | Used By |
+|----------|----------|---------|
+| `data-postgres-0` | PV-0 (e.g., `pvc-abc123`) | postgres-0 |
+| `data-postgres-1` | PV-1 (e.g., `pvc-def456`) | postgres-1 |
+| `data-postgres-2` | PV-2 (e.g., `pvc-ghi789`) | postgres-2 |
+
+When postgres-1 is rescheduled, it **reattaches** `data-postgres-1` — not a new volume, not a random volume, the same one. This is the key difference from Deployments, where PVCs are not tied to specific replicas.
+
+**Important:** Deleting a StatefulSet does **not** delete the PVCs. You must delete them manually. This is by design — your data survives StatefulSet deletion.
+
+```bash
+# Delete PVCs after removing a StatefulSet
+kubectl delete pvc -l app=postgres
+# Or delete by name pattern
+kubectl delete pvc data-postgres-0 data-postgres-1 data-postgres-2
+```
+
+## Jobs: Running Batch Workloads to Completion
+
+A **Job** creates one or more Pods and ensures that a specified number of them complete successfully. Once the desired number of completions is reached, the Job is marked as complete. This is fundamentally different from a Deployment, which keeps Pods running indefinitely.
+
+### Job Configuration Options
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: data-migration
+spec:
+  completions: 3                    # Total successful Pod runs needed
+  parallelism: 1                    # How many Pods run at the same time
+  activeDeadlineSeconds: 3600      # Maximum time the Job can run (1 hour)
+  backoffLimit: 6                   # Max retries before marking Job as failed
+  template:
+    spec:
+      restartPolicy: OnFailure     # OnFailure or Never (NOT Always)
+      containers:
+        - name: migrate
+          image: myapp-migrate:v2
+          command: ["python", "migrate.py"]
+```
+
+| Field | Description | Example |
+|-------|-------------|---------|
+| `completions` | Total successful Pod completions required | `3` — need 3 Pods to succeed |
+| `parallelism` | Maximum number of Pods running concurrently | `1` — run one at a time |
+| `activeDeadlineSeconds` | Wall-clock timeout for the entire Job | `3600` — fail after 1 hour |
+| `backoffLimit` | Maximum retry attempts before marking the Job as failed | `6` — give up after 6 failures |
+| `restartPolicy` | How to handle Pod container failure | `OnFailure` — restart in place, `Never` — create new Pod |
+
+### Common Job Patterns
+
+**Single Pod to completion:**
+
+```yaml
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: backup
+          image: backup-tool:v1
+          command: ["./backup.sh"]
+```
+
+Omitting `completions` and `parallelism` defaults both to 1 — run a single Pod until it succeeds.
+
+**Parallel processing:**
+
+```yaml
+spec:
+  completions: 10      # Need 10 successful completions
+  parallelism: 3       # Run up to 3 Pods at a time
+```
+
+This creates a queue: 3 Pods start immediately. As each completes, the next one is launched until all 10 have succeeded.
+
+**Work queue pattern:**
+
+```yaml
+spec:
+  completions: 1       # Not needed — omitted means 1
+  parallelism: 5       # Run 5 workers in parallel
+```
+
+Set `parallelism` higher than `completions` and each Pod pulls work from a shared queue (like a Redis list or SQS queue). The first Pod to complete satisfies the Job.
+
+## CronJobs: Scheduled Jobs
+
+A **CronJob** creates Jobs on a schedule using standard cron syntax. Think of it as `cron` for Kubernetes.
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: nightly-backup
+spec:
+  schedule: "0 2 * * *"                   # Every day at 2:00 AM
+  timeZone: "America/New_York"            # Optional: time zone (Kubernetes 1.27+)
+  concurrencyPolicy: Forbid               # Don't run overlapping Jobs
+  successfulJobsHistoryLimit: 3           # Keep only 3 completed Jobs
+  failedJobsHistoryLimit: 1               # Keep only 1 failed Job
+  startingDeadlineSeconds: 200            # If Job hasn't started in 200s, skip it
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: postgres:16
+              command: ["pg_dump", "-h", "postgres-headless", "-U", "admin", "mydb"]
+```
+
+### Cron Schedule Format
+
+The schedule field follows standard cron syntax: `minute hour day-of-month month day-of-week`
+
+| Schedule | Meaning |
+|----------|---------|
+| `0 2 * * *` | Every day at 2:00 AM |
+| `*/5 * * * *` | Every 5 minutes |
+| `0 */2 * * *` | Every 2 hours |
+| `0 0 1 * *` | First day of every month at midnight |
+| `0 0 * * 0` | Every Sunday at midnight |
+
+### Concurrency Policies
+
+| Policy | Behavior |
+|--------|----------|
+| **Allow** | New Jobs run even if the previous one hasn't finished (default) |
+| **Forbid** | Skip new Job creation if the previous one is still running |
+| **Replace** | Delete the currently running Job and start a new one |
+
+Use `Forbid` for backups and other jobs that should not overlap. Use `Replace` for monitoring jobs where only the latest result matters.
+
+## Failure Handling: backoffLimit, restartPolicy, activeDeadlineSeconds
+
+Jobs and CronJobs have multiple mechanisms to handle failures:
+
+### restartPolicy
+
+| Value | Behavior | Use Case |
+|-------|----------|----------|
+| **OnFailure** | Restart the container within the same Pod | Transient errors — network blips, temporary resource limits |
+| **Never** | Mark the Pod as failed and create a new Pod | Errors that might be node-specific — Pod gets rescheduled to a different node |
+
+```yaml
+# OnFailure: Pod container restarts in place
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+```
+
+```yaml
+# Never: New Pod is created on potentially a different node
+spec:
+  template:
+    spec:
+      restartPolicy: Never
+```
+
+### backoffLimit
+
+The `backoffLimit` sets the maximum number of retries before the Job is marked as failed. Each retry creates a new Pod (with `restartPolicy: Never`) or restarts the container (with `OnFailure`).
+
+```yaml
+spec:
+  backoffLimit: 6      # After 6 failures, mark the Job as Failed
+```
+
+### activeDeadlineSeconds
+
+This is the absolute time limit for the entire Job. If the Job runs longer than this, all Pods are terminated and the Job is marked as failed.
+
+```yaml
+spec:
+  activeDeadlineSeconds: 3600    # 1 hour max runtime
+```
+
+### Putting it together: a robust backup Job
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: database-backup
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      backoffLimit: 3
+      activeDeadlineSeconds: 1800
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: backup
+              image: postgres:16
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  pg_dump -h postgres-0.postgres-headless -U admin mydb > /backup/mydb-$(date +%Y%m%d).sql
+                  echo "Backup completed successfully"
+              volumeMounts:
+                - name: backup-storage
+                  mountPath: /backup
+          volumes:
+            - name: backup-storage
+              persistentVolumeClaim:
+                claimName: backup-pvc
+```
+
+This Job:
+- Runs every night at 2 AM
+- Doesn't allow overlapping runs (`concurrencyPolicy: Forbid`)
+- Retries up to 3 times on failure
+- Has a 30-minute time limit
+- Restarts the container in place on transient errors
+
+## Key Commands Reference
+
+```bash
+# StatefulSets
+kubectl get statefulset                         # List all StatefulSets
+kubectl describe statefulset postgres            # Detailed StatefulSet info
+kubectl scale statefulset postgres --replicas=5  # Scale to 5 replicas (ordered)
+kubectl delete statefulset postgres             # Delete StatefulSet (PVCs remain!)
+
+# Jobs
+kubectl get jobs                                 # List all Jobs
+kubectl describe job data-migration              # Detailed Job info (completions, failures)
+kubectl logs job/data-migration                  # View Job Pod logs
+kubectl delete job data-migration                # Delete Job and its Pods
+
+# CronJobs
+kubectl get cronjob                              # List all CronJobs
+kubectl describe cronjob nightly-backup          # Detailed CronJob info
+kubectl create job --from=cronjob/nightly-backup manual-backup  # Manually trigger a CronJob
+
+# PersistentVolumeClaims
+kubectl get pvc                                  # List all PVCs
+kubectl get pvc -l app=postgres                  # List PVCs for a specific app
+```
+
+<Diagram config={k8sStatefulsetsJobs} />

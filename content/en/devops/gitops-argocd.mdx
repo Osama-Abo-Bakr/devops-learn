@@ -1,0 +1,363 @@
+---
+title: "GitOps and ArgoCD"
+module: devops
+level: intermediate
+duration: "40 min"
+diagram: gitops-argocd
+description: "Declarative GitOps with ArgoCD: sync clusters from Git, handle drift, and manage multi-env deployments."
+order: 8
+---
+
+# GitOps and ArgoCD
+
+If you have ever deployed an application by running `kubectl apply` or `helm upgrade` from your laptop, you have experienced the problem GitOps solves: the cluster state lives in someone's terminal history, not in a place the team can audit, reproduce, or automatically reconcile. GitOps makes Git the single source of truth for what should run in your cluster. ArgoCD is the most popular open-source tool that implements GitOps for Kubernetes.
+
+The core idea is simple: you declare what you want in Git, and ArgoCD ensures your cluster matches that declaration. If someone manually changes the cluster, ArgoCD detects the drift and corrects it. If you want to deploy a new version, you update Git, and ArgoCD picks up the change automatically. No `kubectl apply` from CI, no SSH into production, no scripts that break at 2 AM.
+
+## What is GitOps?
+
+GitOps is built on four principles:
+
+1. **Declarative** — The entire desired state of the system is described declaratively. You write Kubernetes manifests, Helm charts, or Kustomize overlays, not imperative scripts. Declarative config is auditable, diff-able, and reviewable in pull requests.
+
+2. **Versioned and immutable** — Desired state is stored in a version-controlled system (Git). Every change has a commit hash, an author, and a timestamp. You can roll back to any previous state by reverting a commit. This is your audit trail.
+
+3. **Pulled automatically** — Software agents running inside the cluster pull the desired state from Git. The CI pipeline pushes images to a registry and tags to Git, but it does not deploy directly. The deployment agent (ArgoCD) watches Git and pulls changes.
+
+4. **Continuously reconciled** — The agent continuously compares the actual state in the cluster with the desired state in Git. If they diverge — because someone ran `kubectl edit`, or a node failed, or a config drifted — the agent corrects the drift automatically.
+
+**Benefits over traditional CI/CD:**
+
+- **Audit trail** — Every deployment corresponds to a Git commit. You know exactly who changed what and when.
+- **Disaster recovery** — If the cluster dies, spin up a new one, point ArgoCD at the same Git repo, and everything reappears.
+- **Security** — CI pipelines do not need cluster credentials. ArgoCD runs inside the cluster and has the credentials. No more kubeconfig leaks in CI logs.
+- **Developer self-service** — Developers create a pull request to deploy. Platform engineers review the PR. No need for deployment scripts or cluster access.
+
+## ArgoCD Architecture
+
+ArgoCD has three core components that work together:
+
+### Application Controller
+
+The Application Controller is the brain. It runs a continuous reconciliation loop that compares the desired state (from Git) against the live state (from the cluster). When it detects a difference, it marks the Application as `OutOfSync`. If automated sync is enabled, it triggers a sync operation to bring the cluster back to the desired state.
+
+### Repo Server
+
+The Repo Server clones Git repositories, caches them, and renders manifests. When you use Helm charts or Kustomize overlays, the Repo Server runs `helm template` or `kustomize build` to produce plain Kubernetes manifests. This rendering happens inside ArgoCD, not in your CI pipeline.
+
+### API Server
+
+The API Server exposes the ArgoCD UI and CLI. It handles authentication, authorization, and application management. When you run `argocd app sync` or click "Sync" in the UI, the API Server receives the request and tells the Application Controller to perform the sync.
+
+**How they work together:**
+
+1. The Application Controller asks the Repo Server for the desired state.
+2. The Repo Server clones the Git repo, renders templates, and returns manifests.
+3. The Application Controller queries the Kubernetes API for the live state.
+4. It compares desired vs. live and determines the sync status (Synced, OutOfSync).
+5. If auto-sync is enabled, it applies the desired state to the cluster.
+
+## Application CRD
+
+The Application CRD is the core resource in ArgoCD. It defines what to deploy and where:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app
+  namespace: argocd
+spec:
+  # Source — where to find the desired state
+  source:
+    repoURL: https://github.com/my-org/gitops-configs.git
+    targetRevision: main
+    path: apps/my-app
+
+    # Optional: Helm values overrides
+    helm:
+      valueFiles:
+        - values-prod.yaml
+
+    # Optional: Kustomize overlays
+    # kustomize:
+    #   namePrefix: prod-
+
+  # Destination — where to deploy
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+
+  # Sync policy — how and when to sync
+  syncPolicy:
+    automated:
+      prune: true       # Delete resources that are no longer in Git
+      selfHeal: true     # Auto-correct drift
+    syncOptions:
+      - CreateNamespace=true
+```
+
+The `source` field tells ArgoCD *what* to deploy (which Git repo, which path, which revision). The `destination` field tells it *where* (which cluster, which namespace). The `syncPolicy` controls *how* ArgoCD handles syncs.
+
+## Sync Policies
+
+ArgoCD supports two sync modes:
+
+### Automated Sync
+
+When `automated` is enabled, ArgoCD automatically syncs whenever it detects a change in Git. Combined with `selfHeal: true`, it also corrects any drift in the cluster. Combined with `prune: true`, it deletes resources that exist in the cluster but are no longer defined in Git.
+
+```yaml
+spec:
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+      - PrunePropagationPolicy=foreground
+```
+
+**When to use automated sync:** Production environments where you want zero-touch deployments. Any Git commit to the monitored branch triggers a deployment within seconds. If someone manually edits a resource via `kubectl`, ArgoCD undoes the change.
+
+### Manual Sync
+
+Without `automated`, ArgoCD detects drift and shows `OutOfSync`, but does not act on it. You must click "Sync" in the UI or run `argocd app sync <app-name>`.
+
+**When to use manual sync:** Environments that require approval gates (e.g., production before a canary rollout), or when you want to review every change before it hits the cluster.
+
+### Common Sync Options
+
+| Option | Effect |
+|--------|--------|
+| `CreateNamespace=true` | Auto-create the destination namespace if it does not exist |
+| `ServerSideApply=true` | Use server-side apply for larger resources and better conflict resolution |
+| `PrunePropagationPolicy=foreground` | Delete dependent resources before pruning the parent |
+| `Replace=true` | Use `kubectl replace` instead of `kubectl apply` (for resources that cannot be patched) |
+
+## App-of-Apps Pattern
+
+When you have dozens of applications, creating and managing each Application CRD individually is tedious. The App-of-Apps pattern solves this by creating one parent Application that manages all child Applications.
+
+**Directory structure:**
+
+```
+gitops-configs/
+├── apps/
+│   ├── api-app.yaml          # Application CR for the API
+│   ├── web-app.yaml           # Application CR for the web frontend
+│   ├── worker-app.yaml        # Application CR for the background worker
+│   └── monitoring-app.yaml    # Application CR for Prometheus + Grafana
+└── app-of-apps.yaml           # Parent Application that watches apps/
+```
+
+**Parent Application (app-of-apps.yaml):**
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: app-of-apps
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/my-org/gitops-configs.git
+    targetRevision: main
+    path: apps
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+When ArgoCD syncs this parent Application, it reads every YAML file in the `apps/` directory and creates child Applications. Adding a new application is as simple as adding a YAML file and pushing to Git. No `kubectl apply`, no CLI commands.
+
+**Benefits:**
+- **Single Git commit** to add or remove applications
+- **Consistent sync policies** applied across all child apps
+- **Bulk operations** — sync all apps at once by syncing the parent
+
+## Drift Detection and Reconciliation
+
+Drift is when the live cluster state diverges from the desired Git state. ArgoCD detects drift in two ways:
+
+1. **Polling** — By default, ArgoCD polls Git repos every 3 minutes (configurable via `status.refreshTime`). It also polls the Kubernetes API for live state changes.
+
+2. **Webhooks** — You can configure Git webhooks so that ArgoCD is notified immediately on push, reducing sync latency from minutes to seconds.
+
+**How reconciliation works:**
+
+1. ArgoCD compares the desired state (rendered manifests from Git) against the live state (resources in the cluster).
+2. If they match, the Application is `Synced` and `Healthy`.
+3. If they differ, the Application becomes `OutOfSync`. The UI shows which resources have drifted and the exact diff.
+4. If `selfHeal` is enabled, ArgoCD automatically applies the desired state, correcting the drift.
+5. If `selfHeal` is off, ArgoCD waits for a manual sync.
+
+**Common causes of drift:**
+- Someone ran `kubectl edit` or `kubectl scale` directly on the cluster
+- A Horizontal Pod Autoscaler changed replica counts
+- A CronJob created resources that are not in Git
+- An operator (like cert-manager) modified annotations or secrets
+
+**Best practice:** Enable `selfHeal` in production. If manual changes are needed, make them in Git first, not on the cluster. Git is the source of truth.
+
+## Progressive Delivery with Argo Rollouts
+
+ArgoCD syncs declarations to clusters, but it does not control *how* traffic is shifted during an update. That is where Argo Rollouts comes in. It replaces the Kubernetes `Deployment` resource with a `Rollout` resource that supports canary and blue-green strategies with metric-based promotion.
+
+### Canary Strategy with Analysis
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: my-app
+spec:
+  replicas: 10
+  strategy:
+    canary:
+      steps:
+        - setWeight: 20          # Route 20% traffic to canary
+        - pause: { duration: 5m } # Wait 5 minutes
+        - analysis:
+            templates:
+              - templateName: success-rate
+        - setWeight: 50          # Route 50% traffic to canary
+        - pause: { duration: 5m }
+        - analysis:
+            templates:
+              - templateName: success-rate
+        - setWeight: 100         # Promote canary to full production
+```
+
+### Analysis Template
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+spec:
+  metrics:
+    - name: success-rate
+      provider:
+        prometheus:
+          address: http://prometheus.monitoring:9090
+          query: |
+            sum(rate(http_requests_total{status!~"5.."}[1m]))
+            /
+            sum(rate(http_requests_total[1m]))
+      successCondition: result[0] >= 0.99
+      failureLimit: 3
+      interval: 30s
+```
+
+If the success rate falls below 99% during analysis, Argo Rollouts automatically aborts the rollout and rolls back to the previous version. No human intervention needed.
+
+### Blue-Green Strategy
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: my-app
+spec:
+  replicas: 10
+  strategy:
+    blueGreen:
+      activeService: my-app-active
+      previewService: my-app-preview
+      autoPromotionEnabled: false
+      scaleDownDelaySeconds: 60
+```
+
+In blue-green, the new version (green) runs alongside the old version (blue). Traffic is switched from blue to green only after verification. If something goes wrong, you switch traffic back instantly.
+
+## Multi-Cluster and Multi-Environment Strategies
+
+ArgoCD can deploy to multiple clusters from a single instance. This is essential for managing dev, staging, and production environments from one control plane.
+
+### Registering Clusters
+
+```bash
+# Register a cluster (uses your kubeconfig context)
+argocd cluster add my-staging-cluster
+
+# Verify registration
+argocd cluster list
+```
+
+### Multi-Environment Directory Structure
+
+```
+gitops-configs/
+├── base/
+│   ├── deployment.yaml
+│   ├── service.yaml
+│   └── kustomization.yaml
+├── overlays/
+│   ├── dev/
+│   │   ├── kustomization.yaml
+│   │   └── patch-replicas.yaml
+│   ├── staging/
+│   │   ├── kustomization.yaml
+│   │   └── patch-replicas.yaml
+│   └── production/
+│       ├── kustomization.yaml
+│       └── patch-replicas.yaml
+```
+
+### Application for Each Environment
+
+```yaml
+# Dev — auto-sync, fast iteration
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app-dev
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/my-org/gitops-configs.git
+    targetRevision: main
+    path: overlays/dev
+  destination:
+    name: dev-cluster
+    namespace: my-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+```yaml
+# Production — manual sync, approval gates
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: my-app-prod
+  namespace: argocd
+spec:
+  source:
+    repoURL: https://github.com/my-org/gitops-configs.git
+    targetRevision: v1.2.3   # Pinned to a release tag
+    path: overlays/production
+  destination:
+    name: prod-cluster
+    namespace: my-app
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+```
+
+**Key differences between environments:**
+- **Dev** auto-syncs from the `main` branch for fast iteration
+- **Staging** auto-syncs but with manual approval before promoting to production
+- **Production** pins to a tagged release (`targetRevision: v1.2.3`) and requires explicit promotion
+
+This single-repo, multi-overlay approach ensures consistency across environments while allowing environment-specific overrides (replica counts, resource limits, feature flags).

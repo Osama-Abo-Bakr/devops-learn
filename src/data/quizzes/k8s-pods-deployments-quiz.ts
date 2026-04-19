@@ -75,5 +75,19 @@ export const k8sPodsDeploymentsQuiz: Quiz = {
       explanation:
         "`maxUnavailable` controls the maximum number or percentage of Pods that can be unavailable during the update. `maxSurge` controls how many extra Pods can be created above the desired count. Together they define the rolling update strategy. Default is `25%` for both.",
     },
+    {
+      id: "q6",
+      question:
+        "You update a Deployment's container image from v1 to v2, but `kubectl get pods` shows the new pods in `CrashLoopBackOff` state while old pods are being terminated. Your users are experiencing downtime. What should you do immediately and what rollout strategy would prevent this?",
+      options: [
+        "Delete the failing pods and wait for them to restart",
+        "Run `kubectl rollout undo` to revert to v1 immediately. To prevent this, use a rolling update with `readinessProbe` so new pods aren't marked ready until they pass health checks, and set `maxUnavailable: 0`",
+        "Increase the replica count to create more v2 pods",
+        "Set `strategy: Recreate` in the Deployment to avoid rolling updates entirely",
+      ],
+      correctIndex: 1,
+      explanation:
+        "Run `kubectl rollout undo deployment/<name>` to immediately revert to the v1 rollout. To prevent this scenario, configure a `readinessProbe` so pods aren't marked ready until they pass health checks, and set `maxUnavailable: 0` in the rolling update strategy. This ensures old pods stay serving traffic until new pods are confirmed healthy, achieving zero-downtime deployments.",
+    },
   ],
 };

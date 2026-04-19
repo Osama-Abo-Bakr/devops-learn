@@ -75,5 +75,19 @@ export const helmQuiz: Quiz = {
       explanation:
         "Helm uses Go templating syntax: `{{ .Values.replicaCount }}` references the `replicaCount` key from `values.yaml`. Other common objects include `.Chart` (metadata from `Chart.yaml`), `.Release` (release info), and `.Capabilities` (cluster capabilities). Pipe to functions like `{{ .Values.image.tag | default .Chart.AppVersion }}` for defaults.",
     },
+    {
+      id: "q6",
+      question:
+        "You upgrade a Helm release from chart version 2.0 to 3.0, but the upgrade fails. Running `helm rollback` also fails because the new chart introduced CRDs that aren't compatible with the old chart. How should you have handled this upgrade?",
+      options: [
+        "Delete the release and reinstall from scratch",
+        "Force the rollback with `helm rollback --force` to override CRD incompatibilities",
+        "Test upgrades with `helm upgrade --dry-run` first, use `helm diff` to preview changes, and for breaking changes, install the new chart as a separate release alongside the old one (blue-green deployment)",
+        "Manually delete the CRDs with `kubectl delete` and then run `helm rollback`",
+      ],
+      correctIndex: 2,
+      explanation:
+        "Always preview upgrades with `--dry-run` and `helm diff` before applying. When a chart introduces incompatible CRDs or breaking changes, in-place upgrades and rollbacks can both fail. The safest approach is a blue-green deployment: install the new chart as a separate release, validate it, then migrate traffic — avoiding the need to roll back the original release at all.",
+    },
   ],
 };

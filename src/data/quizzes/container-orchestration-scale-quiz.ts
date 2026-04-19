@@ -19,27 +19,29 @@ export const containerOrchestrationScaleQuiz: Quiz = {
     },
     {
       id: "orch-q2",
-      question: "How does the Horizontal Pod Autoscaler (HPA) decide when to scale pods?",
+      question: "Which pattern is used for cross-cluster service discovery in multi-cluster Kubernetes deployments?",
       options: [
-        "It checks the number of incoming HTTP requests every second",
-        "It watches CPU/memory metrics from metrics-server and scales when thresholds are exceeded",
-        "It scales based on the time of day (peak hours = more pods)",
-        "It always maintains a fixed number of replicas",
+        "Each cluster maintains its own etcd and never shares service information",
+        "Global DNS with consistent domain naming (e.g., service.namespace.cluster.local) combined with service mesh federation to resolve services across clusters",
+        "Manually updating /etc/hosts files in every pod to point to remote services",
+        "Using a single shared API server that all clusters connect to",
       ],
       correctIndex: 1,
-      explanation: "HPA queries the metrics-server for CPU and memory utilization. When average utilization exceeds the target threshold (e.g., 70% CPU), HPA increases replicas up to maxReplicas. When utilization drops, it scales down to minReplicas.",
+      explanation:
+        "Cross-cluster service discovery relies on global DNS records that resolve service names across clusters (e.g., using external-dns or multi-cluster DNS). Service mesh federation (like Istio multi-cluster) extends this by enabling automatic cross-cluster traffic routing, load balancing, and mTLS between services in different clusters without manual DNS or network configuration.",
     },
     {
       id: "orch-q3",
-      question: "What is the key difference between ConfigMap and Secret mounting in Kubernetes?",
+      question: "How does Istio's sidecar injection work, and what is the difference between automatic and manual injection?",
       options: [
-        "ConfigMaps are stored on disk; Secrets are stored in memory only",
-        "ConfigMaps are for non-sensitive configuration; Secrets are for credentials with base64 encoding and restricted access",
-        "There is no difference — they are interchangeable",
-        "Secrets can only be mounted as files; ConfigMaps can only be env vars",
+        "Automatic injection adds the sidecar at build time; manual injection adds it during pod scheduling",
+        "Automatic injection uses a mutating webhook to inject the Envoy sidecar into pods at creation time based on namespace labels; manual injection uses `istioctl kube-inject` to modify the pod spec before applying it",
+        "There is no difference — both require modifying the Dockerfile",
+        "Automatic injection requires annotating every pod; manual injection requires only a cluster-level config map",
       ],
       correctIndex: 1,
-      explanation: "ConfigMaps store non-sensitive data (log levels, endpoints, feature flags). Secrets store sensitive data (DB passwords, API keys) with base64 encoding and can be restricted with RBAC. Both can be mounted as env vars, files, or volumes.",
+      explanation:
+        "Istio's automatic sidecar injection uses a Kubernetes mutating admission webhook. When a namespace is labeled with `istio-injection=enabled`, the webhook intercepts pod creation requests and injects the Envoy sidecar container into the pod spec. Manual injection uses `istioctl kube-inject -f deployment.yaml` to modify the YAML before applying it. Automatic injection is preferred for production as it ensures no pods are accidentally created without the sidecar.",
     },
     {
       id: "orch-q4",
@@ -64,6 +66,48 @@ export const containerOrchestrationScaleQuiz: Quiz = {
       ],
       correctIndex: 1,
       explanation: "In active-passive, one cluster handles all traffic while the other stands by for failover. In active-active, both clusters serve traffic simultaneously (often with geo-routing), providing lower latency and higher availability at the cost of complexity.",
+    },
+    {
+      id: "orch-q6",
+      question:
+        "You need to route 90% of traffic to v1 and 10% to v2 of your service in Istio. Which resource do you configure?",
+      options: [
+        "A Kubernetes Service with weighted endpoints",
+        "An Istio VirtualService with weight-based routing rules",
+        "An Istio DestinationRule with traffic splitting annotations",
+        "A Kubernetes Ingress with canary-weight annotations",
+      ],
+      correctIndex: 1,
+      explanation:
+        "In Istio, traffic splitting is configured in the VirtualService resource using the `weight` field on route destinations. You define multiple `route` entries for the same host, each pointing to a different subset (defined in the DestinationRule) with assigned weights that must sum to 100. DestinationRule defines the subsets (e.g., v1, v2) based on labels, while the VirtualService controls the routing percentages.",
+    },
+    {
+      id: "orch-q7",
+      question:
+        "What is the role of KubeFed (Kubernetes Federation) in multi-cluster architectures?",
+      options: [
+        "It replaces the Kubernetes API server with a federated control plane",
+        "It provides a single control plane to manage multiple Kubernetes clusters, enabling federated resource distribution, cross-cluster service discovery, and workload placement",
+        "It encrypts all traffic between clusters using mTLS",
+        "It merges multiple clusters into a single logical cluster with shared etcd",
+      ],
+      correctIndex: 1,
+      explanation:
+        "KubeFed (Kubernetes Federation v2) provides a higher-level control plane that manages resources across multiple Kubernetes clusters. It enables federated deployment (distributing workloads across clusters), cross-cluster DNS for service discovery, and replica scheduling policies. An alternative approach is shared-ingress multi-cluster, where a global ingress controller routes traffic to the nearest healthy cluster. KubeFed was archived as a CNCF sandbox project, but the pattern of federated multi-cluster management remains relevant.",
+    },
+    {
+      id: "orch-q8",
+      question:
+        "How does dynamic PV provisioning with a StorageClass work in Kubernetes?",
+      options: [
+        "An administrator must manually create PersistentVolumes for each PVC before pods can start",
+        "A StorageClass defines a provisioner (e.g., AWS EBS, GCE PD) and parameters; when a PVC references the StorageClass, the provisioner automatically creates a PersistentVolume",
+        "StorageClass creates PersistentVolumes at cluster startup regardless of PVCs",
+        "Dynamic provisioning only works with local storage on the node",
+      ],
+      correctIndex: 1,
+      explanation:
+        "Dynamic provisioning eliminates the need for administrators to pre-create PersistentVolumes. A StorageClass specifies a storage provisioner (e.g., `kubernetes.io/aws-ebs` for AWS EBS, `kubernetes.io/gce-pd` for GCE Persistent Disks) along with parameters like volume type and IOPS. When a PVC references a StorageClass via `storageClassName`, the provisioner automatically creates the underlying storage resource and a matching PersistentVolume, binding it to the PVC. This on-demand approach scales storage management efficiently.",
     },
   ],
 };
