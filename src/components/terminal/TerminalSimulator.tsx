@@ -127,7 +127,8 @@ export default function TerminalSimulator({
 
       if (output && output !== "__CLEAR__") {
         term.write("\r\n");
-        term.write(ansiOutput || output);
+        const text = (ansiOutput || output).replace(/\n/g, "\r\n");
+        term.write(text);
       }
 
       // Task validation (works with both modes)
@@ -205,7 +206,7 @@ export default function TerminalSimulator({
         cursorBlink: true,
         cursorStyle: "block",
         scrollback: 1000,
-        convertEol: true,
+        convertEol: false,
       });
 
       fitAddon = new FitAddon();
