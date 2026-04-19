@@ -86,8 +86,9 @@ export default function TerminalSimulator({
           const sub = parts[1];
           let dockerCmd: string;
           let dockerArgs: string[];
-          if (sub === "compose") {
-            dockerCmd = `docker compose ${parts[2] || ""}`.trim();
+          const managementCmds = new Set(["compose", "network", "volume", "system", "image", "container"]);
+          if (managementCmds.has(sub) && parts[2]) {
+            dockerCmd = `docker ${sub} ${parts[2]}`;
             dockerArgs = parts.slice(3);
           } else if (sub) {
             dockerCmd = `docker ${sub}`;

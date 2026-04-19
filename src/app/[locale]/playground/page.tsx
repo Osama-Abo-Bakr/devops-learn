@@ -31,8 +31,13 @@ const playgroundCommands: Record<string, CommandHandler> = {
   },
   help: {
     output: () => `Available commands:
-  Docker: docker ps, docker images, docker run, docker stop, docker pull, docker exec, docker logs
-  Docker Compose: docker compose up, docker compose down
+  Docker: docker run, docker ps, docker images, docker pull, docker stop, docker rm, docker rmi
+          docker logs, docker exec, docker inspect, docker build, docker search
+          docker version, docker info, docker top, docker stats, docker restart
+  Compose: docker compose up, docker compose down, docker compose build, docker compose ps
+  Network: docker network ls, docker network create, docker network rm
+  Volume: docker volume ls, docker volume create
+  System: docker system df, docker system prune
   Filesystem: ls, cd, cat, pwd, echo
   Kubernetes: kubectl get, kubectl describe, kubectl apply
   Other: help, clear`,

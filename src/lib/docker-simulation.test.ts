@@ -304,6 +304,185 @@ describe("unknown docker command", () => {
   });
 });
 
+describe("docker rmi", () => {
+  it("removes an image", () => {
+    let s = freshState();
+    const { output, newState } = executeDockerCommand(s, "docker rmi", ["nginx"]);
+    expect(output).toContain("Untagged");
+    expect(newState.images.size).toBe(5);
+  });
+
+  it("errors on nonexistent image", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker rmi", ["nonexistent"]);
+    expect(output).toContain("No such image");
+  });
+
+  it("shows usage with no args", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker rmi", []);
+    expect(output).toContain("Usage");
+  });
+});
+
+describe("docker inspect", () => {
+  it("inspects a container", () => {
+    let s = freshState();
+    s = executeDockerCommand(s, "docker run", ["-d", "nginx"]).newState;
+    const c = [...s.containers.values()][0];
+    const { output } = executeDockerCommand(s, "docker inspect", [c.id]);
+    expect(output).toContain("Id");
+    expect(output).toContain("running");
+  });
+
+  it("inspects an image", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker inspect", ["nginx:latest"]);
+    expect(output).toContain("Repository");
+  });
+
+  it("errors on nonexistent object", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker inspect", ["nonexistent"]);
+    expect(output).toContain("No such object");
+  });
+});
+
+describe("docker restart", () => {
+  it("restarts a container", () => {
+    let s = freshState();
+    s = executeDockerCommand(s, "docker run", ["-d", "nginx"]).newState;
+    const c = [...s.containers.values()][0];
+    const { newState } = executeDockerCommand(s, "docker restart", [c.id]);
+    expect(newState.containers.get(c.id)!.status).toBe("running");
+  });
+});
+
+describe("docker build", () => {
+  it("builds an image", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker build", ["-t", "my-app:latest", "."]);
+    expect(output).toContain("Successfully built");
+    expect(output).toContain("my-app:latest");
+  });
+});
+
+describe("docker search", () => {
+  it("searches for images", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker search", ["nginx"]);
+    expect(output).toContain("NAME");
+    expect(output).toContain("nginx");
+  });
+});
+
+describe("docker version", () => {
+  it("shows version info", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker version", []);
+    expect(output).toContain("Version");
+    expect(output).toContain("25.0.3");
+  });
+});
+
+describe("docker info", () => {
+  it("shows system info", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker info", []);
+    expect(output).toContain("Containers");
+    expect(output).toContain("Images");
+  });
+});
+
+describe("docker network", () => {
+  it("lists networks", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker network", []);
+    expect(output).toContain("Usage");
+  });
+
+  it("docker network ls lists networks", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker network ls", []);
+    expect(output).toContain("NETWORK ID");
+  });
+
+  it("docker network create adds network", () => {
+    let s = freshState();
+    const { newState } = executeDockerCommand(s, "docker network create", ["my-net"]);
+    expect(newState.networks.has("my-net")).toBe(true);
+  });
+
+  it("docker network rm removes network", () => {
+    let s = freshState();
+    s = executeDockerCommand(s, "docker network create", ["my-net"]).newState;
+    const { newState } = executeDockerCommand(s, "docker network rm", ["my-net"]);
+    expect(newState.networks.has("my-net")).toBe(false);
+  });
+});
+
+describe("docker volume", () => {
+  it("shows usage with no subcommand", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker volume", []);
+    expect(output).toContain("Usage");
+  });
+
+  it("docker volume ls lists volumes", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker volume ls", []);
+    expect(output).toContain("VOLUME NAME");
+  });
+});
+
+describe("docker system", () => {
+  it("shows usage with no subcommand", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker system", []);
+    expect(output).toContain("Usage");
+  });
+
+  it("docker system df shows disk usage", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker system df", []);
+    expect(output).toContain("Images");
+  });
+});
+
+describe("docker compose (extended)", () => {
+  it("docker compose shows usage", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker compose", []);
+    expect(output).toContain("Usage");
+  });
+
+  it("docker compose build simulates build", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker compose build", []);
+    expect(output).toContain("Building");
+  });
+
+  it("docker compose ps lists services", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker compose ps", []);
+    expect(output).toContain("NAME");
+  });
+});
+
+describe("docker login/logout", () => {
+  it("docker login succeeds", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker login", []);
+    expect(output).toContain("Login Succeeded");
+  });
+
+  it("docker logout succeeds", () => {
+    let s = freshState();
+    const { output } = executeDockerCommand(s, "docker logout", []);
+    expect(output).toContain("Removing login credentials");
+  });
+});
+
 describe("filesystem commands", () => {
   it("ls lists directory contents", () => {
     const s = freshState();
