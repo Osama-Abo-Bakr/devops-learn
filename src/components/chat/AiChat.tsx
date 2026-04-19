@@ -115,12 +115,16 @@ function formatInline(text: string): React.ReactNode {
   });
 }
 
+const MAX_MESSAGES = 5;
+
 export default function AiChat() {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const userMessageCount = messages.filter((m) => m.role === "user").length;
+  const limitReached = userMessageCount >= MAX_MESSAGES;
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -129,7 +133,7 @@ export default function AiChat() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const text = input.trim();
-    if (!text || loading) return;
+    if (!text || loading || limitReached) return;
 
     setInput("");
     const userMsg: Message = { role: "user", text };
@@ -247,6 +251,11 @@ export default function AiChat() {
                 Thinking...
               </div>
             )}
+            {limitReached && !loading && (
+              <div className="mr-2 rounded-lg border border-yellow-800 bg-yellow-900/30 px-3 py-2 text-sm text-yellow-300">
+                You&apos;ve used all {MAX_MESSAGES} messages. Refresh the page to start a new conversation.
+              </div>
+            )}
             <div ref={bottomRef} />
           </div>
 
@@ -259,17 +268,20 @@ export default function AiChat() {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="Ask about Docker, K8s..."
-              className="flex-1 rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none"
-              disabled={loading}
+              placeholder={limitReached ? "Limit reached" : "Ask about Docker, K8s..."}
+              className="flex-1 rounded-lg border border-gray-600 bg-gray-800 px-3 py-2 text-sm text-white placeholder-gray-500 focus:border-blue-500 focus:outline-none disabled:opacity-50"
+              disabled={loading || limitReached}
             />
             <button
               type="submit"
-              disabled={loading || !input.trim()}
+              disabled={loading || !input.trim() || limitReached}
               className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
             >
               Send
             </button>
+            <span className="flex items-center text-xs text-gray-500">
+              {userMessageCount}/{MAX_MESSAGES}
+            </span>
           </form>
         </div>
       )}
