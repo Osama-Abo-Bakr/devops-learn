@@ -4,6 +4,10 @@ Free, visual learning platform for Docker, Kubernetes, and Docker Compose. Learn
 
 ![Dark theme dashboard](public/og-image.png)
 
+## ☕ Support My Work
+
+If this project helped you, consider [buying me a coffee](https://ko-fi.com/osamaabobakr)! Your support helps me keep building AI tools and useful open-source projects.
+
 ## Features
 
 - **Interactive Diagrams** — Explore architecture visually with React Flow. Click nodes, follow data flows, see how containers connect.
@@ -136,3 +140,7 @@ npx vercel
 ## License
 
 MIT
+
+---
+
+☕ **Found this useful?** [Support my work on Ko-fi](https://ko-fi.com/osamaabobakr) — it helps me continue building tools like this one.
