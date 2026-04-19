@@ -56,7 +56,7 @@ export default function CodeBlock({ children, className, ...rest }: CodeBlockPro
       </div>
 
       {/* Code content */}
-      <div ref={codeRef} className="overflow-x-auto p-4 text-sm leading-relaxed [&>code]:block">
+      <div ref={codeRef} className="overflow-x-auto p-4 text-sm leading-relaxed whitespace-pre [&>code]:whitespace-pre [&>code]:block">
         {children}
       </div>
     </div>
