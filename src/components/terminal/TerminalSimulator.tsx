@@ -21,7 +21,6 @@ interface TerminalSimulatorProps {
   useSimulationEngine?: boolean;
 }
 
-const IS_DOCKER_CMD = /^(docker\s|ls$|cd$|cat$|pwd$|echo$)/;
 const FS_COMMANDS = new Set(["ls", "cd", "cat", "pwd", "echo"]);
 
 export default function TerminalSimulator({
@@ -70,36 +69,53 @@ export default function TerminalSimulator({
       let ansiOutput = "";
 
       if (useSimulationEngine) {
-        const { command, args } = matchCommand(line, commands);
+        const trimmed = line.trim();
+        const parts = trimmed.split(/\s+/);
+        const firstWord = parts[0];
 
-        if (FS_COMMANDS.has(command)) {
+        if (FS_COMMANDS.has(firstWord)) {
           if (!simStateRef.current) simStateRef.current = createInitialState();
-          const result = executeFilesystemCommand(simStateRef.current, command, args);
+          const result = executeFilesystemCommand(simStateRef.current, firstWord, parts.slice(1));
           if (result) {
             output = result.output;
             ansiOutput = result.ansiOutput;
             simStateRef.current = result.newState;
           }
-        } else if (IS_DOCKER_CMD.test(line.trim())) {
+        } else if (firstWord === "docker") {
           if (!simStateRef.current) simStateRef.current = createInitialState();
-          const dockerCmd = command.startsWith("docker") ? command : `docker ${command}`;
-          const dockerArgs = command.startsWith("docker") ? args : [command, ...args];
+          const sub = parts[1];
+          let dockerCmd: string;
+          let dockerArgs: string[];
+          if (sub === "compose") {
+            dockerCmd = `docker compose ${parts[2] || ""}`.trim();
+            dockerArgs = parts.slice(3);
+          } else if (sub) {
+            dockerCmd = `docker ${sub}`;
+            dockerArgs = parts.slice(2);
+          } else {
+            dockerCmd = "docker";
+            dockerArgs = [];
+          }
           const result = executeDockerCommand(simStateRef.current, dockerCmd, dockerArgs);
           output = result.output;
           ansiOutput = result.ansiOutput;
           simStateRef.current = result.newState;
-        } else if (commands[command]) {
-          const result = executeCommandWithAnsi(line, commands, cmdStateRef.current);
-          output = result.output;
-          ansiOutput = result.ansiOutput;
-          cmdStateRef.current = result.newState;
-        } else if (!command) {
-          term.write(promptStr);
-          return;
         } else {
-          const msg = `bash: ${command}: command not found. Type 'help' for available commands.`;
-          output = msg;
-          ansiOutput = ANSI.red(msg);
+          const { command: cmd } = matchCommand(line, commands);
+          const handler = commands[cmd];
+          if (handler) {
+            const result = executeCommandWithAnsi(line, commands, cmdStateRef.current);
+            output = result.output;
+            ansiOutput = result.ansiOutput;
+            cmdStateRef.current = result.newState;
+          } else if (!cmd) {
+            term.write(promptStr);
+            return;
+          } else {
+            const msg = `bash: ${cmd}: command not found. Type 'help' for available commands.`;
+            output = msg;
+            ansiOutput = ANSI.red(msg);
+          }
         }
       } else {
         const result = executeCommandWithAnsi(line, commands, cmdStateRef.current);
