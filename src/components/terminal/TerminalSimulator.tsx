@@ -1,13 +1,15 @@
 "use client";
 
-import { useState, useRef, useCallback, type KeyboardEvent } from "react";
-import { executeCommand, validateTask } from "./CommandParser";
+import { useRef, useCallback, useEffect, useState } from "react";
+import { matchCommand, validateTask, executeCommandWithAnsi } from "./CommandParser";
+import {
+  createInitialState,
+  executeDockerCommand,
+  executeFilesystemCommand,
+  type DockerSimulationState,
+} from "@/lib/docker-simulation";
+import { ANSI } from "@/lib/ansi-formatter";
 import type { CommandHandler, ChallengeTask } from "@/types";
-
-interface TerminalLine {
-  type: "input" | "output";
-  content: string;
-}
 
 interface TerminalSimulatorProps {
   commands: Record<string, CommandHandler>;
@@ -16,7 +18,11 @@ interface TerminalSimulatorProps {
   tasks?: ChallengeTask[];
   onTaskComplete?: (taskId: string) => void;
   onAllTasksComplete?: () => void;
+  useSimulationEngine?: boolean;
 }
+
+const IS_DOCKER_CMD = /^(docker\s|ls$|cd$|cat$|pwd$|echo$)/;
+const FS_COMMANDS = new Set(["ls", "cd", "cat", "pwd", "echo"]);
 
 export default function TerminalSimulator({
   commands,
@@ -25,139 +31,306 @@ export default function TerminalSimulator({
   tasks = [],
   onTaskComplete,
   onAllTasksComplete,
+  useSimulationEngine = false,
 }: TerminalSimulatorProps) {
-  const [lines, setLines] = useState<TerminalLine[]>([]);
-  const [input, setInput] = useState("");
-  const [history, setHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const [state, setState] = useState(initialState);
-  const [completedTasks, setCompletedTasks] = useState<Set<string>>(new Set());
-  const allDoneFired = useRef(false);
+  const termRef = useRef<any>(null);
+  const fitAddonRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputBuffer = useRef("");
+  const historyRef = useRef<string[]>([]);
+  const historyIndexRef = useRef(-1);
+  const completedTasksRef = useRef<Set<string>>(new Set());
+  const allDoneFiredRef = useRef(false);
+  const simStateRef = useRef<DockerSimulationState | null>(null);
+  const cmdStateRef = useRef<Record<string, string>>(initialState);
 
-  const inputRef = useRef<HTMLInputElement>(null);
+  const [loaded, setLoaded] = useState(false);
 
-  const handleCommand = useCallback(() => {
-    if (!input.trim()) return;
+  const promptStr = `\x1b[32m${prompt}\x1b[0m `;
 
-    const newLines: TerminalLine[] = [{ type: "input", content: `${prompt} ${input}` }];
-    const { output, newState } = executeCommand(input, commands, state);
+  const writePrompt = useCallback(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.write(`\r\n${promptStr}`);
+  }, [promptStr]);
 
-    if (output) {
-      newLines.push({ type: "output", content: output });
-    }
+  const handleInput = useCallback(
+    (line: string) => {
+      const term = termRef.current;
+      if (!term) return;
 
-    // Check task completion
-    if (tasks.length > 0) {
-      const updatedCompleted = new Set(completedTasks);
-      for (const task of tasks) {
-        if (updatedCompleted.has(task.id)) continue;
-        if (validateTask(task.id, input, commands)) {
-          updatedCompleted.add(task.id);
-          onTaskComplete?.(task.id);
-          newLines.push({
-            type: "output",
-            content: `✅ Task completed: ${task.instruction}`,
-          });
-        }
+      if (line.trim() === "clear") {
+        term.clear();
+        term.write(promptStr);
+        inputBuffer.current = "";
+        return;
       }
-      setCompletedTasks(updatedCompleted);
 
-      // Fire onAllTasksComplete once when all tasks are done
-      if (
-        updatedCompleted.size === tasks.length &&
-        !allDoneFired.current
-      ) {
-        allDoneFired.current = true;
-        onAllTasksComplete?.();
-      }
-    }
+      let output = "";
+      let ansiOutput = "";
 
-    setLines((prev) => [...prev, ...newLines]);
-    setState(newState);
-    setHistory((prev) => [...prev, input]);
-    setHistoryIndex(-1);
-    setInput("");
-  }, [input, commands, state, prompt, tasks, completedTasks, onTaskComplete, onAllTasksComplete]);
+      if (useSimulationEngine) {
+        const { command, args } = matchCommand(line, commands);
 
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === "Enter") {
-        handleCommand();
-      } else if (e.key === "ArrowUp") {
-        e.preventDefault();
-        if (history.length === 0) return;
-        const newIndex =
-          historyIndex === -1 ? history.length - 1 : Math.max(0, historyIndex - 1);
-        setHistoryIndex(newIndex);
-        setInput(history[newIndex]);
-      } else if (e.key === "ArrowDown") {
-        e.preventDefault();
-        if (historyIndex === -1) return;
-        const newIndex = historyIndex + 1;
-        if (newIndex >= history.length) {
-          setHistoryIndex(-1);
-          setInput("");
+        if (FS_COMMANDS.has(command)) {
+          if (!simStateRef.current) simStateRef.current = createInitialState();
+          const result = executeFilesystemCommand(simStateRef.current, command, args);
+          if (result) {
+            output = result.output;
+            ansiOutput = result.ansiOutput;
+            simStateRef.current = result.newState;
+          }
+        } else if (IS_DOCKER_CMD.test(line.trim())) {
+          if (!simStateRef.current) simStateRef.current = createInitialState();
+          const dockerCmd = command.startsWith("docker") ? command : `docker ${command}`;
+          const dockerArgs = command.startsWith("docker") ? args : [command, ...args];
+          const result = executeDockerCommand(simStateRef.current, dockerCmd, dockerArgs);
+          output = result.output;
+          ansiOutput = result.ansiOutput;
+          simStateRef.current = result.newState;
+        } else if (commands[command]) {
+          const result = executeCommandWithAnsi(line, commands, cmdStateRef.current);
+          output = result.output;
+          ansiOutput = result.ansiOutput;
+          cmdStateRef.current = result.newState;
+        } else if (!command) {
+          term.write(promptStr);
+          return;
         } else {
-          setHistoryIndex(newIndex);
-          setInput(history[newIndex]);
+          const msg = `bash: ${command}: command not found. Type 'help' for available commands.`;
+          output = msg;
+          ansiOutput = ANSI.red(msg);
+        }
+      } else {
+        const result = executeCommandWithAnsi(line, commands, cmdStateRef.current);
+        output = result.output;
+        ansiOutput = result.ansiOutput;
+        cmdStateRef.current = result.newState;
+      }
+
+      if (output && output !== "__CLEAR__") {
+        term.write("\r\n");
+        term.write(ansiOutput || output);
+      }
+
+      // Task validation (works with both modes)
+      if (tasks.length > 0) {
+        const { command } = matchCommand(line, commands);
+        const handler = commands[command];
+        if (handler?.completesTasks) {
+          for (const task of tasks) {
+            if (completedTasksRef.current.has(task.id)) continue;
+            if (validateTask(task.id, line, commands)) {
+              completedTasksRef.current.add(task.id);
+              onTaskComplete?.(task.id);
+              term.write(`\r\n${ANSI.green("✅")} Task completed: ${ANSI.bold(task.instruction)}`);
+            }
+          }
+
+          if (
+            completedTasksRef.current.size === tasks.length &&
+            !allDoneFiredRef.current
+          ) {
+            allDoneFiredRef.current = true;
+            onAllTasksComplete?.();
+          }
         }
       }
+
+      term.write("\r\n");
+      term.write(promptStr);
     },
-    [handleCommand, history, historyIndex],
+    [commands, tasks, useSimulationEngine, promptStr, onTaskComplete, onAllTasksComplete],
   );
 
+  const handleInputRef = useRef(handleInput);
+  handleInputRef.current = handleInput;
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    let term: any;
+    let fitAddon: any;
+    let disposed = false;
+
+    const init = async () => {
+      const [{ Terminal }, { FitAddon }] = await Promise.all([
+        import("@xterm/xterm"),
+        import("@xterm/addon-fit"),
+      ]);
+
+      if (disposed || !containerRef.current) return;
+
+      term = new Terminal({
+        fontSize: 14,
+        fontFamily: "'Fira Code', 'Cascadia Code', 'JetBrains Mono', Menlo, Monaco, monospace",
+        theme: {
+          background: "#030712",
+          foreground: "#d1d5db",
+          cursor: "#4ade80",
+          selectionBackground: "#374151",
+          black: "#1f2937",
+          red: "#f87171",
+          green: "#4ade80",
+          yellow: "#fbbf24",
+          blue: "#60a5fa",
+          magenta: "#c084fc",
+          cyan: "#22d3ee",
+          white: "#f3f4f6",
+          brightBlack: "#4b5563",
+          brightRed: "#fca5a5",
+          brightGreen: "#86efac",
+          brightYellow: "#fde68a",
+          brightBlue: "#93c5fd",
+          brightMagenta: "#d8b4fe",
+          brightCyan: "#67e8f9",
+          brightWhite: "#ffffff",
+        },
+        cursorBlink: true,
+        cursorStyle: "block",
+        scrollback: 1000,
+        convertEol: true,
+      });
+
+      fitAddon = new FitAddon();
+      term.loadAddon(fitAddon);
+      term.open(containerRef.current!);
+
+      setTimeout(() => {
+        try { fitAddon.fit(); } catch {}
+      }, 0);
+
+      const welcomeMsg = useSimulationEngine
+        ? `${ANSI.bold("DevOps Terminal")} — Docker simulation active. Type ${ANSI.cyan("help")} for commands.\r\n`
+        : "";
+      term.write(welcomeMsg);
+      term.write(promptStr);
+
+      term.onData((data: string) => {
+        switch (data) {
+          case "\r": {
+            const line = inputBuffer.current;
+            historyRef.current.push(line);
+            historyIndexRef.current = -1;
+            inputBuffer.current = "";
+            handleInputRef.current(line);
+            break;
+          }
+          case "\x7f": {
+            if (inputBuffer.current.length > 0) {
+              inputBuffer.current = inputBuffer.current.slice(0, -1);
+              term.write("\b \b");
+            }
+            break;
+          }
+          case "\x03": {
+            term.write("^C");
+            inputBuffer.current = "";
+            term.write(`\r\n${promptStr}`);
+            break;
+          }
+          case "\x0c": {
+            term.clear();
+            term.write(promptStr);
+            inputBuffer.current = "";
+            break;
+          }
+          case "\x1b[A": {
+            if (historyRef.current.length === 0) break;
+            const newIndex =
+              historyIndexRef.current === -1
+                ? historyRef.current.length - 1
+                : Math.max(0, historyIndexRef.current - 1);
+            const clearLen = inputBuffer.current.length;
+            if (clearLen > 0) term.write(`\x1b[${clearLen}D\x1b[K`);
+            historyIndexRef.current = newIndex;
+            inputBuffer.current = historyRef.current[newIndex];
+            term.write(inputBuffer.current);
+            break;
+          }
+          case "\x1b[B": {
+            if (historyIndexRef.current === -1) break;
+            const newIndex = historyIndexRef.current + 1;
+            const clearLen = inputBuffer.current.length;
+            if (clearLen > 0) term.write(`\x1b[${clearLen}D\x1b[K`);
+            if (newIndex >= historyRef.current.length) {
+              historyIndexRef.current = -1;
+              inputBuffer.current = "";
+            } else {
+              historyIndexRef.current = newIndex;
+              inputBuffer.current = historyRef.current[newIndex];
+              term.write(inputBuffer.current);
+            }
+            break;
+          }
+          default: {
+            if (data >= " " || data === "\t") {
+              inputBuffer.current += data;
+              term.write(data);
+            }
+          }
+        }
+      });
+
+      termRef.current = term;
+      fitAddonRef.current = fitAddon;
+      setLoaded(true);
+    };
+
+    init();
+
+    const observer = new ResizeObserver(() => {
+      if (fitAddonRef.current) {
+        try { fitAddonRef.current.fit(); } catch {}
+      }
+    });
+
+    if (containerRef.current) {
+      observer.observe(containerRef.current);
+    }
+
+    return () => {
+      disposed = true;
+      observer.disconnect();
+      if (term) term.dispose();
+      termRef.current = null;
+      fitAddonRef.current = null;
+    };
+  }, [promptStr, useSimulationEngine]);
+
+  useEffect(() => {
+    const existing = document.querySelector('link[data-xterm-css]');
+    if (existing) return;
+    const style = document.createElement("link");
+    style.rel = "stylesheet";
+    style.href = "https://cdn.jsdelivr.net/npm/@xterm/xterm@5/css/xterm.min.css";
+    style.dataset.xtermCss = "true";
+    document.head.appendChild(style);
+  }, []);
+
+  const completedCount = completedTasksRef.current.size;
+  const allDone = tasks.length > 0 && completedCount === tasks.length;
+
   return (
-    <div
-      className="flex h-96 flex-col overflow-hidden rounded-lg border border-gray-700 bg-gray-950"
-      onClick={() => inputRef.current?.focus()}
-    >
-      {/* Header */}
+    <div className="flex h-96 flex-col overflow-hidden rounded-lg border border-gray-700 bg-gray-950">
       <div className="flex items-center gap-2 border-b border-gray-700 bg-gray-900 px-4 py-2">
         <div className="h-3 w-3 rounded-full bg-red-500" />
         <div className="h-3 w-3 rounded-full bg-yellow-500" />
         <div className="h-3 w-3 rounded-full bg-green-500" />
-        <span className="ml-2 text-xs text-gray-400">Terminal</span>
+        <span className="ml-2 text-xs text-gray-400">
+          {useSimulationEngine ? "Docker Terminal" : "Terminal"}
+        </span>
       </div>
 
-      {/* Output */}
-      <div className="flex-1 overflow-y-auto p-4 font-mono text-sm">
-        {lines.map((line, i) => (
-          <div
-            key={i}
-            className={`whitespace-pre ${
-              line.type === "input" ? "text-green-400" : "text-gray-300"
-            }`}
-          >
-            {line.content.replace(/\t/g, "    ")}
-          </div>
-        ))}
+      <div ref={containerRef} className="flex-1 min-h-0" />
 
-        {/* Input line */}
-        <div className="flex items-center text-green-400">
-          <span className="shrink-0">{prompt}&nbsp;</span>
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="flex-1 bg-transparent font-mono text-sm text-green-400 outline-none caret-green-400"
-            spellCheck={false}
-            autoComplete="off"
-            autoFocus
-          />
-        </div>
-      </div>
-
-      {/* Task progress */}
       {tasks.length > 0 && (
         <div className="border-t border-gray-700 bg-gray-900 px-4 py-2">
           <div className="flex items-center justify-between text-xs text-gray-400">
             <span>
-              Tasks: {completedTasks.size}/{tasks.length} completed
+              Tasks: {completedCount}/{tasks.length} completed
             </span>
             <span className="text-green-400">
-              {completedTasks.size === tasks.length ? "All done!" : ""}
+              {allDone ? "All done!" : ""}
             </span>
           </div>
         </div>

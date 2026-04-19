@@ -1,4 +1,5 @@
 import type { CommandHandler } from "@/types";
+import { ANSI } from "@/lib/ansi-formatter";
 
 export interface ParsedCommand {
   command: string;
@@ -70,6 +71,43 @@ export function executeCommand(
     : state;
 
   return { output, newState };
+}
+
+export function executeCommandWithAnsi(
+  input: string,
+  commands: Record<string, CommandHandler>,
+  state: Record<string, string>,
+): { output: string; ansiOutput: string; newState: Record<string, string> } {
+  const { command, args } = matchCommand(input, commands);
+
+  if (!command) {
+    return { output: "", ansiOutput: "", newState: state };
+  }
+
+  const handler = commands[command];
+
+  if (!handler) {
+    const msg = `bash: ${command}: command not found. Type 'help' for available commands.`;
+    return { output: msg, ansiOutput: ANSI.red(msg), newState: state };
+  }
+
+  const rawOutput =
+    typeof handler.output === "function" ? handler.output(args) : handler.output;
+
+  if (rawOutput === "__CLEAR__") {
+    return { output: rawOutput, ansiOutput: "__CLEAR__", newState: state };
+  }
+
+  const isTaskComplete = rawOutput.includes("✅");
+  const ansiOutput = isTaskComplete
+    ? rawOutput.replace(/✅ Task completed: (.+)/, (_, t) => `${ANSI.green("✅")} Task completed: ${ANSI.bold(t)}`)
+    : rawOutput;
+
+  const newState = handler.stateChange
+    ? { ...state, ...handler.stateChange }
+    : state;
+
+  return { output: rawOutput, ansiOutput, newState };
 }
 
 export function validateTask(
