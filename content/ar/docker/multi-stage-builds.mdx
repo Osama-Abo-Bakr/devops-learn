@@ -1,0 +1,336 @@
+---
+title: "البناء متعدد المراحل"
+module: docker
+level: intermediate
+duration: "30 min"
+diagram: docker-multi-stage-build
+description: "قلّص حجم الصورة بشكل كبير باستخدام البناء متعدد المراحل والصور بدون توزيعة."
+order: 4
+---
+
+# البناء متعدد المراحل: شحْن المنتج، لا المصنع
+
+تخيّل أنك تصنع سيارة. المصنع يحتوي آلات ضخمة — مكابس، روبوتات لحام، غرف دهان. لكن عندما تُكمل السيارة، لا تشحن المصنع للعميل. تشحن فقط السيارة. يبقى المصنع خلفك.
+
+هذا بالضبط ما يفعله البناء متعدد المراحل لصور Docker. عملية البناء تحتاج مترجمات وأدوات بناء وتبعيات تطوير وكود مصدري. لكن وقت التشغيل؟ يحتاج فقط المخرجات المترجمة وبيئة تشغيل مصغّرة. البناء متعدد المراحل يتيح لك استخدام المصنع الكامل لبناء تطبيقك، ثم نسخ المنتج النهائي فقط إلى صورة نظيفة ومصغّرة.
+
+## مشكلة الصور الضخمة
+
+لنرَ المشكلة بأعيننا. إليك Dockerfile بسيط لتطبيق Go:
+
+```dockerfile
+FROM golang:1.22
+WORKDIR /app
+COPY . .
+RUN go build -o server main.go
+CMD ["./server"]
+```
+
+يبدو معقولاً، أليس كذلك؟ لكن لنتحقق من الحجم:
+
+```bash
+docker images my-go-app
+# REPOSITORY   TAG   SIZE
+# my-go-app    latest   1.2GB
+```
+
+**1.2 غيغابايت.** لخادم Go بسيط. لماذا؟ لأن الصورة الأساسية `golang:1.22` تتضمن سلسلة أدوات Go الكاملة وأدوات البناء وتثبيت Debian كامل. الملف التنفيذي المترجم قد يكون 10 ميغابايت فقط، لكنك تشحن 1.2 غيغابايت من الوزن غير الضروري.
+
+قارن ذلك بالبناء متعدد المراحل:
+
+```bash
+docker images my-go-app-multistage
+# REPOSITORY           TAG   SIZE
+# my-go-app-multistage latest   15MB
+```
+
+**15 ميغابايت.** هذا أصغر بـ 80 مرة. نفس التطبيق. نفس الوظائف. الفرق؟ البناء متعدد المراحل ترك المصنع خلفه.
+
+## لماذا يهم هذا؟
+
+- **نشر أسرع** — صورة بحجم 15 ميغابايت تُحمّل في أقل من ثانية. صورة بحجم 1.2 غيغابايت تستغرق دقائق. في سيناريوهات التحجيم التلقائي، هذا التأخير يؤثر مباشرة على قدرتك على الاستجابة لارتفاعات الحركة.
+- **تكاليف تخزين أقل** — سجلات الحاويات تفرض رسوماً حسب التخزين. صور أصغر بـ 80 مرة تعني تكاليف سجل أقل بـ 80 مرة عبر جميع خدماتك.
+- **سطح هجوم مخفّض** — حزم أقل في الصورة تعني ثغرات أقل. المترجم في صورتك لا يمكن استغلاله إذا لم يكن موجوداً.
+- **بناء أسرع في CI/CD** — الصور الأصغر تُبنى وتُدفع وتُسحب أسرع. خط النشر الخاص بك ينتقل من الدقائق إلى الثواني.
+- **كفاءة موارد أفضل** — الصور الأصغر تستخدم I/O قرص أقل، وذاكرة أقل للتخزين المؤقت، وعرض نطاق ترددي أقل. على نطاق واسع، هذا يتراكم.
+
+## كيف يعمل البناء متعدد المراحل
+
+يحتوي Dockerfile متعدد المراحل على عدة عبارات `FROM`. كل `FROM` يبدأ مرحلة جديدة — بيئة بناء منفصلة تماماً. المراحل مستقلة، لكن يمكنك نسخ مخرجات من مرحلة إلى أخرى باستخدام `COPY --from=<stage>`.
+
+```dockerfile
+# ============ STAGE 1: Build ============
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# ============ STAGE 2: Run ============
+FROM node:20-alpine
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+EXPOSE 3000
+CMD ["node", "dist/server.js"]
+```
+
+لنتتبع ما يحدث:
+
+1. **المرحلة 1 (`builder`)** تبدأ من `node:20-alpine` وتثبّت جميع التبعيات (متضمنة تبعيات التطوير). تترجم التطبيق. هذه المرحلة قد تكون بحجم 400 ميغابايت، لكن لا مشكلة — مؤقتة.
+
+2. **المرحلة 2** تبدأ من `node:20-alpine` جديد — صفحة نظيفة. تنسخ فقط `dist/` و `node_modules/` من مرحلة البناء. كل شيء آخر (الكود المصدري، تبعيات التطوير، أدوات البناء) يُترك خلفاً.
+
+3. الصورة النهائية تحتوي المرحلة 2 فقط. المرحلة 1 تُتجاهل بالكامل.
+
+### صيغة FROM ... AS
+
+```dockerfile
+FROM node:20-alpine AS builder
+```
+
+- **`AS builder`** — يسمي هذه المرحلة `builder`. يمكنك الإشارة إليها لاحقاً بـ `COPY --from=builder`.
+- بدون `AS`، ستحتاج الإشارة إلى المراحل برقم فهرسها (`COPY --from=0`)، وهو هش وصعب القراءة.
+
+### صيغة COPY --from=
+
+```dockerfile
+COPY --from=builder /app/dist ./dist
+```
+
+- **`--from=builder`** — نسخ من مرحلة `builder` بدلاً من سياق البناء (جهازك المضيف).
+- **`/app/dist`** — مسار المصدر داخل مرحلة البناء.
+- **`./dist`** — مسار الوجهة في المرحلة الحالية (وقت التشغيل).
+
+يمكنك النسخ من أي مرحلة مسماة، وحتى من صور خارجية:
+
+```dockerfile
+# Copy a binary from an entirely different image
+COPY --from=alpine:3.19 /bin/sh /usr/local/bin/sh
+```
+
+### علامة --target
+
+أحياناً تريد البناء حتى مرحلة محددة فقط — مفيد للتصحيح:
+
+```bash
+# Build only the builder stage to inspect it
+docker build --target builder -t my-app:debug .
+
+# Run the debug image to inspect build artifacts
+docker run --rm my-app:debug ls -la /app/dist
+```
+
+هذا لا يُقدر بثمن عندما يفشل البناء وتحتاج معرفة السبب. بدلاً من التخمين، يمكنك البناء حتى المرحلة الفاشلة واستكشافها.
+
+## مقارنة الأحجام: الأرقام لا تكذب
+
+| المنهج | حجم الصورة | ما بداخلها |
+|--------|-----------|-------------|
+| مرحلة واحدة Node.js (Debian) | حوالي 1.2 غيغابايت | نظام تشغيل كامل، سلسلة أدوات Go/Node، تبعيات تطوير، كود مصدري، مخرجات مترجمة |
+| متعدد المراحل Node.js (Alpine) | حوالي 180 ميغابايت | نظام Alpine، وقت تشغيل Node، تبعيات إنتاج، تطبيق مترجم |
+| متعدد المراحل Go (scratch) | حوالي 10-15 ميغابايت | الملف التنفيذي المترجم فقط — بدون نظام تشغيل |
+| متعدد المراحل Go (distroless) | حوالي 20-25 ميغابايت | ملف تنفيذي مترجم + بيئة تشغيل مصغّرة (شهادات CA، بيانات المناطق الزمنية) |
+| متعدد المراحل Node.js (distroless) | حوالي 100 ميغابايت | وقت تشغيل Node + تبعيات إنتاج، بدون shell، بدون مدير حزم |
+
+## الصور بدون توزيعة: أخذ الحد الأدنى إلى أبعد حد
+
+صور Google بدون توزيعة (distroless) تأخذ مفهوم الصورة المصغّرة إلى الحد الأقصى. تحتوي على:
+
+- تطبيقك وتبعياته
+- شهادات SSL (لـ HTTPS)
+- بيانات المناطق الزمنية
+- مستخدم غير جذر
+
+ما **لا** تحتويه:
+- بدون shell (`sh`, `bash`)
+- بدون مدير حزم (`apt`, `apk`, `yum`)
+- بدون أدوات Linux قياسية (`ls`, `cat`, `grep`)
+- لا شيء لم تضفه صراحة
+
+```dockerfile
+# Build stage
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Distroless runtime stage
+FROM gcr.io/distroless/nodejs20-debian12
+WORKDIR /app
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+EXPOSE 3000
+CMD ["dist/server.js"]
+```
+
+**لماذا يهم غياب shell:** إذا حصل مهاجم على وصول إلى حاويتك، لا يستطيع تنفيذ أوامر. لا يوجد `sh` لتنفيذه. هذا يحدّ بشكل كبير مما يمكن للمهاجم فعله.
+
+**المقايضة:** التصحيح أصعب. لا يمكنك تنفيذ `docker exec -it <container> sh` لأنه لا يوجد shell. للتصحيح، استخدم `docker cp` لاستخراج الملفات أو ابنِ نسخة تصحيحية تحتوي على shell.
+
+## مثال عملي: خدمة مصغّرة بـ Go
+
+Go هو المثال الأمثل للبناء متعدد المراحل لأنه يترجم إلى ملف تنفيذي ثابت واحد. لا تبعيات وقت تشغيل مطلوبة.
+
+**هيكل المشروع:**
+
+```
+my-go-service/
+├── Dockerfile
+├── go.mod
+├── go.sum
+└── main.go
+```
+
+**main.go:**
+
+```go
+package main
+
+import (
+    "fmt"
+    "net/http"
+)
+
+func handler(w http.ResponseWriter, r *http.Request) {
+    fmt.Fprintf(w, "Hello from Go! Version 1.0.0")
+}
+
+func main() {
+    http.HandleFunc("/", handler)
+    fmt.Println("Server starting on :8080")
+    http.ListenAndServe(":8080", nil)
+}
+```
+
+**Dockerfile:**
+
+```dockerfile
+# Stage 1: Build the binary
+FROM golang:1.22-alpine AS builder
+
+# Install build dependencies (e.g., for CGO if needed)
+RUN apk add --no-cache git
+
+WORKDIR /app
+
+# Copy dependency manifests first for layer caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code and build
+COPY . .
+
+# Build a statically linked binary
+# CGO_ENABLED=0: Disable CGO for static linking
+# -ldflags="-s -w": Strip debug info and symbol table for smaller binary
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /server main.go
+
+# Stage 2: Minimal runtime with scratch
+FROM scratch
+
+# Copy CA certificates from builder (needed for HTTPS requests)
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+
+# Copy the compiled binary
+COPY --from=builder /server /server
+
+# Expose the port
+EXPOSE 8080
+
+# Run the binary
+ENTRYPOINT ["/server"]
+```
+
+**البناء والتشغيل:**
+
+```bash
+docker build -t my-go-service:1.0 .
+docker run -d -p 8080:8080 --name go-svc my-go-service:1.0
+
+# Test it
+curl http://localhost:8080
+# Expected: Hello from Go! Version 1.0.0
+```
+
+**تحقق من الحجم:**
+
+```bash
+docker images my-go-service
+# REPOSITORY       TAG   SIZE
+# my-go-service    1.0   ~10MB
+```
+
+10 ميغابايت. هذا هو الملف التنفيذي Go زائد شهادات SSL. بدون نظام تشغيل، بدون مدير حزم، بدون shell. أصغر صورة ممكنة.
+
+**ملاحظة مهمة حول `FROM scratch`:** صورة `scratch` فارغة حرفياً — إنها الصورة الأساسية الخاصة بـ Docker بدون أي محتوى. لا يمكنك إضافة حزم، لا يوجد shell، لا نظام init. تعمل بشكل مثالي مع Go لأن الملف التنفيذي مكتفٍ ذاتياً. للغات التي تحتاج وقت تشغيل (Node.js, Python, Java)، استخدم distroless أو Alpine بدلاً منها.
+
+## مثال عملي: Node.js مع البناء متعدد المراحل
+
+لننفذ نفس الشيء لتطبيق Node.js يستخدم خطوة بناء (مثل TypeScript أو حزم الوحدات).
+
+```dockerfile
+# Stage 1: Install ALL dependencies and build
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Copy dependency manifests
+COPY package*.json ./
+
+# Install ALL dependencies (including devDependencies for building)
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Build the application (TypeScript compilation, bundling, etc.)
+RUN npm run build
+
+# Stage 2: Production image with only production dependencies
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy dependency manifests
+COPY package*.json ./
+
+# Install ONLY production dependencies
+RUN npm ci --only=production
+
+# Copy built artifacts from the builder stage
+COPY --from=builder /app/dist ./dist
+
+# Don't run as root
+USER node
+
+EXPOSE 3000
+CMD ["node", "dist/server.js"]
+```
+
+**لماذا نعيد تثبيت التبعيات في المرحلة 2؟** لأن `npm ci --only=production` في المرحلة 2 تتخطى تبعيات التطوير. مرحلة البناء كانت تحتاج `devDependencies` (TypeScript، أدوات البناء)، لكن وقت التشغيل لا يحتاجها. هذا يضمن أن صورتك الإنتاجية تحتوي الحد الأدنى المطلق من الحزم.
+
+## أخطاء شائعة ونصائح
+
+- **نسخ كل شيء من مرحلة البناء** — `COPY --from=builder /app /app` يهدم الغرض. كُن انتقائياً — انسخ فقط ما تحتاجه (`dist/`، `node_modules/`، ملفات إعدادات محددة).
+
+- **نسيان شهادات CA في صور scratch** — إذا كانت خدمة Go الخاصة بك تجعل طلبات HTTPS (استدعاء واجهات برمجية، الاتصال بقواعد بيانات)، تحتاج شهادات SSL. انسخها دائماً من مرحلة البناء: `COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/`
+
+- **عدم استخدام `--target` للتصحيح** — عندما يفشل البناء في Dockerfile متعدد المراحل، لا تخمّن. استخدم `docker build --target builder -t debug .` للبناء حتى مرحلة البناء فقط وافحص ما حدث خطأ.
+
+- **استخدام علامة `latest` للصور الأساسية** — في البناء متعدد المراحل، كلتا المرحلتين يجب أن تستخدما علامات مثبتة. `FROM node:latest` في أي مرحلة قد تُدخل تغييرات غير متوقعة.
+
+- **صور نهائية كبيرة رغم البناء متعدد المراحل** — إذا كانت صورتك النهائية لا تزال كبيرة، تحقق مما فيها باستخدام `docker history my-app:latest`. هذا يعرض كل طبقة وحجمها، ليساعدك في تحديد ما ينتفخ الصورة.
+
+- **عدم الدمج مع `.dockerignore`** — البناء متعدد المراحل يقلل الصورة النهائية، لكن سياق البناء لا يزال يتضمن جميع ملفاتك. استخدم `.dockerignore` لإبقاء سياق البناء صغيراً وسريعاً.
+
+- **صور scratch لا تدعم `docker exec`** — لا يمكنك تصحيح حاوية مبنية على scratch باستخدام `docker exec -it <id> sh` لأنه لا يوجد shell. للتصحيح، ابنِ نسخة مبنية على Alpine أو استخدم `docker cp` لاستخراج الملفات.
+
+## مخطط تفاعلي
+
+شاهد كيف يفصل البناء متعدد المراحل بيئات البناء ووقت التشغيل:
+
+<Diagram config={dockerMultiStageBuild} />

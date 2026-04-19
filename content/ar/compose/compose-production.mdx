@@ -1,0 +1,568 @@
+---
+title: "Compose للإنتاج"
+module: compose
+level: advanced
+duration: "35 min"
+description: "تقوية Compose للإنتاج: حدود الموارد، سياسات إعادة التشغيل، التسجيل، والمراقبة."
+order: 5
+---
+
+# Compose للإنتاج — من العرض التجريبي إلى النشر
+
+تخيّل أنك تختبر قيادة سيارة في حلبة مغلقة. المحرك يعمل بشكل رائع، والتعامل حاد، وكل شيء يبدو مثالياً. الآن تخيّل قيادة نفس السيارة عبر البلاد في يناير — ستحتاج إلى إطارات شتوية، ومجموعة طوارئ، وخطة لما تسوء الأمور. الانتقال بمجموعة Compose إلى الإنتاج هو نفس التحول. إعدادات التطوير تعمل بشكل رائع على حاسوبك المحمول، لكن الإنتاج يتطلب حدوداً للموارد (حتى لا تتجوّع خدمة جشعة بقية الخدمات)، وسياسات إعادة تشغيل (حتى يستعيد تطبيقك عافيته بعد التحطم)، وتدوير السجلات (حتى لا يمتلئ قرصك)، وفحوص صحة (حتى تعرف أن شيئاً خاطئاً قبل أن يخبرك مستخدموك).
+
+هذا الدرس يعلمك كيف تقوّي مجموعة Compose للنشر في العالم الحقيقي.
+
+## لماذا تستخدم Compose في الإنتاج؟
+
+قد تتساءل: "أليس Compose مخصصاً للتطوير فقط؟ ألا يجب أن أستخدم Kubernetes للإنتاج؟" سؤال عادل. الإجابة تعتمد على حجمك.
+
+| العامل | Docker Compose | Kubernetes |
+|---|---|---|
+| حجم الفريق | فرق صغيرة (1-10) | فرق كبيرة (10+) |
+| عدد الخدمات | 2-15 خدمة | 15+ خدمة |
+| البنية التحتية | مضيف واحد أو قلة من المضيفين | عنقود من مضيفين كثيرين |
+| منحنى التعلم | منخفض — YAML وDocker | عالٍ — pods، deployments، services، إلخ |
+| التوسع التلقائي | يدوي (`--scale`) | تلقائي (HPA، VPA) |
+| الشفاء الذاتي | أساسي (سياسات إعادة التشغيل) | متقدم (شفاء ذاتي، نشر متدرج) |
+| وقت الإعداد | دقائق | ساعات إلى أيام |
+| الأفضل لـ | مجموعات بسيطة، فرق صغيرة، مشاريع جانبية، أدوات داخلية | أنظمة موزعة واسعة النطاق، مؤسسات |
+
+**Compose في الإنتاج هو الخيار الصحيح عندما:**
+
+- أنت فريق صغير يدير حفنة من الخدمات على خادم أو خادمين.
+- مجموعتك ثابتة نسبياً — أنت لا تضيف خدمات جديدة كل أسبوع.
+- تريد بساطة ملف YAML واحد بدلاً من دليل بيانات Kubernetes مترامي الأطراف.
+- أنت تنشر أدوات داخلية، أو بيئات اختبار، أو مشاريع إثبات مفهوم.
+
+حتى لو هاجرت في النهاية إلى Kubernetes، فإن البدء بـ Compose في الإنتاج يتيح لك الشحن بسرعة أكبر بينما تتعلم.
+
+## لماذا يهم هذا؟
+
+- **الحاويات غير المحدودة ستُسقط خادمك** — بدون حدود الموارد، يمكن لتسرب ذاكرة واحد في واجهة برمجتك أن يستهلك كل الذاكرة المتاحة، مما يتسبب في تحطم كل خدمة أخرى عبر عمليات قتل OOM (نفاد الذاكرة).
+- **بدون سياسات إعادة التشغيل، التوقف يدوي** — إذا تحطم تطبيقك الساعة 3 صباحاً ولا توجد سياسة إعادة تشغيل، سيبقى متوقفاً حتى يستيقظ شخص ويعيد تشغيله. `restart: unless-stopped` يعني أنه يستعيد عافيته تلقائياً.
+- **السجلات غير المدوّرة تملأ الأقراص** — مشغّل السجلات الافتراضي في Docker يكتب في ملف واحد ينمو بلا حدود. بعد بضعة أسابيع من الحركة الكثيفة، يمتلئ قرصك ويتوقف كل شيء.
+- **فحوص الصحة تتيح تبعيات ذكية** — بدون فحوص الصحة، يعرف Compose فقط ما إذا كانت عملية الحاوية تعمل، وليس ما إذا كانت الخدمة فعّالة فعلاً. قاعدة بيانات تعمل لكنها لا تقبل اتصالات أسوأ من قاعدة بيانات لا تعمل على الإطلاق.
+- **فصل إعدادات التطوير والإنتاج** — ملف Compose الخاص بالتطوير يجب أن يحتوي على تركيبات ربط وإشارات تصحيح وإعادة تحميل ساخنة. ملف الإنتاج يجب أن يحتوي على حدود الموارد وتدوير السجلات وصلاحيات دنيا. الخلط بينهما يؤدي إلى ثغرات أمنية ومشاكل أداء.
+
+## المفاهيم الأساسية
+
+### حدود الموارد — إبقاء الحاويات الجشعة تحت السيطرة
+
+تخبر حدود الموارد Docker بالحد الأقصى للمعالج والذاكرة الذي يمكن لحاوية استخدامه. بدون حدود، يمكن لحاوية واحدة أن تستهلك جميع موارد المضيف، مما يتجوّع بقية الخدمات وربما يُسقط الخادم بالكامل.
+
+```yaml
+services:
+  api:
+    image: my-api:1.0.0
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"            # Max 1 CPU core (can use up to 100% of one core)
+          memory: 512M           # Max 512 MB RAM — killed if exceeded
+        reservations:
+          cpus: "0.25"          # Guaranteed at least 0.25 CPU core
+          memory: 256M           # Guaranteed at least 256 MB RAM
+```
+
+**سطراً بسطر:**
+
+- `deploy: resources: limits: cpus: "1.0"` — الحاوية يمكنها استخدام ما يصل إلى نواة معالج كاملة. إذا حاولت استخدام أكثر، ستُخنق (ولن تُقتل). حدود المعالج تعمل عبر الجدولة — يمنح Docker الحاوية نصيبها العادل من وقت المعالج وليس أكثر.
+- `deploy: resources: limits: memory: 512M` — الحاوية يمكنها استخدام ما يصل إلى 512 ميغابايت من الذاكرة. إذا تجاوزت هذا، سيقتلها Docker بخطأ OOM (نفاد الذاكرة). ستُعاد تشغيل الحاوية إذا كانت هناك سياسة إعادة تشغيل.
+- `deploy: resources: reservations: cpus: "0.25"` — عندما يكون هناك تنافس على المعالج (حاويات متعددة تتنافس على وقت المعالج)، يُضمن لهذه الحاوية 0.25 نواة على الأقل. فكّر في الأمر كحجز في مطعم — حتى لو كان المكان مزدحماً، طاولتك محفوظة.
+- `deploy: resources: reservations: memory: 256M` — يُضمن للحاوية 256 ميغابايت من الذاكرة على الأقل. يحجز Docker هذه الذاكرة عند بدء الحاوية ولن يخصصها لحاويات أخرى.
+
+**الحدود مقابل التحفظات:**
+
+| | الحدود | التحفظات |
+|---|---|---|
+| الغرض | سقف صارم — منع احتكار الموارد | حد أدنى مضمون — ضمان أداء أساسي |
+| السلوك عند التجاوز | المعالج: خنق. الذاكرة: قتل الحاوية | الحاوية قد لا تبدأ إذا تعذر تلبية التحفظ |
+| مطلوبة؟ | نعم، للإنتاج | موصى بها، خاصة للخدمات الحرجة |
+| التشبيه | حد سرعة على طريق سريع | موقف سيارة محجوز |
+
+**ضبط القيم المناسبة:**
+
+- ابدأ بمراقبة الاستخدام الفعلي لموارد تطبيقك باستخدام `docker stats`.
+- اضبط حد الذاكرة على ضعف المتوسط تقريباً (هامش للارتفاعات المفاجئة).
+- اضبط التحفظ على المتوسط تقريباً.
+- حدود المعالج أقل أهمية — حاوية تستخدم معالجاً إضافياً لفترة وجيزة عادة لا مشكلة فيها. اضبط حدود معالج صارمة فقط عندما تحتاج لمنع خدمة من احتكار المعالج.
+
+### سياسات إعادة التشغيل — حاويات تشفي نفسها
+
+تخبر سياسات إعادة التشغيل Docker بما يفعله عندما تخرج حاوية (تتحطم، تنتهي، أو تُقتل).
+
+```yaml
+services:
+  web:
+    image: my-app:1.0.0
+    restart: unless-stopped     # Most common choice for production
+
+  db:
+    image: postgres:16-alpine
+    restart: always             # Always restart, even after Docker daemon restart
+```
+
+**سياسات إعادة التشغيل الأربع:**
+
+| السياسة | السلوك | متى تستخدمها |
+|---|---|---|
+| `no` (الافتراضية) | لا تُعيد التشغيل تلقائياً أبداً | مهام لمرة واحدة، وظائف دفعات |
+| `always` | أعد التشغيل دائماً، بغض النظر عن كود الخروج. أيضاً تُعيد التشغيل بعد إعادة تشغيل عفريت Docker. | خدمات حرجة يجب أن تعمل دائماً |
+| `unless-stopped` | مثل `always`، لكن لا تُعيد التشغيل بعد إعادة تشغيل عفريت Docker إذا أوقفتها يدوياً. | معظم خدمات الإنتاج — تمنحك السيطرة لإيقاف خدمة عمداً |
+| `on-failure` | أعد التشغيل فقط إذا خرجت الحاوية بكود غير صفري | خدمات يجب أن تُعاد عند التحطم لكن لا عند الخروج بشكل نظيف |
+
+**لماذا `unless-stopped` عادة الخيار الأفضل:** مع `always`، إذا أوقفت حاوية يدوياً (مثلاً `docker compose stop web`) ثم أعدت تشغيل الخادم، سيعيد Docker تشغيلها. مع `unless-stopped`، يحترم Docker إيقافك اليدوي. هذا تقريباً دائماً ما تريده — أوقفتها لسبب ما.
+
+**مهم:** سياسات إعادة التشغيل تنطبق فقط على تحطم الحاويات، وليس على الحالات التي يُستخدم فيها `docker compose down`. `docker compose down` يزيل الحاويات صراحة، متجاوزاً أي سياسة إعادة تشغيل.
+
+### إعدادات التسجيل — منع كوارث الأقراص
+
+بشكل افتراضي، يخزّن Docker سجلات الحاويات كملفات JSON في `/var/lib/docker/containers/`. هذه الملفات تنمو بلا حدود. واجهة برمجية مشغولة يمكنها توليد غيغابايتات من السجلات يومياً، وبعد بضعة أسابيع، سيكون قرصك ممتلئاً.
+
+```yaml
+services:
+  web:
+    image: my-app:1.0.0
+    logging:
+      driver: json-file               # Default log driver — stores as JSON files
+      options:
+        max-size: "10m"               # Rotate when a log file reaches 10 MB
+        max-file: "5"                 # Keep at most 5 rotated files
+        compress: "true"              # Compress rotated files to save space
+```
+
+**سطراً بسطر:**
+
+- `driver: json-file` — مشغّل السجلات الافتراضي. كل حاوية تحصل على ملف JSON. مشغّلات أخرى تشمل `syslog` و`journald` و`fluentd` و`awslogs` — لكن `json-file` هو الأبسط والأكثر شيوعاً للإنتاج على نطاق صغير.
+- `max-size: "10m"` — عندما يصل ملف السجل الحالي إلى 10 ميغابايت، يدوره Docker: الملف الحالي يُعاد تسميته (مثلاً `container-json.log.1`)، ويُبدأ ملف جديد. هذا يمنع أي ملف سجل واحد من النمو بشكل كبير.
+- `max-file: "5"` — يحتفظ Docker بـ 5 ملفات سجل مدارة على الأكثر. عندما سيُنشأ السادس، يُحذف الأقدم. استخدام القرص الإجمالي لسجلات هذه الحاوية محدود بحوالي 50 ميغابايت (5 ملفات × 10 ميغابايت لكل منها).
+- `compress: "true"` — الملفات المدارة تُضغط بـ gzip. هذا يمكن أن يقلل التخزين بنسبة 80-90% للسجلات النصية الثقيلة.
+
+**الحساب:** مع `max-size: 10m` و`max-file: 5`، الحد الأقصى لاستخدام القرص لكل حاوية هو حوالي 50 ميغابايت بدون ضغط. مع الضغط، قد يكون 10-15 ميغابايت. اضرب في عدد الحاويات في مجموعتك لتقدير إجمالي تخزين السجلات.
+
+**مشغّلات سجلات بديلة للنشرات الأكبر:**
+
+| المشغّل | الأفضل لـ | ملاحظات |
+|---|---|---|
+| `json-file` | مجموعات صغيرة، إعدادات بسيطة | الافتراضي، لا تبعيات خارجية |
+| `syslog` | خوادم تسجيل مركزية | يرسل السجلات لعفريت syslog |
+| `journald` | أنظمة مبنية على systemd | يتكامل مع `journalctl` |
+| `fluentd` | خطوط تجميع | يرسل إلى Fluentd/Fluent Bit للمعالجة |
+| `awslogs` | AWS CloudWatch | يرسل مباشرة إلى CloudWatch Logs |
+| `gcplogs` | Google Cloud Logging | يرسل مباشرة إلى Google Cloud |
+
+### فحوص الصحة — نظام الإنذار المبكر
+
+في الإنتاج، فحوص الصحة غير قابلة للتفاوض. تخبرك ما إذا كانت الخدمة تعمل فعلاً، وليس فقط ما إذا كانت عمليتها قيد التشغيل. عملية قاعدة بيانات حية لكنها غير قادرة على قبول الاتصالات هي فعلياً ميتة، وفحوص الصحة تلتقط هذا.
+
+```yaml
+services:
+  web:
+    image: my-app:1.0.0
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s              # Check every 30 seconds
+      timeout: 10s               # 10 seconds to respond before considering it a failure
+      retries: 3                 # 3 consecutive failures = unhealthy
+      start_period: 40s          # 40s grace period during startup
+```
+
+**سطراً بسطر:**
+
+- `test: ["CMD", "curl", "-f", "http://localhost:3000/health"]` — يشغّل `curl` بعلامة `-f` (أفشل بصمت عند أخطاء الخادم). إذا أعادت النقطة كود حالة 200، يجتاز الفحص. إذا أعادت 500 أو انتهت المهلة، يفشل.
+- `interval: 30s` — كم مرة يشغّل الفحص. 30 ثانية قيمة افتراضية جيدة للإنتاج — متكررة كفاية لالتقاط المشاكل، لكن ليست متكررة لدرجة تضيف حملاً.
+- `timeout: 10s` — إذا لم تستجب نقطة الصحة خلال 10 ثوانٍ، يفشل الفحص. هذا يلتقط الخدمات الحية لكن البطيئة جداً لتكون مفيدة.
+- `retries: 3` — ثلاثة إخفاقات متتالية قبل وضع علامة غير صحي على الحاوية. إخفاق واحد لا يُشغّل حالة غير صحية — قد يكون عطلاً عابراً.
+- `start_period: 40s` — خلال أول 40 ثانية بعد بدء الحاوية، لا تُحتسب الفحوصات الفاشلة ضمن حد الإعادة. هذا يعطي الخدمات بطيئة البدء (مثل تطبيقات Java أو قواعد البيانات الكبيرة) وقتاً للتهيئة.
+
+**أفضل ممارسة:** نقطة `/health` يجب أن تتحقق من أكثر من مجرد "العملية تعمل." يجب أن تتحقق من أن التبعيات الحرجة (اتصال قاعدة البيانات، اتصال ذاكرة التخزين المؤقت) تعمل. هذا يعطيك صورة حقيقية عن صحة الخدمة.
+
+### تخطيات الإنتاج مقابل التطوير
+
+أنظف طريقة لإدارة إعدادات التطوير والإنتاج هي ملفات تخطي Compose. ملفك الأساسي `docker-compose.yml` يحتوي على الإعدادات المشتركة، وملفات خاصة بكل بيئة تضيف أو تتخطى الإعدادات.
+
+**docker-compose.yml (أساسي — مشترك لجميع البيئات):**
+
+```yaml
+services:
+  web:
+    build: .
+    expose:
+      - "3000"
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  db-data:
+```
+
+**docker-compose.override.yml (تطوير — يُحمّل تلقائياً بواسطة Compose):**
+
+عندما تشغّل `docker compose up`، يبحث Compose تلقائياً عن `docker-compose.override.yml` ويدمجه مع الملف الأساسي. هذا مثالي لإعدادات التطوير الخاصة.
+
+```yaml
+services:
+  web:
+    build: .
+    volumes:
+      - ./src:/app/src              # Bind mount for live code reload
+      - /app/node_modules           # Protect container dependencies
+    environment:
+      NODE_ENV: development
+      LOG_LEVEL: debug
+    ports:
+      - "3000:3000"                 # Publish port for local browser access
+      - "9229:9229"                 # Node.js debugger port
+```
+
+**docker-compose.prod.yml (إنتاج — يُحدد صراحة):**
+
+```yaml
+services:
+  web:
+    image: registry.example.com/my-app:1.0.0    # Pre-built image, no build step
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: warn                             # Less verbose than development
+    deploy:
+      replicas: 3                                 # Run 3 instances
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+        compress: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  db:
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"               # Databases can generate more log output
+        max-file: "10"
+```
+
+**كيف تشغّل كل بيئة:**
+
+```bash
+# Development (auto-loads docker-compose.override.yml)
+docker compose up -d
+
+# Production (explicitly specify the prod file)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+**ما يفعله الدمج:**
+
+| الإعداد | الملف الأساسي | تخطي الإنتاج | النتيجة المدمجة |
+|---|---|---|---|
+| `web.image` | (لا شيء — يستخدم `build:`) | `registry.example.com/my-app:1.0.0` | يستخدم الصورة الجاهزة |
+| `web.environment.NODE_ENV` | (لا شيء) | `production` | `production` |
+| `web.deploy` | (لا شيء) | إعدادات موارد كاملة | تُطبّق حدود الموارد |
+| `web.logging` | (لا شيء) | إعدادات تدوير السجلات | السجلات تدور عند 10 ميغابايت |
+| `web.healthcheck` | (لا شيء) | فحص صحة كامل | فحص الصحة يشغّل كل 30 ثانية |
+| `web.volumes` | (لا شيء في الأساسي) | (لا شيء في الإنتاج) | لا تركيبات ربط في الإنتاج |
+
+### وضع المراقبة — إنتاجية التطوير
+
+Compose Watch هي ميزة تراقب ملفاتك المصدرية وتحدّث الحاويات العاملة تلقائياً عند اكتشاف تغييرات. إنها أسرع وأكفأ من تركيبات الربط التقليدية لأنها تزامن فقط الملفات المتغيرة.
+
+```yaml
+services:
+  web:
+    build: .
+    develop:
+      watch:
+        - action: sync              # Sync changed files into the container
+          path: ./src
+          target: /app/src
+        - action: rebuild           # Rebuild the image when these files change
+          path: ./package.json
+```
+
+**سطراً بسطر:**
+
+- `action: sync` — عندما يتغير ملف في `./src`، ينسخه Compose إلى الحاوية العاملة عند `/app/src`. لا حاجة لإعادة بناء — التغيير فوري.
+- `action: rebuild` — عندما يتغير `package.json`، يعيد Compose بناء الصورة بالكامل (لأنك تحتاج لإعادة تشغيل `npm install`). هذا أبطأ لكنه ضروري لتغييرات التبعيات.
+
+**ابدأ بوضع المراقبة:**
+
+```bash
+docker compose watch
+```
+
+هذا يختلف عن `docker compose up` — يبدأ الخدمات ويراقب الملفات للتغييرات أيضاً. استخدمه أثناء التطوير النشط بدلاً من تركيبات الربط التقليدية.
+
+## مثال عملي — مجموعة جاهزة للإنتاج
+
+إليك مجموعة Compose كاملة للإنتاج مع كل التحصينات التي غطيناها.
+
+**هيكل المشروع:**
+
+```
+prod-app/
+  docker-compose.yml
+  docker-compose.prod.yml
+  .env
+  web/
+    Dockerfile
+    src/
+```
+
+**.env:**
+
+```bash
+POSTGRES_USER=appuser
+POSTGRES_PASSWORD_FILE=/run/secrets/db_password
+POSTGRES_DB=appdb
+APP_VERSION=1.0.0
+REGISTRY=registry.example.com
+```
+
+**docker-compose.yml (أساسي):**
+
+```yaml
+services:
+  web:
+    build: ./web
+    expose:
+      - "3000"
+    environment:
+      DATABASE_URL: "postgres://appuser:${DB_PASSWORD}@db:5432/appdb"
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_DB: appdb
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    secrets:
+      - db_password
+
+  cache:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  db-data:
+
+secrets:
+  db_password:
+    external: true
+```
+
+**docker-compose.prod.yml:**
+
+```yaml
+services:
+  web:
+    image: ${REGISTRY}/my-app:${APP_VERSION}
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          cpus: "0.25"
+          memory: 256M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+        compress: "true"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    environment:
+      NODE_ENV: production
+      LOG_LEVEL: warn
+
+  db:
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 1G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "10"
+        compress: "true"
+
+  cache:
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+```
+
+**نشر خطوة بخطوة:**
+
+1. تحقّق من الإعدادات المدمجة:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml config
+```
+
+هذا يعرض الملف المدمج بالكامل مع جميع التخطيات مطبقة والمتغيرات محلّلة. تحقّق منه قبل النشر.
+
+2. ابدأ مجموعة الإنتاج:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+3. تحقّق من أن جميع الخدمات صحية:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
+```
+
+**المخرجات المتوقعة:**
+
+```
+NAME             STATUS                   PORTS
+prod-app-web-1  Up 2 min (healthy)       3000/tcp
+prod-app-web-2  Up 2 min (healthy)       3000/tcp
+prod-app-web-3  Up 2 min (healthy)       3000/tcp
+prod-app-db-1   Up 2 min (healthy)       5432/tcp
+prod-app-cache-1 Up 2 min (healthy)      6379/tcp
+```
+
+4. راقب استخدام الموارد:
+
+```bash
+docker stats --no-stream
+```
+
+هذا يعرض استخدام المعالج والذاكرة الفعلي لجميع الحاويات. تحقّق من أن الاستخدام ضمن حدودك المحددة.
+
+5. تحقّق من السجلات (هي الآن تدور):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml logs --tail=50 web
+```
+
+6. انشر تحديثاً (نهج متدرج):
+
+```bash
+# Pull the new image and recreate only the web service
+docker compose -f docker-compose.yml -f docker-compose.prod.yml pull web
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-deps web
+```
+
+علامة `--no-deps` تضمن أن خدمة `web` فقط هي التي تُعاد إنشاؤها، وليس تبعياتها (`db`، `cache`).
+
+7. إيقاف كامل ونظيف:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+```
+
+الأحجام محفوظة بشكل افتراضي. أضف `-v` فقط إذا كنت تريد مسح قاعدة البيانات.
+
+## قائمة مراجعة الإنتاج
+
+قبل نشر أي مجموعة Compose إلى الإنتاج، راجع هذه القائمة:
+
+- **حدود موارد على كل خدمة** — اضبط `deploy.resources.limits` للمعالج والذاكرة. بلا استثناءات.
+- **سياسة إعادة تشغيل على كل خدمة** — `restart: unless-stopped` ما لم يكن لديك سبب محدد لعدم ذلك.
+- **فحوص صحة على الخدمات الحرجة** — كحد أدنى، يجب أن يكون لتطبيقك الويب وقاعدة بياناتك فحوص صحة.
+- **تدوير السجلات مهيأ** — اضبط `max-size` و`max-file` تحت `logging.options`. بدون هذا، سيمتلئ قرصك في النهاية.
+- **ثبّت وسوم الصور** — لا تستخدم `latest` في الإنتاج أبداً. استخدم وسوم إصدارات محددة مثل `postgres:16.2-alpine` أو `my-app:1.0.0`. `latest` هدف متحرك وقد يُدخل تغييرات كاسرة.
+- **الأسرار خارج ملفات Compose** — استخدم أسرار Docker (اتفاقية اللاحقة `_FILE`) أو مديري أسرار خارجيين. لا تضع كلمات المرور في YAML أبداً.
+- **ملفات تخطي لفصل البيئات** — استخدم `docker-compose.prod.yml` لإعدادات الإنتاج الخاصة. أبقِ إعدادات التطوير في الملف الأساسي أو `docker-compose.override.yml`.
+- **تحقّق قبل النشر** — شغّل `docker compose config` للتحقق من أخطاء البنية والتحقق من تعويض المتغيرات.
+- **انسب أحجامك احتياطياً** — الأحجام المسماة تصمد عبر إعادة إنشاء الحاويات، لكنها لا تزال على مضيف واحد. أعد نسخاً احتياطية منتظمة (`pg_dump` لـ Postgres، `redis-cli BGSAVE` لـ Redis).
+- **راقب حاوياتك** — استخدم `docker stats` أو أداة مراقبة (Prometheus + Grafana، Datadog) لتتبع استخدام الموارد واكتشاف المشاكل قبل أن تصبح انقطاعات.
+
+## المزالق الشائعة ونصائح
+
+- **ضبط حدود الذاكرة منخفضة جداً** — إذا ضبطت حد الذاكرة أقل مما يحتاجه تطبيقك فعلاً، سيُقتل مراراً وتكراراً بواسطة قاتل OOM ويُعاد تشغيله بواسطة سياسة إعادة التشغيل، مما ينشئ حلقة تحطم. راقب الاستخدام الفعلي أولاً، ثم اضبط الحدود مع هامش.
+
+- **نسيان `start_period` في فحوص الصحة** — بدون `start_period`، خدمة بطيئة البدء ستفشل في فحوص صاحتها فوراً وستُعلّم كغير صحية قبل أن تنتهي تهيئتها. هذا يتسبب في انتظار الخدمات التابعة إلى ما لا نهاية. اضبط `start_period` دائماً على الأقل بالقدر الذي تحتاجه خدمتك للبدء.
+
+- **استخدام `restart: always` مع خدمات متذبذبة** — إذا تحطمت خدمة فوراً عند البدء (مثلاً بسبب إعدادات سيئة)، سينشئ `restart: always` حلقة تحطم لا نهائية تغرق سجلاتك. استخدم `restart: unless-stopped` وأصلح السبب الجذري قبل إعادة التمكين.
+
+- **عدم اختبار ملف compose للإنتاج** — شغّل دائماً `docker compose -f docker-compose.yml -f docker-compose.prod.yml config` قبل النشر. أخطاء تعويض المتغيرات وتعارضات الدمج سهلة التفويت.
+
+- **تجاهل مساحة القرص** — تدوير السجلات أمر حاسم، لكن لا تنسى نمو الأحجام. حجم قاعدة بيانات سينمو بمرور الوقت. راقب استخدام القرص وخطط للنمو.
+
+- **أسرار Docker تتطلب وضع Swarm** — المفتاح الرئيسي `secrets:` في Compose يعمل فقط مع Docker Swarm أو عند استخدام `docker stack deploy`. لـ Compose على مضيف واحد، استخدم اتفاقية `_FILE`: اضبط `POSTGRES_PASSWORD_FILE=/run/secrets/db_password` وركّب ملف السر كتركيبة ربط بدلاً من ذلك.
+
+- **ترتيب ملفات التخطي يهم** — عند دمج ملفات Compose متعددة، الملفات اللاحقة تتخطى السابقة. `docker compose -f base.yml -f prod.yml` يعني أن `prod.yml` يفوز عند التعارضات. ضع هذا في اعتبارك عند تصحيح قيم غير متوقعة.

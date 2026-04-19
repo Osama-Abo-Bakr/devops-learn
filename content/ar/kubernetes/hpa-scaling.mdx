@@ -1,0 +1,441 @@
+---
+title: "HPA والتوسيع"
+module: kubernetes
+level: intermediate
+duration: "30 min"
+description: "توسيع الـ Pods تلقائيًا باستخدام Horizontal Pod Autoscaler بناءً على المعالج والمقاييس المخصصة."
+order: 4
+---
+
+# HPA والتوسيع
+
+تخيّل أنك تدير مطعمًا. في يوم ثلاثاء هادئ، نادلتان تديران قاعة الطعام بشكل جيد. لكن في ليلة سبت مزدحمة، تحتاج ثمانية. لن توظّف ليلة السبت كل يوم — هذا إهدار. ولن تحتفظ بطاقم الثلاثاء في السبت — هذه كارثة. ستُعدّل طاقمك بناءً على الطلب.
+
+هذا بالضبط ما يفعله الـ **Horizontal Pod Autoscaler (HPA)** لأحمال عمل Kubernetes الخاصة بك. يراقب مدى انشغال تطبيقك ويضيف أو يزيل نسخًا متماثلة من الـ Pod تلقائيًا لتتناسب مع الحمل الحالي. حركة كثيرة؟ وسّع. تراجعت الحركة؟ قلّص. لا حاجة لتدخل يدوي.
+
+## لماذا لا يعمل التوسيع اليدوي
+
+يمكنك تشغيل `kubectl scale deployment/web --replicas=10` يدويًا كل مرة ترتفع فيها الحركة، لكن إليك لماذا ينهار هذا النهج:
+
+- **الحركة غير متوقعة.** تغريدة فيروسية، أو حملة تسويقية، أو هجوم بوت يمكن أن يضرب في أي وقت. بحلول الوقت الذي تلاحظ فيه وتتوسع، يكون مستخدموك يرون الأخطاء بالفعل.
+- **لا يمكنك المراقبة على مدار الساعة.** ارتفاع الحركة في الساعة 3 صباحًا؟ تطبيقك معطّل حتى يستيقظ أحد ويتوسع يدويًا.
+- **التوسيع المفرط يُهدِر المال.** تشغيل 20 نسخة متماثلة "احتياطيًا" يعني أنك تدفع مقابل 15 Pods خاملة معظم الوقت.
+- **التوسيع الناقص يفقد العملاء.** تشغيل 3 نسخ متماثلة لتوفير المال يعني أن تطبيقك يزحف تحت الح-load ويغادر المستخدمون.
+- **أحمال العمل المتعددة تضاعف المشكلة.** كتلة بها 20 خدمة مصغّرة تعني 20 شيئًا لمراقبته والتوسع فيه يدويًا. هذا لا يتوسع.
+
+الـ HPA يؤتمت كل هذا. يراقب المقاييس باستمرار ويُعدّل عدد النسخ المتماثلة ليتناسب مع أهدافك المُعدّة.
+
+## ما هو الـ Horizontal Pod Autoscaler؟
+
+الـ **HPA** هو متحكم Kubernetes يُوسّع تلقائيًا عدد النسخ المتماثلة من الـ Pod في Deployment أو ReplicaSet أو StatefulSet بناءً على المقاييس المُلاحظة.
+
+إليك كيف تعمل حلقة التحكم:
+
+1. **متحكم HPA يستعلم عن المقاييس** كل 15 ثانية (افتراضيًا) من Metrics Server أو واجهة مقاييس مخصصة.
+2. **يحسب عدد النسخ المتماثلة المطلوب** بناءً على قيمة المقياس الحالية وهدفك.
+3. **يُحدّث عدد النسخ المتماثلة للـ Deployment** إذا اختلف العدد المطلوب عن العدد الحالي.
+4. **الـ Deployment ينشئ أو يزيل Pods** ليتناسب مع العدد الجديد.
+
+```text
+┌───────────────────────────┐
+│     HPA Controller         │
+│                            │
+│  Current CPU: 85%          │
+│  Target CPU:  70%          │
+│  Current Replicas: 3      │
+│  Desired Replicas: 4 ←─── │─── 85/70 * 3 = 3.64, round up to 4
+└──────────┬────────────────┘
+           │ reads metrics
+           ▼
+┌───────────────────────────┐
+│    Metrics Server          │
+│  Pod-1: 80% CPU            │
+│  Pod-2: 90% CPU            │
+│  Pod-3: 85% CPU            │
+└───────────────────────────┘
+```
+
+## لماذا يهمّ هذا؟
+
+- **استجابة تلقائية لتغيرات الحمل.** ارتفعت الحركة في الساعة 3 صباحًا؟ الـ HPA يتوسع قبل أن يلاحظ أحد.
+- **تحسين التكلفة.** شغّل نسخًا متماثلة أقل خلال الفترات الهادئة وأكثر خلال الذروة. ادفع مقابل ما تستخدمه.
+- **تحسين الموثوقية.** عندما يتصاعد ضغط المعالج أو الذاكرة، يضيف الـ HPA سعة قبل أن يتعرض المستخدمون لتدهور.
+- **إعدادات تصريحية.** حدد سياسة التوسيع مرة واحدة في YAML، ويتولى Kubernetes الأمر للأبد.
+- **أساس الجاهزية للإنتاج.** أي حمل عمل إنتاجي جاد يحتاج توسيعًا تلقائيًا. ليس اختياريًا.
+
+## المتطلبات المسبقة: Metrics Server
+
+الـ HPA يحتاج مقاييس لاتخاذ القرارات. بشكل افتراضي، كتل Kubernetes لا تتضمن Metrics Server — تحتاج لتثبيته.
+
+```bash
+# Install the Metrics Server
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+# Wait a minute, then verify it's working
+kubectl top pods
+```
+
+```text
+NAME                       CPU(cores)   MEMORY(bytes)
+web-app-7d8b9c5f4-2xzkm   120m         145Mi
+web-app-7d8b9c5f4-5njpw   85m          132Mi
+web-app-7d8b9c5f4-8qrty   95m          138Mi
+```
+
+إذا عمل `kubectl top pods`، فالـ Metrics Server يعمل والـ HPA يمكنه استخدام مقاييس المعالج والذاكرة.
+
+**ملاحظة للتطوير المحلي:** Minikube يحتاج علامة إضافية لأنه لا يقدم شهادات TLS صحيحة:
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml --validate=false
+```
+
+أو استخدم `minikube addons enable metrics-server` لإعداد أبسط.
+
+## خوارزمية الـ HPA
+
+فهم الرياضيات وراء قرارات الـ HPA يساعدك في تعيين أهداف معقولة. الصيغة مباشرة:
+
+```
+desiredReplicas = ceil[currentReplicas * (currentMetricValue / targetMetricValue)]
+```
+
+لنمضِ عبر مثال:
+
+- لديك **3 نسخ متماثلة**، كل منها يعمل بـ **85% معالج**
+- هدفك هو **70% معالج**
+
+```
+desiredReplicas = ceil[3 * (85 / 70)] = ceil[3 * 1.21] = ceil[3.64] = 4
+```
+
+الـ HPA سيتوسع إلى 4 نسخ متماثلة. بعد أن يبدأ الـ Pod الجديد، يتوزع الحمل عبر 4 Pods، وينخفض المعالج لكل Pod إلى حوالي 64%.
+
+الخوارزمية محافظة:
+
+- **تقرّب لأعلى** (ceil)، لذا تخطئ دائمًا في جانب المزيد من النسخ المتماثلة.
+- **لا تتقلص فورًا** — هناك نافذة استقرار (5 دقائق افتراضيًا) لمنع التذبذب.
+- **تحترم الحدود الدنيا والقصوى** — لن تنخفض أبدًا عن `minReplicas` أو ترتفع عن `maxReplicas`.
+
+## HPA أساسي: التوسيع المبني على المعالج
+
+إليك ملف HPA كامل مع شرح سطرًا بسطر:
+
+```yaml
+apiVersion: autoscaling/v2               # v2 API supports multiple metrics and behaviors
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-hpa                          # Name of the HPA object
+spec:
+  scaleTargetRef:                        # What resource to scale
+    apiVersion: apps/v1
+    kind: Deployment                     # You can also scale ReplicaSets or StatefulSets
+    name: web                            # The name of the target Deployment
+  minReplicas: 2                         # Never go below 2 replicas (even at 0% CPU)
+  maxReplicas: 10                        # Never go above 10 replicas (cost ceiling)
+  metrics:
+    - type: Resource                     # Resource metric = built-in (CPU, memory)
+      resource:
+        name: cpu                        # Watch CPU usage
+        target:
+          type: Utilization              # Target type: Utilization = percentage of request
+          averageUtilization: 70         # Target: 70% of requested CPU per Pod
+```
+
+هدف الـ `averageUtilization` هو نسبة مئوية من المعالج **المطلوب**، وليس المعالج الكلي للعقدة. إذا طلبت حاويتك 200m معالج والهدف 70%، يحاول الـ HPA إبقاء الحاوية عند 140m استخدام معالج (70% من 200m). **لهذا السبب تعيين طلبات الموارد إلزامي ليعمل الـ HPA بشكل صحيح.**
+
+طبّق الـ HPA وتحقق من حالته:
+
+```bash
+kubectl apply -f web-hpa.yaml
+kubectl get hpa
+```
+
+```text
+NAME      REFERENCE        TARGETS         MINPODS   MAXPODS   REPLICAS   AGE
+web-hpa   Deployment/web   85%/70%         2         10        3          30s
+```
+
+- **TARGETS** = `85%/70%` يعني أن المعالج الحالي 85% من الطلب، والهدف 70%
+- **REPLICAS** = 3 (العدد الحالي، على وشك أن يزداد)
+
+## مقاييس متعددة
+
+يمكنك دمج مقاييس المعالج والذاكرة. الـ HPA يحسب النسخ المتماثلة المطلوبة لكل مقياس بشكل مستقل ويستخدم القيمة **الأعلى**:
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70         # Scale if CPU exceeds 70%
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80         # Scale if memory exceeds 80%
+```
+
+إذا قال حساب المعالج 5 نسخ متماثلة وقال حساب الذاكرة 7 نسخ متماثلة، يختار الـ HPA الرقم 7. يختار دائمًا القيمة الأكثر تحفظًا (الأعلى) لإرضاء جميع أهداف المقاييس.
+
+## مقاييس مخصصة مع Prometheus
+
+المعالج والذاكرة مفيدتان، لكنهما مؤشرات غير مباشرة على الحمل. ماذا لو أردت التوسيع بناءً على **معدل الطلبات**، أو **عمق الطابور**، أو **الاتصالات في الثانية**؟ هنا تأتي المقاييس المخصصة.
+
+هذا يتطلب:
+1. **Prometheus** يعمل في كتلتك لجمع مقاييس التطبيق
+2. **Prometheus Adapter** لكشف هذه المقاييس عبر واجهة مقاييس Kubernetes المخصصة
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-hpa-custom
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web
+  minReplicas: 2
+  maxReplicas: 20
+  metrics:
+    - type: Pods                          # Pod metric = custom metric per Pod
+      pods:
+        metric:
+          name: http_requests_per_second  # Custom metric from Prometheus
+        target:
+          type: AverageValue
+          averageValue: "1000"            # Scale to keep ~1000 req/s per Pod
+```
+
+هذا يُوسّع الـ Deployment الخاص بك بحيث يعالج كل Pod حوالي 1000 طلب في الثانية. إذا وصلت الحركة إلى 5000 طلب/ثانية، يتوسع الـ HPA إلى 5 نسخ متماثلة.
+
+## سلوك التوسيع: ضبط الاستجابة بدقة
+
+حقل الـ `behavior` يمنحك تحكمًا دقيقًا في مدى سرعة توسع الـ HPA وتقليصه. هذا يمنع التخبط (دورات توسع/تقليص سريعة) ويحمي من الارتفاعات المفاجئة.
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: web-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web
+  minReplicas: 2
+  maxReplicas: 15
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300     # Wait 5 minutes of low load before scaling down
+      policies:
+        - type: Percent
+          value: 10                       # Remove at most 10% of Pods per period
+          periodSeconds: 60               # Evaluate every 60 seconds
+    scaleUp:
+      stabilizationWindowSeconds: 0       # No delay on scale-up -- act immediately
+      policies:
+        - type: Percent
+          value: 100                      # Can double replica count per period
+          periodSeconds: 60
+        - type: Pods
+          value: 4                        # Or add at most 4 Pods per period
+          periodSeconds: 60
+      selectPolicy: Max                   # Use the policy that adds the most Pods
+```
+
+### تفصيل السلوك
+
+| الحقل | ما يفعله | لماذا يهم |
+|-------|---------|----------|
+| `stabilizationWindowSeconds` (scaleDown) | فترة التهدئة قبل التقليص | يمنع التذبذب عندما تقفز المقاييس حول الهدف |
+| `stabilizationWindowSeconds` (scaleUp) | تأخير قبل التوسع | عيّنه 0 لاستجابة سريعة؛ أعلى لأحمال العمل الحساسة للتكلفة |
+| `periodSeconds` | كم مرة تُقيّم السياسة | أقصر = أكثر استجابة، أطول = أكثر استقرارًا |
+| `selectPolicy: Max` | اختيار السياسة الأكثر عدوانية | يضمن توسعًا سريعًا عند تطبيق سياسات متعددة |
+| `selectPolicy: Min` | اختيار السياسة الأكثر تحفظًا | مفيد للتقليص لتجنب إزالة Pods كثيرة جدًا |
+
+## VPA مقابل HPA مقابل Cluster Autoscaler
+
+Kubernetes لديه آليات توسيع تلقائي متعددة. إليك كيف تختلف:
+
+| الميزة | HPA | VPA | Cluster Autoscaler |
+|--------|-----|-----|-------------------|
+| **ما يُوسّعه** | عدد النسخ المتماثلة من الـ Pod | طلبات موارد الـ Pod (معالج/ذاكرة) | عدد العقد في الكتلة |
+| **الاتجاه** | أفقي (Pods أكثر/أقل) | عمودي (Pods أكبر/أصغر) | البنية التحتية (عقد أكثر/أقل) |
+| **الأفضل لـ** | حركة متغيرة، خدمات ويب | ضبط طلبات الموارد بالحجم الصحيح | عندما لا يمكن جدولة الـ Pods بسبب عدم كفاية موارد العقد |
+| **وقت التوقف** | لا شيء (متدرج) | **نعم** — VPA يعيد تشغيل الـ Pods لتطبيق الأحجام الجديدة | لا شيء للـ Pods الموجودة |
+| **يعمل مع HPA؟** | غير قابل للتطبيق | لا — لا تستخدم كليهما على نفس حمل العمل | نعم — يعملان معًا |
+| **الاستخدام النموذجي** | آلية التوسيع الرئيسية | التحسين والتوصيات | التوسيع على مستوى البنية التحتية |
+
+**مهم:** لا تستخدم HPA و VPA على نفس Deployment. هما يتعارضان — الـ HPA يُوسّع عدد النسخ المتماثلة بناءً على المعالج، والـ VPA يغيّر طلب المعالج، وهما يتقاتلان. استخدم الـ VPA في وضع "التوصية" للحصول على نصائح حول الأحجام، والـ HPA للتوسيع التلقائي الفعلي.
+
+الـ **Cluster Autoscaler** يعمل جنبًا إلى جنب مع الـ HPA. عندما يتوسع الـ HPA وليس لدى العقد الموجودة سعة كافية، يوفر الـ Cluster Autoscaler عقدًا جديدة. عندما يتقلص الـ HPA وتكون العقد مستغلة بشكل منخفض، يزيلها.
+
+## مثال عملي: اختبار الحمل مع HPA
+
+لننشر تطبيق ويب ونرى الـ HPA أثناء العمل بتوليد الحمل.
+
+**deployment.yaml:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: load-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: load-demo
+  template:
+    metadata:
+      labels:
+        app: load-demo
+    spec:
+      containers:
+        - name: app
+          image: hashicorp/http-echo             # Simple HTTP server for testing
+          args: ["-text=Hello from HPA demo!"]
+          ports:
+            - containerPort: 5678
+          resources:
+            requests:
+              cpu: "100m"                       # 0.1 CPU core requested
+              memory: "64Mi"
+            limits:
+              cpu: "200m"                       # 0.2 CPU core maximum
+              memory: "128Mi"
+```
+
+**service.yaml:**
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: load-demo-service
+spec:
+  selector:
+    app: load-demo
+  ports:
+    - port: 80
+      targetPort: 5678
+```
+
+**hpa.yaml:**
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: load-demo-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: load-demo
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 50               # Scale up when CPU exceeds 50% of request
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+```
+
+انشر وتحقق من الـ HPA:
+
+```bash
+kubectl apply -f deployment.yaml -f service.yaml -f hpa.yaml
+kubectl get hpa load-demo-hpa
+```
+
+```text
+NAME              REFERENCE              TARGETS   MINPODS   MAXPODS   REPLICAS   AGE
+load-demo-hpa     Deployment/load-demo   1%/50%    2         10        2          30s
+```
+
+المعالج عند 1% — خامل. الآن لنولّد بعض الحمل:
+
+```bash
+# Run a load generator Pod that bombards the service with requests
+kubectl run load-generator --image=busybox --restart=Never -- \
+  /bin/sh -c "while true; do wget -qO- http://load-demo-service; done"
+```
+
+شاهد الـ HPA يستجيب:
+
+```bash
+kubectl get hpa load-demo-hpa --watch
+```
+
+```text
+NAME              REFERENCE              TARGETS    MINPODS   MAXPODS   REPLICAS   AGE
+load-demo-hpa     Deployment/load-demo   1%/50%     2         10        2          1m
+load-demo-hpa     Deployment/load-demo   85%/50%    2         10        2          2m
+load-demo-hpa     Deployment/load-demo   85%/50%    2         10        4          2m15s
+load-demo-hpa     Deployment/load-demo   62%/50%    2         10        4          2m30s
+load-demo-hpa     Deployment/load-demo   62%/50%    2         10        6          2m45s
+load-demo-hpa     Deployment/load-demo   48%/50%    2         10        6          3m
+```
+
+الـ HPA اكتشف المعالج عند 85% (أعلى بكثير من هدف 50%)، وحسب أن نسخ متماثلة إضافية ضرورية، وتوسع من 2 إلى 4، ثم إلى 6، حتى انخفض المعالج بالقرب من الهدف.
+
+أوقف مولّد الحمل وشاهد الـ HPA يتقلص:
+
+```bash
+kubectl delete pod load-generator
+```
+
+بعد نافذة الاستقرار، يتقلص الـ HPA الـ Deployment مرة أخرى إلى نسختين متماثلتين.
+
+## الأخطاء الشائعة ونصائح
+
+| الخطأ | ما الذي يسوء | كيف تصلحه |
+|-------|-------------|-----------|
+| **غياب طلبات الموارد** | الـ HPA لا يمكنه حساب نسبة الاستخدام بدون خط أساسي | عيّن دائمًا `resources.requests` في مواصفات الـ Pod |
+| **غياب Metrics Server** | الـ HPA يعرض `<unknown>` للأهداف ولا يمكنه التوسع | ثبّت Metrics Server قبل إنشاء الـ HPA |
+| **minReplicas منخفض جدًا** | الـ HPA لا يمكنه التوسع بما يكفي خلال الارتفاعات | عيّن `minReplicas` للتعامل مع حملك الأساسي |
+| **maxReplicas منخفض جدًا** | الـ HPA يصل للسقف ولا يمكنه إضافة Pods أكثر | عيّن `maxReplicas` عاليًا بما يكفي لذروة الحمل مع هامش إضافي |
+| **HPA و VPA على نفس حمل العمل** | يتقاتلان — الـ VPA يغيّر الطلبات، والـ HPA يستجيب بتغيير النسخ المتماثلة | لا تجمع بينهما. استخدم الـ VPA في وضع التوصية فقط. |
+| **لا سلوك توسيع مُعدّ** | الـ HPA يتقلص بعدوانية كبيرة جدًا بعد الارتفاع | اضبط `behavior.scaleDown.stabilizationWindowSeconds` (300 ثانية بداية جيدة) |
+| **استخدام autoscaling/v1** | واجهة برمجة قديمة بميزات محدودة | استخدم دائمًا `autoscaling/v2` لمقاييس متعددة وإعدادات السلوك |
+| **التوسيع بناءً على المعالج فقط** | المعالج لا يرتبط دائمًا بالحمل الفعلي | أضف مقاييس مخصصة (معدل الطلبات، عمق الطابور) عبر Prometheus Adapter |
+
+### نصائح احترافية
+
+- ابدأ بـ HPA محافظ وعدّل بناءً على بيانات الإنتاج الفعلية. من الأفضل أن تكون مزودًا بزيادة قليلة من أن يكون لديك مستخدمون يواجهون أخطاء 503.
+- استخدم `kubectl get hpa -w` لمشاهدة قرارات الـ HPA في الوقت الفعلي أثناء اختبارات الحمل.
+- عيّن `minReplicas` إلى 2 على الأقل لأحمال العمل الإنتاجية — الـ Deployments بنسخة متماثلة واحدة لا يمكنها التوسع من الصفر.
+- ادمج الـ HPA مع الـ Cluster Autoscaler لكي تُوفّر عقد جديدة تلقائيًا عندما يحتاج الـ HPA سعة إضافية.
+- راقب الـ HPA الخاص بك مع Prometheus — تتبع `kube_hpa_status_current_replicas` و`kube_hpa_status_desired_replicas` لاكتشاف متى يكون الـ HPA عند الحد الأقصى باستمرار (تحتاج لرفع `maxReplicas`).
+- استخدم أولوية الـ Pod والاستباق لضمان جدولة أحمال العمل الحرجة أولًا عندما تكون الكتلة تحت الضغط.

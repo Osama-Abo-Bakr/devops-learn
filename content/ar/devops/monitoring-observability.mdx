@@ -1,0 +1,377 @@
+---
+title: "المراقبة وقابلية الملاحظة"
+module: devops
+level: intermediate
+duration: "40 min"
+description: "تطبيق الركائز الثلاث لقابلية الملاحظة: المقاييس (Prometheus)، السجلات (Loki)، والتتبعات (Jaeger)."
+order: 3
+---
+
+# المراقبة وقابلية الملاحظة
+
+فكر في لوحة قياس السيارة. مقياس السرعة يخبرك *كم تسير بسرعة* الآن (مقياس). مصباح فحص المحرك يخبرك أن *شيئًا ما خطأ* (سجل). وعندما تأخذ السيارة إلى الميكانيكي، يوصلون أداة تشخيصية تتتبع المشكلة *عبر كل نظام* للعثور على السبب الجذري (تتبع). مراقبة تطبيقاتك تعمل بنفس الطريقة — تحتاج إلى الأدوات الثلاث لفهم ما يحدث داخل أنظمتك.
+
+الفرق بين المراقبة وقابلية الملاحظة مهم. **المراقبة** هي جمع البيانات والتنبيه عن المشاكل المعروفة. **قابلية الملاحظة** هي القدرة على طرح أسئلة عشوائية عن نظامك — حتى أسئلة لم تخطر ببال أن تسألها مسبقًا. قابلية الملاحظة هي ما يتيح لك تصحيح انقطاع في الساعة 3 صباحًا عندما يقول التنبيه فقط "شيء ما بطيء."
+
+## ما هي قابلية الملاحظة؟
+
+قابلية الملاحظة مبنية على ثلاث ركائز، كل واحدة تجيب نوعًا مختلفًا من الأسئلة:
+
+- **المقاييس** — "كم؟ كم بسرعة؟ كم مرة؟" بيانات رقمية تُقاس عبر الوقت: معدلات الطلبات، استخدام المعالج، استهلاك الذاكرة، عدد الأخطاء.
+- **السجلات** — "ماذا حدث؟" أحداث منفصلة مُسجلة كنص: رسالة خطأ، تسجيل دخول مستخدم، استعلام قاعدة بيانات.
+- **التتبعات** — "أين ذهب الوقت؟" رحلة طلب واحد عبر نظامك بالكامل، تظهر كل خدمة لمسها وكم استغرقت كل خطوة.
+
+لا ركيزة واحدة كافية. المقاييس تخبرك أن *شيئًا ما خطأ*، السجلات تخبرك *ماذا حدث*، والتتبعات تخبرك *أين ولماذا*.
+
+## لماذا يهم هذا؟
+
+- **حل الأعطال أسرع** — عندما يتعطل الإنتاج، الفرق بين إصلاح في 10 دقائق وانقطاع لمدة ساعتين هو ما إذا كنت تستطيع تتبع المشكلة. قابلية الملاحظة تعطيك البيانات لتسأل "أي خدمة بطيئة ولماذا؟" بدلاً من التخمين.
+- **كشف المشاكل استباقيًا** — المقاييس تتيح لك تعيين تنبيهات على الاتجاهات *قبل* أن تصبح انقطاعات. زيادة تدريجية في زمن الاستجابة على مدى ساعات غير مرئية بدون مقاييس لكنها واضحة على لوحة معلومات.
+- **فهم تجربة المستخدم** — مقاييس مجمعة مثل زمن الاستجابة p99 تخبرك ما يختبره أبطأ 1% من مستخدميك. هذا أكثر فائدة بكثير من متوسط وقت الاستجابة، الذي يخفي القيم الشاذة.
+- **تخطيط السعة المبني على البيانات** — اتجاهات المعالج والذاكرة تخبرك متى تحتاج إلى التوسع — قبل أن تنفد الموارد في ذروة حركة المرور.
+- **تصحيح الأنظمة الموزعة** — في بنية الخدمات المصغرة، طلب مستخدم واحد قد يلمس 10 خدمات. بدون تتبعات، إيجاد البطيئة أشبه بإيجاد إبرة في كومة قش.
+
+## المفاهيم الأساسية
+
+### المقاييس — Prometheus
+
+Prometheus هو المعيار لجمع المقاييس في البيئات السحابية الحديثة. يعمل بنموذج **سحب**: يجرد نقاط نهاية HTTP على خدماتك على فترات منتظمة ويخزن البيانات كسلاسل زمنية.
+
+**كيف تعري مقاييس من تطبيقك:**
+
+تطبيقك يحتاج إلى تعريض نقطة نهاية `/metrics` يمكن لـ Prometheus تجريدها. معظم اللغات لديها مكتبة عميل. إليك مثال بلغة Go:
+
+```go
+package main
+
+import (
+    "net/http"
+    "github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+// Define a counter metric that tracks HTTP requests
+// The three labels let you break down requests by method, path, and status code
+var httpRequests = prometheus.NewCounterVec(
+    prometheus.CounterOpts{
+        Name: "http_requests_total",       // Metric name — use _total suffix for counters
+        Help: "Total number of HTTP requests",  // Human-readable description
+    },
+    []string{"method", "path", "status"},  // Labels for dimensionality
+)
+
+func init() {
+    prometheus.MustRegister(httpRequests)  // Register the metric with Prometheus
+}
+
+func handler(w http.ResponseWriter, r *http.Request) {
+    httpRequests.WithLabelValues("GET", "/", "200").Inc()  // Increment the counter
+    w.WriteHeader(http.StatusOK)
+}
+
+func main() {
+    http.HandleFunc("/", handler)
+    http.Handle("/metrics", promhttp.Handler())  // Expose /metrics endpoint
+    http.ListenAndServe(":8080", nil)
+}
+```
+
+**ما تعيده نقطة النهاية `/metrics`:**
+
+```
+# HELP http_requests_total Total number of HTTP requests
+# TYPE http_requests_total counter
+http_requests_total{method="GET",path="/",status="200"} 1542
+http_requests_total{method="POST",path="/api/users",status="201"} 87
+http_requests_total{method="GET",path="/api/users",status="500"} 3
+```
+
+**إعدادات Prometheus لتجريد تطبيقك:**
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'my-app'                    # Name for this scrape target
+    scrape_interval: 15s                   # How often to pull metrics
+    kubernetes_sd_configs:                 # Auto-discover pods in Kubernetes
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app]
+        action: keep
+        regex: my-app                      # Only scrape pods labeled app=my-app
+```
+
+**PromQL — لغة الاستعلام**
+
+PromQL تتيح لك الاستعلام وتجميع المقاييس. إليك الاستعلامات التي ستستخدمها أكثر:
+
+| الاستعلام | ما يعيده | حالة الاستخدام |
+|----------|---------|---------------|
+| `http_requests_total` | قيم العدّ الخام | نادرًا ما يكون مفيدًا وحده — العدادات تزداد فقط |
+| `rate(http_requests_total[5m])` | طلبات في الثانية خلال 5 دقائق | مستوى حركة المرور الحالي |
+| `rate(http_requests_total{status=~"5.."}[5m])` | معدل الأخطاء في الثانية | كشف الأعطال |
+| `histogram_quantile(0.99, rate(latency_bucket[5m]))` | زمن الاستجابة في المئوي 99 | أسوأ تجربة مستخدم |
+| `sum(rate(http_requests_total[5m])) by (path)` | حركة المرور مجمعة حسب نقطة النهاية | إيجاد المسارات الساخنة |
+
+دالة `rate()` أساسية — تحول العدادات الخام إلى معدلات في الثانية. بدون `rate()`، ترى فقط رقمًا متزايدًا باستمرار لا يخبرك شيئًا عن السلوك الحالي.
+
+### السجلات — Loki
+
+Loki هو نظام تجميع سجلات صممه فريق Grafana. على عكد مجموعة ELK (Elasticsearch, Logstash, Kibana)، Loki *لا* يفهرس النص الكامل لسجلاتك. بدلاً من ذلك، يفهرس فقط **التصنيفات** (بيانات وصفية مثل اسم الخدمة، مساحة الاسم، الحجرة) ويخزن محتوى السجل كأجزاء مضغوطة. هذا يجعل Loki أرخص وأبسط تشغيلاً بشكل كبير.
+
+**كيف تتدفق السجلات من تطبيقك إلى Loki:**
+
+```
+App (stdout/stderr) ──► Promtail (agent) ──► Loki (storage) ──► Grafana (visualization)
+```
+
+1. تطبيقك يكتب السجلات إلى stdout/stderr (طريقة تطبيق الاثني عشر عاملاً).
+2. **Promtail** يعمل على كل عقدة، يتتبع ملفات سجلات الحاويات، يضيف تصنيفات، ويرسلها إلى Loki.
+3. **Loki** يخزن ويفهرس السجلات المصنفة.
+4. **Grafana** يستعلم عن Loki باستخدام **LogQL** ويعرض السجلات بجانب مقاييسك.
+
+**LogQL — لغة استعلام السجلات:**
+
+```logql
+# Simple: all logs from a specific app
+{app="profile-service"}
+
+# Filter by content: find error messages
+{app="profile-service"} |= "error"
+
+# Multiple filters: errors from a specific endpoint
+{app="profile-service"} |= "error" |~ "timeout|refused"
+
+# Extract metrics from logs: count errors per minute
+sum(count_over_time({app="profile-service"} |= "error" [1m])) by (level)
+```
+
+**إعدادات Loki:**
+
+```yaml
+# loki-config.yml
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: loki_index_
+        period: 24h
+```
+
+### التتبعات — Jaeger
+
+التتبع الموزع يريك المسار الكامل لطلب واحد عبر نظامك. عندما ينقر المستخدم "تقديم الطلب" وتستغرق الاستجابة 3 ثوانٍ، التتبع يخبرك بالضبط أين ذهبت تلك الثواني الثلاث — هل كان استعلام قاعدة البيانات؟ خدمة الدفع؟ اتصال شبكة؟
+
+**المفاهيم الرئيسية:**
+
+- **التتبع** — الرحلة الكاملة لطلب واحد، محددة بمعرف تتبع فريد.
+- **المجال** — وحدة عمل واحدة ضمن تتبع. يمثل المجال عملية واحدة: استدعاء HTTP، استعلام قاعدة بيانات، تنفيذ دالة. لكل مجال وقت بدء ومدة وبيانات وصفية.
+- **نشر السياق** — معرف التتبع يُمرر من خدمة إلى أخرى عبر ترويسات HTTP (مثل `traceparent`). هذا هو كيف تُربط الخدمات المنفصلة في تتبع متماسك واحد.
+
+```
+Trace ID: abc123
+├── Span 1: API Gateway (0ms - 50ms)
+│   ├── Span 2: Auth Service (50ms - 80ms)
+│   └── Span 3: Order Service (80ms - 2500ms)
+│       ├── Span 4: Inventory Check (80ms - 200ms)
+│       ├── Span 5: Payment Service (200ms - 2400ms)  ← Bottleneck!
+│       │   └── Span 6: Payment DB Query (200ms - 2350ms)
+│       └── Span 7: Order DB Write (2400ms - 2500ms)
+```
+
+في هذا التتبع، استعلام قاعدة بيانات الدفع يستغرق 2.15 ثانية — هذا هو عنق الزجاجة. بدون التتبع، سترى "خدمة الطلبات استغرقت 2.5 ثانية" لكنك لن تعرف *لماذا*.
+
+**أجهزة تطبيق Node.js باستخدام OpenTelemetry:**
+
+OpenTelemetry هو إطار العمل المعياري لتوليد التتبعات. محايد لبائع — نفس الأجهزة تعمل مع Jaeger أو Zipkin أو أي خلفية تتبع.
+
+```javascript
+// tracing.js — Initialize at application startup
+const { NodeSDK } = require('@opentelemetry/sdk-node');
+const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-http');
+const { getNodeAutoInstrumentations } = require('@opentelemetry/auto-instrumentations-node');
+
+const sdk = new NodeSDK({
+  // Export traces to Jaeger via OTLP on port 4318
+  traceExporter: new OTLPTraceExporter({
+    url: 'http://jaeger:4318/v1/traces',
+  }),
+  // Auto-instrument HTTP, Express, database drivers, etc.
+  instrumentations: [getNodeAutoInstrumentations()],
+});
+
+sdk.start();
+```
+
+**نشر Jaeger باستخدام Docker Compose:**
+
+```yaml
+# docker-compose.observability.yml
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "4318:4318"     # OTLP HTTP receiver (where apps send traces)
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+```
+
+### Grafana — جمع كل شيء معًا
+
+Grafana هو طبقة التصور التي تربط المقاييس والسجلات والتتبعات في لوحات معلومات موحدة. يمكنك رؤية رسوم Prometheus البيانية، والنقر على ارتفاع لحفر سجلات Loki، والنقر على سطر سجل لفتح تتبع Jaeger المقابل — كل ذلك في واجهة واحدة.
+
+**Docker Compose لمكدس قابلية ملاحظة محلي كامل:**
+
+```yaml
+# docker-compose.observability.yml
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - /var/log:/var/log
+      - ./promtail.yml:/etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"
+      - "4318:4318"
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana-datasources:/etc/grafana/provisioning/datasources
+```
+
+**إعدادات مصادر بيانات Grafana (إعداد تلقائي لـ Prometheus وLoki وJaeger):**
+
+```yaml
+# grafana-datasources/datasources.yml
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    url: http://prometheus:9090
+    isDefault: true
+
+  - name: Loki
+    type: loki
+    url: http://loki:3100
+
+  - name: Jaeger
+    type: jaeger
+    url: http://jaeger:16686
+```
+
+### التنبيه — من البيانات إلى الفعل
+
+المقاييس بدون تنبيهات هي مجرد رسوم بيانية. التنبيهات تحول بياناتك إلى إشعارات آلية عندما يحدث شيء خاطئ.
+
+```yaml
+# alerts.yml — Prometheus alerting rules
+groups:
+  - name: my-app-alerts
+    rules:
+      # Alert: Error rate exceeds 1% over 5 minutes
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(http_requests_total{status=~"5.."}[5m]))
+          / sum(rate(http_requests_total[5m])) > 0.01
+        for: 5m                    # Must be true for 5 minutes before firing
+        labels:
+          severity: critical        # Used for routing in Alertmanager
+        annotations:
+          summary: "Error rate above 1%"
+          description: "The 5xx error rate is {{ $value | humanizePercentage }}"
+
+      # Alert: P99 latency exceeds 500ms
+      - alert: HighLatency
+        expr: histogram_quantile(0.99, rate(latency_bucket[5m])) > 0.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "P99 latency above 500ms"
+```
+
+**المقاييس الرئيسية لتتبع وعتبات التنبيه الخاصة بها:**
+
+| المقياس | النوع | ما يخبرك به | عتبة التنبيه |
+|--------|------|------------|-------------|
+| معدل الطلبات | عدّاد | حجم حركة المرور | انخفاض أو ارتفاع مفاجئ |
+| معدل الأخطاء | عدّاد | تكرار الأعطال | أكبر من 1% من استجابات 5xx |
+| زمن الاستجابة (p50, p99) | مدرج تكراري | تجربة المستخدم | p99 أكبر من 500 مللي ثانية |
+| استخدام المعالج | مقياس | ضغط الموارد | أكبر من 80% مستمر |
+| استخدام الذاكرة | مقياس | ضغط الذاكرة | أكبر من 90% مستمر |
+| إعادة تشغيل الحجرات | عدّاد | حلقات التعطل | أكبر من 3 في 5 دقائق |
+| استخدام القرص | مقياس | ضغط التخزين | أكبر من 85% |
+
+## مثال عملي — قابلية الملاحظة لتطبيق خدمات مصغرة
+
+تخيل منصة تجارة إلكترونية بثلاث خدمات: `cart-service` و`order-service` و`payment-service`. إليك كيف تعمل الركائز الثلاث معًا عندما يقدّم مستخدم طلبًا:
+
+**السيناريو:** المستخدمون يبلّغون عن "الطلبات بطيئة." إليك كيف تساعد كل ركيزة:
+
+1. **المقاييس (Prometheus)** — لوحة معلوماتك تظهر أن زمن استجابة `order-service` قفز من 200 مللي ثانية إلى 3 ثوانٍ. *ما* المشكلة واضح: شيء في order-service بطيء.
+
+2. **السجلات (Loki)** — تستعلم عن Loki لسجلات `order-service` في الساعة الأخيرة وتجد أخطاء متكررة: `connection pool exhausted, waiting for available connection`. *السبب* يبدأ بالوضوح: اتصالات قاعدة البيانات تنفد.
+
+3. **التتبعات (Jaeger)** — تنقر من سطر سجل إلى التتبع المقابل وترى أن `order-service` قضى 2.8 ثانية ينتظر استجابة من `payment-service`، الذي بدوره انتظر 2.7 ثانية على استعلام قاعدة بيانات. *المكان* محدد بدقة: استعلام بطيء في قاعدة بيانات payment-service.
+
+بدون الثلاثة، قد تعرف أن *شيئًا ما* بطيء (المقاييس) لكنك لا تعرف *لماذا* (السجلات) أو *أين بالضبط* (التتبعات). معًا، يحولون "إنه بطيء" الغامض إلى "استعلام قاعدة بيانات payment-service يستغرق 2.7 ثانية بسبب فهرس مفقود."
+
+## الأخطاء الشائعة والنصائح
+
+- **خطأ: التنبيه عن كل شيء** — إذا حصلت على 50 تنبيهًا يوميًا، ستتجاهلها جميعًا (إرهاق التنبيه). **نصيحة:** نبّه فقط عن الأعراض التي تؤثر على المستخدمين (معدل الأخطاء، زمن الاستجابة)، وليس عن المقاييس الداخلية (المعالج، الذاكرة). استخدم لوحات المعلومات للباقي.
+
+- **خطأ: نسيان مدة `for:` في التنبيهات** — ارتفاع قصير يشغل تنبيهًا، يوقظ شخصًا في الساعة 3 صباحًا، وينتهي من تلقاء نفسه قبل أن ينظر إليه أحد. **نصيحة:** استخدم `for: 5m` أو أكثر لتجنب التنبيهات المتذبذبة.
+
+- **خطأ: تسجيل بيانات حساسة** — تسجيل كلمات المرور أو مفاتيح API أو البيانات الشخصية بنص عادي هو انتهاك أمني وتنظيمي. **نصيحة:** استخدم التسجيل المنظم مع طبقة تطهير. لا تسجل أبدًا محتويات طلبات قد تحتوي على بيانات اعتماد.
+
+- **خطأ: عدم ربط الركائز** — المقاييس والسجلات والتتبعات أقوى ما تكون مرتبطة. **نصيحة:** أضف معرفات التتبع في مخرجات سجلاتك. هذا يتيح لك القفز من سطر سجل مباشرة إلى التتبع المقابل في Jaeger.
+
+- **نصيحة: استخدم طريقة RED** — لكل خدمة، تتبع **R**ate (الطلبات في الثانية)، **E**rrors (معدل الأخطاء)، و**D**uration (زمن الاستجابة). هذه المقاييس الثلاثة تغطي أكثر جوانب صحة الخدمة أهمية.
+
+- **نصيحة: استخدم طريقة USE للبنية التحتية** — لكل مورد (معالج، قرص، شبكة)، تتبع **U**tilization (النسبة المشغولة)، **S**aturation (العمل المتراكم)، و**E**rrors (عدد الأخطاء). هذا يلتقط اختناقات الموارد قبل أن تسبب مشاكل تظهر للمستخدم.
+
+- **نصيحة: ابدأ ببساطة** — لا تحاول نشر Prometheus وLoki وJaeger وGrafana وAlertmanager دفعة واحدة. ابدأ بـ Prometheus وGrafana، أضف Loki عندما تحتاج بحث السجلات، وأضف Jaeger عندما يكون لديك خدمات متعددة لتتبعها.

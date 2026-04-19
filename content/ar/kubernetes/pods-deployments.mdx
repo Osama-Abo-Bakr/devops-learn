@@ -1,0 +1,434 @@
+---
+title: "Pods و Deployments"
+module: kubernetes
+level: beginner
+duration: "40 min"
+diagram: k8s-pods-deployments
+description: "فهم أصغر وحدة قابلة للنشر في Kubernetes وإدارة النسخ المتماثلة باستخدام Deployments."
+order: 1
+---
+
+# Pods و Deployments
+
+تخيّل أن الـ Pod يشبه شقة في مبنى. الشقة بحد ذاتها ليست الشخص الذي يسكنها — بل هي *المساحة* التي يعيش فيها شخص أو أكثر (حاويات) معًا، يتشاركون نفس العنوان (الشبكة)، نفس السباكة (أحجام التخزين)، ونفس الباب الأمامي (عنوان IP). أنت لا تدير الأشخاص مباشرة — مدير المبنى (Deployment) يتكفّل بالتأكد من أن العدد الصحيح من الشقق مشغول، وأنه عندما يغادر أحدهم، ينتقل بديل فورًا.
+
+إذا ضربت هذا التشبيه، فأنت على الطريق الصحيح لفهم Pods و Deployments. لنفصّل الأمر بشكل صحيح.
+
+## ما هو الـ Pod؟
+
+الـ **Pod** هو أصغر وحدة قابلة للنشر في Kubernetes. ليس حاوية — بل *غلاف* حول حاوية واحدة أو أكثر يجب أن تعمل معًا على نفس العقدة.
+
+إليك ما يجعل الـ Pod مميزًا:
+
+- **مساحة اسم شبكة مشتركة** — جميع الحاويات داخل الـ Pod تتشارك نفس عنوان IP ونفس نطاق المنافذ. يمكنها التحدث مع بعضها عبر `localhost`. لا حاجة لاكتشاف الخدمات بين الحاويات داخل نفس الـ Pod.
+- **أحجام تخزين مشتركة** — الحاويات في نفس الـ Pod يمكنها تحميل نفس الأحجام ومشاركة الملفات فورًا.
+- **دورة حياة مشتركة** — جميع الحاويات في الـ Pod تُجدول معًا، تبدأ معًا، وتُنهى معًا. إذا تعطّلت واحدة، يُعاد تشغيل الـ Pod بأكمله.
+- **عادةً حاوية واحدة لكل Pod** — النمط الأكثر شيوعًا هو حاوية واحدة لكل Pod. Pods متعددة الحاويات موجودة (أنماط sidecar وambassador وadapter)، لكنها الاستثناء وليست القاعدة.
+
+فكّر في الأمر بهذه الطريقة: إذا كان عمليان *يجب* أن يعملا على نفس الآلة ويشتركا في نفس نظام الملفات والشبكة، ضعهما في نفس الـ Pod. إذا كانا يعملان بشكل مستقل، ضعهما في Pods منفصلة.
+
+### تشريح الـ Pod
+
+كل Pod يحتوي على:
+
+| المكوّن | وظيفته |
+|---------|--------|
+| **metadata.name** | الاسم الفريد للـ Pod داخل مساحة الأسماء الخاصة به |
+| **spec.containers** | قائمة الحاويات التي تعمل داخل الـ Pod |
+| **spec.volumes** | التخزين المشترك الذي يمكن للحاويات تحميله |
+| **status.phase** | الحالة الحالية: Pending أو Running أو Succeeded أو Failed أو Unknown |
+| **status.containerStatuses** | حالة كل حاوية، عدد مرات إعادة التشغيل، ومعلومات الصورة |
+
+## لماذا يهمّ هذا؟
+
+- **الـ Pods هي الطريقة التي يفكر بها Kubernetes عن تطبيقك.** أنت لا تنشر حاويات — أنت تنشر Pods. فهم الـ Pods أمر لا يمكن التنازل عنه.
+- **الـ Pods عابرة.** تُنشأ وتُدمّر وتُعاد إنشاؤها باستمرار. إذا ماتت عقدة، جميع الـ Pods عليها تختفي. لهذا السبب لا تكاد تنشئ Pods مباشرة أبدًا.
+- **الشبكات المشتركة تُبسّط التواصل.** حاويات sidecar (مثل جامعي السجلات أو البروكسي) يمكنها التحدث إلى الحاوية الرئيسية على `localhost` بدون أي إعدادات شبكة.
+- **الـ Deployments تمنح الـ Pods قدرات خارقة.** بدون Deployment، الـ Pod الميت يبقى ميتًا. الـ Deployment يضمن أن العدد المطلوب من النسخ المتماثلة يعمل دائمًا.
+- **التحديثات المتدرجة تنقذك من وقت التوقف.** الـ Deployments تُحدّث الـ Pods واحدًا تلو الآخر، لذا لن يلاحظ المستخدمون شيئًا.
+
+## إنشاء Pod (الطريقة الصعبة)
+
+لننشئ Pod مباشرة لتفهم البنية — على الرغم من أنك في الممارسة العملية ستستخدم Deployment دائمًا تقريبًا.
+
+```yaml
+apiVersion: v1                    # The Kubernetes API version for Pods
+kind: Pod                         # We're creating a Pod
+metadata:
+  name: nginx-pod                 # The name of our Pod (must be unique in the namespace)
+  labels:                         # Labels are key-value pairs used for identification
+    app: nginx                    # This label lets Services and Deployments find this Pod
+    environment: dev              # Extra labels help with filtering and organization
+spec:
+  containers:                     # The list of containers inside this Pod
+    - name: nginx                 # Container name (must be unique within the Pod)
+      image: nginx:alpine         # The container image to run (Alpine = smaller footprint)
+      ports:
+        - containerPort: 80       # The port the container listens on inside the Pod
+      resources:                  # Resource limits prevent one Pod from hogging everything
+        requests:                 # Guaranteed minimum resources
+          cpu: "100m"             # 100 millicores = 0.1 CPU core
+          memory: "128Mi"         # 128 Mebibytes of memory
+        limits:                   # Maximum resources the container can use
+          cpu: "250m"             # Up to 0.25 CPU cores
+          memory: "256Mi"         # Up to 256 MiB of memory
+```
+
+طبّقه وتحقق من النتيجة:
+
+```bash
+kubectl apply -f nginx-pod.yaml
+```
+
+```text
+pod/nginx-pod created
+```
+
+```bash
+kubectl get pods
+```
+
+```text
+NAME        READY   STATUS    RESTARTS   AGE
+nginx-pod   1/1     Running   0          12s
+```
+
+الرقم `1/1` في عمود READY يعني أن 1 من أصل 1 حاوية جاهزة. في Pod متعدد الحاويات، قد ترى `2/2` أو `3/3`.
+
+## مشكلة الـ Pods العارية
+
+إليك الأمر — إذا أنشأت Pod مباشرة وتعطّل أو فشلت العقدة التي يعمل عليها، **لا أحد يعيده**. الـ Pod اختفى. لا بديل. لا إصلاح. لهذا السبب نستخدم المتحكمات (Controllers)، وأكثرها شيوعًا هو الـ **Deployment**.
+
+## Deployment: مدير الـ Pods
+
+الـ **Deployment** هو متحكم يدير مجموعة من الـ Pods المتطابقة. يحدد بشكل تصريحي:
+
+- **كم نسخة متماثلة** من الـ Pod يجب أن تعمل
+- **كيف يبدو الـ Pod** (قالب الـ Pod)
+- **كيف يجب أن تُنفّذ التحديثات** (استراتيجية التحديث المتدرج)
+
+خلف الكواليس، الـ Deployment ينشئ **ReplicaSet**، وهو المكوّن الذي يضمن فعلًا وجود العدد الصحيح من الـ Pods. الـ Deployment يجلس فوق الـ ReplicaSet ويتعامل مع استراتيجية التحديث. نادرًا ما تتعامل مع الـ ReplicaSets مباشرة.
+
+```
+Deployment
+  └── ReplicaSet (revision 1)
+        ├── Pod-1
+        ├── Pod-2
+        └── Pod-3
+```
+
+عندما تُحدّث الـ Deployment (مثلاً، تغيير نسخة الصورة)، الـ Deployment ينشئ ReplicaSet *جديدًا* ويحوّل الحركة تدريجيًا من القديم إلى الجديد. هذا هو **التحديث المتدرج**.
+
+### تشبيه مدير المبنى
+
+إذا كان الـ Pod شقة، فإن الـ Deployment هو مدير المبنى:
+
+- **النسخ المتماثلة** = "أحتاج 3 شقق مشغولة طوال الوقت"
+- **التحديث المتدرج** = "جدّد شقة واحدة كل مرة، لتبقى الشقتان الأخريان متاحتين"
+- **التراجع** = "الأثاث الجديد يبدو سيئًا — أعد الأثاث القديم"
+- **التوسيع** = "نحصل على مستأجرين أكثر — افتح 5 شقق إضافية"
+
+## إنشاء Deployment
+
+إليك ملف YAML كامل لـ Deployment مع شرح سطرًا بسطر:
+
+```yaml
+apiVersion: apps/v1               # API version for Deployments (different from Pod's v1)
+kind: Deployment                   # We're creating a Deployment controller
+metadata:
+  name: nginx-deployment           # Name of the Deployment object
+  labels:                          # Labels on the Deployment itself (not the Pods)
+    app: nginx                     # Helps identify this Deployment
+spec:
+  replicas: 3                      # Always maintain exactly 3 Pod replicas
+  selector:                        # How the Deployment finds its Pods
+    matchLabels:
+      app: nginx                   # Must match the Pod template labels below
+  strategy:                        # How to handle updates
+    type: RollingUpdate            # Default strategy -- update Pods gradually
+    rollingUpdate:
+      maxSurge: 1                  # Allow 1 extra Pod above replicas during update (25% default)
+      maxUnavailable: 0            # Never let any Pod go unavailable (0 = zero-downtime)
+  template:                        # This is the Pod template -- Pods are created from this
+    metadata:
+      labels:
+        app: nginx                 # CRITICAL: Must match spec.selector.matchLabels above
+    spec:
+      containers:
+        - name: nginx
+          image: nginx:alpine
+          ports:
+            - containerPort: 80
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "250m"
+              memory: "256Mi"
+```
+
+تفصيل مهم: **الـ `selector.matchLabels` يجب أن يتطابق مع `template.metadata.labels`**. إذا لم يتطابقا، لن يتمكن الـ Deployment من العثور على الـ Pods التي أنشأها، وستحصل على خطأ وقت التطبيق. هذا من أكثر الأخطاء شيوعًا بين المبتدئين.
+
+طبّق الـ Deployment ولاحظ:
+
+```bash
+kubectl apply -f nginx-deployment.yaml
+```
+
+```text
+deployment.apps/nginx-deployment created
+```
+
+```bash
+kubectl get deployments
+```
+
+```text
+NAME               READY   UP-TO-DATE   AVAILABLE   AGE
+nginx-deployment   3/3     3            3           30s
+```
+
+- **READY** = 3/3 يعني أن جميع الـ 3 نسخ متماثلة تعمل وجاهزة
+- **UP-TO-DATE** = 3 Pods تتطابق مع مواصفات الـ Deployment الحالية
+- **AVAILABLE** = 3 Pods كانت متاحة لمدة minReadySeconds على الأقل
+
+تحقق من الـ Pods التي أنشأها الـ Deployment:
+
+```bash
+kubectl get pods -l app=nginx
+```
+
+```text
+NAME                                READY   STATUS    RESTARTS   AGE
+nginx-deployment-7fb96c846b-5xz2k   1/1     Running   0          45s
+nginx-deployment-7fb96c846b-8m3nj   1/1     Running   0          45s
+nginx-deployment-7fb96c846b-dk4lp   1/1     Running   0          45s
+```
+
+لاحظ نمط التسمية: `<deployment-name>-<replicaset-hash>-<random-suffix>`. كل Pod يحصل على اسم فريد تلقائيًا.
+
+## التحديثات المتدرجة أثناء العمل
+
+السحر الحقيقي لـ Deployments يظهر عندما تُحدّث تطبيقك. لنغيّر صورة Nginx من `alpine` إلى `stable`:
+
+```bash
+kubectl set image deployment/nginx-deployment nginx=nginx:stable
+```
+
+```text
+deployment.apps/nginx-deployment image updated
+```
+
+شاهد الطرح يحدث في الوقت الفعلي:
+
+```bash
+kubectl rollout status deployment/nginx-deployment
+```
+
+```text
+Waiting for deployment "nginx-deployment" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "nginx-deployment" rollout to finish: 1 out of 3 new replicas have been updated...
+Waiting for deployment "nginx-deployment" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "nginx-deployment" rollout to finish: 2 out of 3 new replicas have been updated...
+Waiting for deployment "nginx-deployment" rollout to finish: 3 of 3 updated replicas are available...
+deployment "nginx-deployment" successfully rolled out
+```
+
+خلف الكواليس، الـ Deployment أنشأ ReplicaSet جديدًا بالصورة المحدّثة وحوّل الـ Pods تدريجيًا من الـ ReplicaSet القديم إلى الجديد. مع `maxUnavailable: 0` و`maxSurge: 1`، يوجد 4 Pods على الأكثر في أي وقت، و3 على الأقل تخدم الحركة دائمًا.
+
+## التراجع: التراجع عن تحديث سيء
+
+دفعت بصورة معطلة؟ لا داعي للذعر — تراجع:
+
+```bash
+# Check the rollout history
+kubectl rollout history deployment/nginx-deployment
+```
+
+```text
+deployment.apps/nginx-deployment
+REVISION  CHANGE-CAUSE
+1         kubectl apply --filename=nginx-deployment.yaml --record=true
+2         kubectl set image deployment/nginx-deployment nginx=nginx:stable
+```
+
+```bash
+# Roll back to the previous revision
+kubectl rollout undo deployment/nginx-deployment
+```
+
+```text
+deployment.apps/nginx-deployment rolled back
+```
+
+```bash
+# Or roll back to a specific revision
+kubectl rollout undo deployment/nginx-deployment --to-revision=1
+```
+
+الـ Deployment يوقف الـ ReplicaSet المعطّل ويعيد تشغيل القديم. لن يلاحظ المستخدمون شيئًا.
+
+## توسيع نطاق الـ Deployment
+
+تحتاج سعة أكبر؟ وسّع على الطاير:
+
+```bash
+# Scale to 5 replicas
+kubectl scale deployment/nginx-deployment --replicas=5
+```
+
+```text
+deployment.apps/nginx-deployment scaled
+```
+
+```bash
+kubectl get pods -l app=nginx
+```
+
+```text
+NAME                                READY   STATUS    RESTARTS   AGE
+nginx-deployment-7fb96c846b-5xz2k   1/1     Running   0          10m
+nginx-deployment-7fb96c846b-8m3nj   1/1     Running   0          10m
+nginx-deployment-7fb96c846b-dk4lp   1/1     Running   0          10m
+nginx-deployment-7fb96c846b-qw9rv   1/1     Running   0          5s
+nginx-deployment-7fb96c846b-zm8tx   1/1     Running   0          5s
+```
+
+Pods جديدان بدآ العمل فورًا. ويمكنك التقليص بنفس السهولة:
+
+```bash
+kubectl scale deployment/nginx-deployment --replicas=3
+```
+
+## مثال عملي: نشر تطبيق ويب
+
+لنجمع كل شيء في سيناريو واقعي. أنت تنشر تطبيق ويب يحتاج إلى 3 نسخ متماثلة، تحديثات متدرجة، وحدود للموارد.
+
+**هيكل المشروع:**
+
+```text
+k8s/
+├── deployment.yaml
+└── service.yaml
+```
+
+**deployment.yaml:**
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+  labels:
+    app: web-app
+    version: v1
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web-app
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: web-app
+        version: v1
+    spec:
+      containers:
+        - name: web-app
+          image: my-registry/web-app:1.0.0
+          ports:
+            - containerPort: 3000
+          resources:
+            requests:
+              cpu: "200m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          readinessProbe:              # Kubernetes checks this before sending traffic
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 5    # Wait 5 seconds before first check
+            periodSeconds: 10         # Check every 10 seconds
+          livenessProbe:              # Kubernetes restarts the container if this fails
+            httpGet:
+              path: /health
+              port: 3000
+            initialDelaySeconds: 15   # Wait longer before liveness checks
+            periodSeconds: 20
+```
+
+انشر وتحقق:
+
+```bash
+kubectl apply -f k8s/deployment.yaml
+kubectl get pods -l app=web-app -w
+```
+
+```text
+NAME                       READY   STATUS    RESTARTS   AGE
+web-app-6d9f5c8b4-7k2xm   0/1     Running   0          2s
+web-app-6d9f5c8b4-d4nj9   0/1     Running   0          2s
+web-app-6d9f5c8b4-x1p8h   0/1     Running   0          2s
+web-app-6d9f5c8b4-7k2xm   1/1     Running   0          8s
+web-app-6d9f5c8b4-d4nj9   1/1     Running   0          8s
+web-app-6d9f5c8b4-x1p8h   1/1     Running   0          8s
+```
+
+علامة `-w` تراقب التغييرات. يمكنك رؤية الـ Pods تنتقل من `0/1` إلى `1/1` عندما تجتاز فحوصات الجاهزية.
+
+## الأخطاء الشائعة ونصائح
+
+| الخطأ | ما الذي يسوء | كيف تصلحه |
+|-------|-------------|-----------|
+| **غياب حدود الموارد** | Pod واحد يستهلك كل المعالج/الذاكرة على عقدة، جاعلاً غيرها يتضور | عيّن دائمًا `requests` و`limits` |
+| **عدم تطابق Selector/label** | Deployment لا يجد الـ Pods الخاصة به، أو يجد الخاطئة | تحقق مرتين أن `spec.selector.matchLabels` يتطابق مع `spec.template.metadata.labels` |
+| **إنشاء Pods مباشرة** | Pod يموت ولا أحد يعيده | استخدم Deployment دائمًا (أو متحكمًا آخر) |
+| **نسيان فحوصات الجاهزية** | الحركة تصل إلى الـ Pods قبل أن تكون جاهزة، مما يسبب أخطاء | أضف `readinessProbe` إلى مواصفات الـ Pod |
+| **فحص الحياة عدواني جدًا** | الحاوية تُقتل أثناء بدء تشغيل بطيء (حلقة تعطّل) | عيّن `initialDelaySeconds` عاليًا بما يكفي لتشغيل تطبيقك |
+| **عدد نسخ متماثلة كبير جدًا** | تستنزف موارد العقدة وتصبح الـ Pods في حالة Pending | ابدأ بـ `replicas: 2` ووسّع بناءً على المقاييس |
+| **غياب سجل الطرح** | لا يمكنك التراجع لأنه لا توجد مراجعة | استخدم علامة `--record` أو أضف تعليقات توضيحية لـ Deployments |
+
+### نصائح احترافية
+
+- استخدم `kubectl get events --sort-by=.metadata.creationTimestamp` لتصحيح سبب عدم بدء تشغيل Pod.
+- رقمّن صور الحاويات دائمًا (`web-app:1.0.0`، وليس `web-app:latest`). استخدام `latest` يعني أن Kubernetes قد يسحب صورًا مختلفة على عُقد مختلفة.
+- استخدم `kubectl explain deployment.spec` لاستكشاف واجهة برمجة Deployment بدون مغادرة الطرفية.
+- ادمج Deployments مع Services (الدرس التالي) للحصول على شبكات مستقرة لـ Pods الخاصة بك.
+
+## مرجع الأوامر الرئيسية
+
+```bash
+# Working with Deployments
+kubectl apply -f deployment.yaml          # Create or update a Deployment
+kubectl get deployments                   # List all Deployments
+kubectl describe deployment nginx-deployment  # Detailed Deployment info
+kubectl scale deployment/nginx --replicas=5   # Scale a Deployment
+
+# Rolling updates and rollbacks
+kubectl set image deployment/nginx nginx=nginx:1.25  # Update the container image
+kubectl rollout status deployment/nginx             # Watch the rollout progress
+kubectl rollout history deployment/nginx             # View rollout revisions
+kubectl rollout undo deployment/nginx                # Roll back to previous version
+kubectl rollout undo deployment/nginx --to-revision=2  # Roll back to specific revision
+kubectl rollout pause deployment/nginx               # Pause a rollout (canary strategy)
+kubectl rollout resume deployment/nginx              # Resume a paused rollout
+
+# Working with Pods
+kubectl get pods                          # List all Pods
+kubectl get pods -l app=nginx             # Filter Pods by label
+kubectl describe pod <pod-name>          # Detailed Pod info and events
+kubectl logs <pod-name>                  # View container logs
+kubectl logs <pod-name> -c <container>    # Logs from a specific container in a multi-container Pod
+kubectl exec -it <pod-name> -- /bin/sh   # Shell into a running Pod
+kubectl delete pod <pod-name>            # Delete a Pod (Deployment will recreate it)
+```
+
+<Diagram config={k8sPodsDeployments} />

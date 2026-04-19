@@ -1,0 +1,377 @@
+---
+title: "الشبكات والأحجام"
+module: compose
+level: intermediate
+duration: "30 min"
+diagram: compose-networks-volumes
+description: "الشبكات المخصصة، الأحجام المسماة، وتركيبات الربط في ملفات Compose."
+order: 3
+---
+
+# الشبكات والأحجام — العزل والثبات
+
+تخيّل أنك تجهّز مبنى مكاتب. لن تضع غرفة الخادم بجوار اللوبي — ستفصلهما بأبواب مقفلة وممرات مختلفة. ولن تخزّن المستندات المهمة على سبورة تُمسح كل ليلة — ستضعها في خزانة ملفات. شبكات Docker هي الأبواب المقفلة والممرات. أحجام Docker هي خزائن الملفات. معاً، تمنح حاوياتك العزل والثبات، الشيئين اللذين يحولان عرضاً تجريبياً إلى تطبيق جاهز للإنتاج.
+
+## ما هي الشبكات والأحجام في Compose؟
+
+**الشبكات** تُحدد كيف تتواصل الحاويات مع بعضها ومع العالم الخارجي. بشكل افتراضي، تشارك جميع خدمات Compose شبكة واحدة، لكن التطبيقات الحقيقية تحتاج غالباً إلى عزل — قاعدة بياناتك لا يجب أن تكون متاحة من الإنترنت، وواجهة برمجتك الداخلية لا يجب أن تكون على نفس شبكة واجهتك الأمامية العامة.
+
+**الأحجام** تُحدد كيف تُخزّن البيانات وكيف تصمد بعد انتهاء حياة الحاوية. الحاويات مؤقتة — عندما تُزال، يختفي نظام ملفاتها. تمنحك الأحجام طريقة للاحتفاظ بملفات قواعد البيانات، والأصول المرفوعة، والسجلات، وأي بيانات أخرى يجب أن تصمد أمام إعادة التشغيل وإعادة البناء وحتى أعطال الأجهزة.
+
+## لماذا يهم هذا؟
+
+- **فقدان البيانات هو أسوأ أنواع الأخطاء** — بدون أحجام، تُعاد ضبط قاعدة بياناتك في كل مرة تُعيد فيها إنشاء حاويتها. المستخدمون يفقدون بياناتهم، وأنت تفقد ثقتهم.
+- **الشبكات المسطحة مخاطرة أمنية** — إذا كان كل خدمة يمكن الوصول إلى كل خدمة أخرى، يمكن لحاوية واجهة أمامية مخترقة الوصول مباشرة إلى قاعدة بياناتك. الشبكات المخصصة تفرض مبدأ الامتياز الأقل.
+- **التطوير والإنتاج لهما احتياجات مختلفة** — تركيبات الربط تمنحك إعادة تحميل الكود المباشرة في التطوير؛ الأحجام المسماة تمنحك ثباتاً آمناً في الإنتاج. فهم كليهما يتيح لك العمل بسرعة أكبر والنشر بأمان أكثر.
+- **إدارة الأحجام تمنع انتفاخ القرص** — بدون حدود وتنظيف، ستملأ أحجام Docker قرصك في النهاية. معرفة دورة الحياة تساعدك على البقاء مسيطيراً.
+- **عزل الشبكة يبسّط التصحيح** — عندما تكون الخدمات على شبكات منفصلة، تعرف فوراً أيها يمكن أن يتصل بأيها وأيها لا يمكن. لا تخمين.
+
+## المفاهيم الأساسية
+
+### الشبكة الافتراضية — ماذا يحدث بدون إعدادات
+
+عندما تشغّل `docker compose up` بدون تعريف أي شبكات، ينشئ Compose شبكة جسر واحدة مسماة `<project>_default` ويربط كل خدمة بها. هذا يعني أن كل خدمة يمكن الوصول إلى كل خدمة أخرى بالاسم.
+
+```yaml
+services:
+  web:
+    image: nginx          # Can reach db and cache
+  db:
+    image: postgres       # Can reach web and cache
+  cache:
+    image: redis          # Can reach web and db
+```
+
+في هذا الإعداد، تشترك الخدمات الثلاث في شبكة واحدة. لمشروع بسيط، هذا جيد. لكن مع نمو مجموعتك، يصبح مشكلة — حاوية الويب لا يجب أن تتمكن من اختبار اتصال قاعدة البيانات مباشرة.
+
+### الشبكات المخصصة — العزل بالتصميم
+
+تتيح لك الشبكات المخصصة التحكم بدقة في أي الخدمات يمكنها التحدث مع أيها. فكّر في الأمر كإعطاء فرق مختلفة طوابق مكاتب مختلفة. يمكن لفريق الواجهة الأمامية وفريق الخلفية الالتقاء في اللوبي، لكن فريق الأمن يملك طابقه الخاص بوصول مقيد.
+
+```yaml
+services:
+  # Public-facing — sits on both networks
+  web:
+    image: nginx:alpine
+    networks:
+      - frontend           # Serves traffic from the internet
+      - backend            # Talks to the API
+
+  # Internal API — only on the backend network
+  api:
+    image: my-api:latest
+    networks:
+      - backend            # Talks to web and db, but not directly to the internet
+
+  # Database — only on the backend network, isolated from the world
+  db:
+    image: postgres:16-alpine
+    networks:
+      - backend            # Only the API can reach it
+
+networks:
+  frontend:
+    driver: bridge         # Standard bridge network for external traffic
+  backend:
+    driver: bridge
+    internal: true         # No outbound internet access — locked down
+```
+
+**سطراً بسطر:**
+
+- `web: networks: [frontend, backend]` — خادم الويب يجلس على كلتا الشبكتين. يستقبل الطلبات من الإنترنت (frontend) ويوجّه استدعاءات API إلى الخلفية.
+- `api: networks: [backend]` — واجهة البرمجة على شبكة الخلفية فقط. يمكنها التحدث إلى `web` (يشتركان في `backend`) وإلى `db` (أيضاً على `backend`)، لكنها غير متاحة مباشرة من الإنترنت.
+- `db: networks: [backend]` — قاعدة البيانات مقفلة على شبكة الخلفية. فقط الخدمات على `backend` يمكنها الوصول إليها. خادم الويب لا يمكنه الاستعلام عن قاعدة البيانات مباشرة لأنهما لا يشتركان في شبكة.
+- `frontend: driver: bridge` — شبكة جسر Docker قياسية. الحاويات على هذه الشبكة يمكنها التواصل مع بعضها والوصول إلى الإنترنت الخارجي.
+- `backend: internal: true` — العلامة `internal` تنشئ شبكة **بدون توجيه خارجي**. الحاويات على هذه الشبكة يمكنها التحدث مع بعضها، لكنها لا تستطيع الوصول إلى الإنترنت، والإنترنت لا يستطيع الوصول إليها. هذا أمر حاسم لقواعد البيانات والخدمات الداخلية.
+
+**مصفوفة الاتصال لهذا الإعداد:**
+
+| من | إلى | يمكنهما التواصل؟ | لماذا |
+|---|---|---|---|
+| web | api | نعم | كلاهما على `backend` |
+| web | db | لا | يشتركان في `backend`، لكن `web` على `frontend` أيضاً — في الحقيقة، نعم يمكنهما. كلاهما على `backend`. |
+| api | db | نعم | كلاهما على `backend` |
+| api | الإنترنت | لا | `backend` هي `internal: true` |
+| db | الإنترنت | لا | `backend` هي `internal: true` |
+| web | الإنترنت | نعم | `web` على `frontend` (ليست داخلية) |
+
+### الأحجام المسماة — بيانات تصمد
+
+الأحجام المسماة هي مواقع تخزين يديرها Docker تستقل عن الحاويات. عندما تركّب حجماً مسمى في حاوية، تعيش البيانات على نظام ملفات المضيف في دليل تخزين Docker (`/var/lib/docker/volumes/` على Linux). حتى لو حذفت وأعدت إنشاء الحاوية، يبقى الحجم وبياناته.
+
+```yaml
+services:
+  db:
+    image: postgres:16-alpine
+    volumes:
+      - db-data:/var/lib/postgresql/data   # Mount the named volume at Postgres' data directory
+    environment:
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: secretpass
+
+volumes:
+  db-data:                          # Declare the named volume
+    driver: local                   # Use the local storage driver (default)
+```
+
+**سطراً بسطر:**
+
+- `db-data:/var/lib/postgresql/data` — الجانب الأيسر (`db-data`) هو اسم الحجم المُعلن في الأسفل. الجانب الأيمن هو المسار داخل الحاوية حيث يخزّن Postgres ملفات بياناته.
+- `volumes: db-data: driver: local` — يُعلن عن الحجم المسمى ويخبر Docker بتخزينه على نظام الملفات المحلي. مشغّل `local` هو الافتراضي، لذا يمكنك حذفه.
+
+**ما يحدث:** عندما يكتب Postgres إلى `/var/lib/postgresql/data`، فهو في الواقع يكتب إلى الحجم `db-data` على المضيف. عندما تشغّل `docker compose down`، تُزال الحاويات، لكن `db-data` يبقى. في المرة القادمة التي تشغّل فيها `docker compose up`، يكمل Postgres من حيث توقف.
+
+### تركيبات الربط — تطوير مباشر مع ملفات حقيقية
+
+تركيبات الربط تربط دليلاً محدداً على جهازك المضيف بدليل داخل الحاوية. على عكس الأحجام المسماة، أنت تتحكم بدقة في مكان وجود البيانات على المضيف. هذا ضروري للتطوير لأنه يتيح إعادة تحميل الكود المباشرة — تُحرّر ملفاً على حاسوبك المحمول، وينعكس التغيير فوراً داخل الحاوية.
+
+```yaml
+services:
+  web:
+    build: .
+    volumes:
+      - ./src:/app/src              # Mount local source code into the container
+      - ./public:/app/public       # Mount static assets
+      - /app/node_modules          # Anonymous volume — protect container's node_modules
+```
+
+**سطراً بسطر:**
+
+- `./src:/app/src` — الجانب الأيسر هو **مسار نسبي** على المضيف (نسبي لملف Compose). الجانب الأيمن هو المسار داخل الحاوية. التغييرات على الملفات في `./src` مرئية فوراً داخل الحاوية عند `/app/src`.
+- `./public:/app/public` — نفس النمط للأصول الثابتة.
+- `/app/node_modules` — يبدو غريباً، لكنه حيلة حاسمة. ينشئ **حجماً مجهولاً** عند `/app/node_modules` داخل الحاوية. هذا يمنع تركيبة الربط من الكتابة فوق دليل `node_modules` في الحاوية بدليل المضيف (الذي قد يكون مفقوداً أو غير متوافق). بدون هذا، ستختفي حزم npm في حاويتك.
+
+### الأحجام المسماة مقابل تركيبات الربط
+
+| الميزة | الحجم المسمى | تركيبة الربط |
+|---|---|---|
+| موقع التخزين | يديره Docker (`/var/lib/docker/volumes/`) | أي مسار على المضيف |
+| يعمل عبر أنظمة التشغيل | نعم — Docker يتعامل مع اختلافات المسارات | يعتمد على المسار — `./src` على Linux مقابل Windows |
+| جيد للتطوير | لا — لا يمكنك تحرير الملفات بسهولة في حجم مسمى | نعم — إعادة تحميل الكود المباشرة |
+| جيد للإنتاج | نعم — قابل للنقل، مُدار، سهل النسخ الاحتياطي | استخدم بحذر — يعتمد على المضيف |
+| الأداء | جيد — Docker يحسّن الإدخال/الإخراج | يتفاوت — بطيء على macOS/Windows (استخدم Mutagen أو VirtioFS) |
+| النسخ الاحتياطي | أوامر `docker volume` أو `docker compose down` | يدوي — أنت تعرف مسار المضيف |
+| تنظيف المجهولة | لا — يبقى حتى يُزال صراحة | غير متوفر |
+
+### استراتيجية التطوير مقابل الإنتاج
+
+أفضل ممارسة هي استخدام **استراتيجيات أحجام مختلفة لبيئات مختلفة**. هذا شائع جداً لدرجة أن Compose يملك دعماً مدمجاً له عبر ملفات التخطي.
+
+**التطوير (docker-compose.yml):**
+
+```yaml
+services:
+  web:
+    build: .
+    volumes:
+      - ./src:/app/src            # Bind mount: live code reload
+      - /app/node_modules         # Anonymous volume: protect deps
+    environment:
+      NODE_ENV: development
+```
+
+**الإنتاج (docker-compose.prod.yml):**
+
+```yaml
+services:
+  web:
+    image: my-registry/my-app:1.0.0  # Pre-built image, no build context
+    volumes:
+      - app-data:/app/data          # Named volume: persistent, portable
+    environment:
+      NODE_ENV: production
+```
+
+شغّل الإنتاج بـ:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+```
+
+يتيح تخطي الإنتاج استبدال تركيبات الربط بحجم مسمى، والتبديل من `build:` إلى `image:` جاهز، وضبط البيئة على الإنتاج.
+
+## مثال عملي — قاعدة بيانات مع تطبيق ويب
+
+لنجمّع كل شيء مع مشروع يستخدم شبكات مخصصة وأحجاماً مسماة وتركيبات ربط. سننشئ تطبيق ويب Node.js مدعوماً بـ Postgres، مع عزل شبكة مناسب.
+
+**هيكل المشروع:**
+
+```
+notes-app/
+  docker-compose.yml
+  web/
+    Dockerfile
+    package.json
+    src/
+      index.js
+```
+
+**docker-compose.yml:**
+
+```yaml
+services:
+  web:
+    build: ./web
+    ports:
+      - "3000:3000"                # Expose on the frontend network only
+    networks:
+      - frontend                   # Receives external traffic
+      - backend                    # Connects to the database
+    volumes:
+      - ./web/src:/app/src         # Bind mount for live code reload
+      - /app/node_modules          # Protect container dependencies
+    environment:
+      DATABASE_URL: "postgres://appuser:secretpass@db:5432/notesdb"
+      NODE_ENV: development
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    networks:
+      - backend                    # Only accessible from backend services
+    volumes:
+      - db-data:/var/lib/postgresql/data  # Named volume for persistence
+    environment:
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: secretpass
+      POSTGRES_DB: notesdb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+networks:
+  frontend:
+    driver: bridge                 # External access allowed
+  backend:
+    driver: bridge
+    internal: true                 # No internet access — locked down
+
+volumes:
+  db-data:                         # Persist database data
+```
+
+**خطوة بخطوة:**
+
+1. أنشئ المشروع:
+
+```bash
+mkdir -p notes-app/web/src
+cd notes-app
+```
+
+2. أنشئ الملفات أعلاه. لتطبيق الويب، ملف `package.json` و`index.js` بسيط يتصل بـ Postgres كافٍ.
+
+3. شغّل المجموعة:
+
+```bash
+docker compose up -d --build
+```
+
+**المخرجات المتوقعة:**
+
+```
+[+] Running 4/4
+ ✔ Network notes-app_frontend   Created
+ ✔ Network notes-app_backend    Created
+ ✔ Container notes-app-db-1     Started (healthy)
+ ✔ Container notes-app-web-1    Started
+```
+
+4. تحقق من إعداد الشبكة:
+
+```bash
+docker network ls | grep notes-app
+```
+
+**المخرجات المتوقعة:**
+
+```
+bridge    notes-app_frontend
+bridge    notes-app_backend
+```
+
+5. تحقق من إنشاء الحجم:
+
+```bash
+docker volume ls | grep notes-app
+```
+
+**المخرجات المتوقعة:**
+
+```
+local     notes-app_db-data
+```
+
+6. اختبر أن قاعدة البيانات تصمد:
+
+```bash
+# Write some data, then recreate the container
+docker compose exec db psql -U appuser -c "CREATE TABLE test (id int);"
+docker compose down                  # Stop containers (volumes survive)
+docker compose up -d                 # Restart — data is still there
+docker compose exec db psql -U appuser -c "\dt"   # List tables — "test" still exists
+```
+
+7. اختبر عزل الشبكة — حاوية الويب لا يجب أن تستطيع الوصول إلى الإنترنت من شبكة الخلفية:
+
+```bash
+docker compose exec web sh -c "wget -q --spider http://google.com && echo 'Can reach internet' || echo 'Cannot reach internet'"
+```
+
+حاوية الويب يمكنها الوصول إلى الإنترنت لأنها على `frontend` (ليست داخلية). لكن حاوية `db` لا تستطيع:
+
+```bash
+docker compose exec db sh -c "wget -q --spider http://google.com && echo 'Can reach internet' || echo 'Cannot reach internet'"
+# Expected: "Cannot reach internet" — because db is only on backend (internal: true)
+```
+
+8. نظّف كل شيء بما فيها الأحجام:
+
+```bash
+docker compose down -v
+```
+
+## دورة حياة الأحجام — اعرف متى تصمد البيانات
+
+فهم متى تُحفظ الأحجام ومتى تُحذف أمر حاسم:
+
+| الأمر | الحاويات | الشبكات | الأحجام | الصور |
+|---|---|---|---|---|
+| `docker compose stop` | متوقفة (لم تُزَل) | محفوظة | محفوظة | محفوظة |
+| `docker compose down` | مُزالة | مُزالة | **محفوظة** | محفوظة |
+| `docker compose down -v` | مُزالة | مُزالة | **مُزالة** | محفوظة |
+| `docker compose down --rmi all` | مُزالة | مُزالة | محفوظة | مُزالة |
+
+**الفكرة الأساسية:** `docker compose down` يحافظ على أحجامك آمنة بشكل افتراضي. يجب أن تقول `-v` صراحة لحذفها. هذا خيار تصميمي متعمد — حذف قاعدة بيانات إنتاج بالخطأ سيكون كارثياً.
+
+**فحص حجم:**
+
+```bash
+docker volume inspect notes-app_db-data
+```
+
+هذا يعرض نقطة تركيب الحجم على المضيف، ومشغّله، وتسمياته. مفيد للتصحيح وتخطيط النسخ الاحتياطي.
+
+## المزالق الشائعة ونصائح
+
+- **الأحجام المجهولة تتراكم** — في كل مرة تستخدم مساراً مجرداً مثل `/app/node_modules` بدون نقطتين فاصلتين، ينشئ Docker حجماً مجهولاً جديداً. بمرور الوقت، تملأ هذه مساحة القرص. شغّل `docker volume prune` دورياً لتنظيف الأحجام المجهولة غير المستخدمة.
+
+- **أداء تركيبات الربط على macOS وWindows** — تركيبات الربط أبطأ بشكل ملحوظ على macOS وWindows مقارنة بـ Linux لأن Docker يعمل في آلة افتراضية. استخدم ميزة VirtioFS في Docker Desktop (الإعدادات > عام > "Use VirtioFS for shared file systems") لأداء أفضل بكثير.
+
+- **الكتابة فوق ملفات الحاوية بتركيبات الربط** — عندما تركّب دليل مضيف في حاوية، يستبدل تماماً دليل الحاوية. إذا كان Dockerfile ينسخ ملفات إلى `/app`، وركّبت `./src:/app`، فإن `/app` في الحاوية يصبح الآن دليل `src/` على مضيفك. أي ملفات كانت في `/app` في الحاوية (مثل `node_modules` المثبتة أثناء البناء) تصبح مخفية. استخدم أحجاماً مجهولة لحماية الأدلة الحرجة.
+
+- **نسيان تعريف الأحجام المسماة** — إذا أشرت إلى `db-data` في قسم `volumes` لخدمة لكنك نسيت تعريفه تحت مفتاح `volumes:` الرئيسي، سيظل Compose ينشئه كحجم مسمى. لكن من الأفضل تعريفه صراحة — يجعل الملف موثقاً ذاتياً ويتيح لك ضبط مشغّل الحجم.
+
+- **استخدام `internal: true` مع المنافذ** — إذا وضعت علامة على شبكة كـ `internal: true`، أي خدمة على تلك الشبكة لا يمكنها نشر المنافذ. خدمة تحتاج وصولاً للإنترنت ونشر المنافذ يجب أن تكون على شبكة منفصلة غير داخلية.
+
+- **الحجم المسمى فارغ عند أول تشغيل** — عندما يُنشأ حجم مسمى لأول مرة ويُركّب في مسار حيث الحاوية لديها بالفعل ملفات (مثل دليل بيانات Postgres)، ينسخ Docker الملفات الموجودة في الحاوية إلى الحجم. هذا يحدث فقط في أول تشغيل. التشغيلات اللاحقة تستخدم البيانات الموجودة في الحجم.
+
+<Diagram config={composeNetworksVolumes} />

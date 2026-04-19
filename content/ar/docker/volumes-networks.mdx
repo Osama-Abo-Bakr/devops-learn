@@ -1,0 +1,365 @@
+---
+title: "الأحجام والشبكات"
+module: docker
+level: beginner
+duration: "35 min"
+diagram: docker-volumes-networks
+description: "احفظ البيانات باستخدام الأحجام واربط الحاويات بالشبكات."
+order: 3
+---
+
+# الأحجام والشبكات: منح الحاويات ذاكرة وقدرة على التواصل
+
+تخيّل أن لديك زميلاً مصاباً بفقدان الذاكرة. كل صباح ينسى كل شيء من اليوم السابق. لا يزال يستطيع أداء عمله خلال اليوم، لكن إذا تعلّم شيئاً جديداً، يختفي بحلول الغد. هذا بالضبط ما تشبهه الحاوية بشكل افتراضي. الحاويات **زائلــــة** — عندما تزيل حاوية، يختفي كل شيء كُتب بداخلها.
+
+تخيّل الآن نفس الزميل يعمل في مكتب بلا هاتف أو إنترنت. يستطيع إنجاز عمله الخاص، لكنه لا يستطيع التواصل مع أي شخص آخر. هذا ما تشبهه الحاويات بدون شبكات — جزر معزولة بدون طريقة للتواصل فيما بينها.
+
+**الأحجام** تمنح الحاويات ذاكرة مستمرة. **الشبكات** تمنحها القدرة على التواصل. كلاهما ضروري لتشغيل تطبيقات حقيقية.
+
+## مشكلة استمرارية البيانات
+
+لنرَ المشكلة عملياً. شغّل حاوية واكتب بعض البيانات:
+
+```bash
+# Start a container and create a file inside it
+docker run -d --name amnesia-test alpine sleep 3600
+docker exec amnesia-test sh -c "echo 'Important data!' > /data.txt"
+docker exec amnesia-test cat /data.txt
+# Output: Important data!
+```
+
+الملف موجود. لكن الآن أزل الحاوية وحاول مجدداً:
+
+```bash
+docker stop amnesia-test && docker rm amnesia-test
+
+# Start a new container from the same image
+docker run -d --name amnesia-test alpine sleep 3600
+docker exec amnesia-test cat /data.txt
+# Output: cat: can't open '/data.txt': No such file or directory
+```
+
+**البيانات اختفت.** الحاوية الجديدة بدأت من صورة نظيفة — ليس لها ذاكرة بالحاوية القديمة. بالنسبة لقاعدة بيانات، هذا يعني فقدان جميع السجلات في كل مرة تُعاد فيها التشغيل. وهذا بوضوح غير مقبول.
+
+## لماذا يهم هذا؟
+
+- **قواعد البيانات تحتاج استمرارية** — PostgreSQL و MySQL و MongoDB و Redis (مع تفعيل الاستمرارية) جميعها تكتب بيانات على القرص. بدون أحجام، إعادة تشغيل الحاوية تمسح قاعدة البيانات بالكامل.
+- **الإعدادات تصمد عبر إعادة التشغيل** — الإعدادات والشهادات وملفات الضبط يجب أن تستمر عبر إعادة إنشاء الحاويات.
+- **تواصل الحاويات** — التطبيقات الحقيقية تتألف من خدمات متعددة (تطبيق + قاعدة بيانات + مخزن مؤقت + طابور). تحتاج للعثور على بعضها والتواصل مع بعضها بشكل موثوق.
+- **اكتشاف الخدمات** — تثبيت عناوين IP في الكود هش. شبكات Docker توفر دقة DNS تلقائية لتجد الحاويات بعضها بالاسم.
+- **عزل أمني** — الشبكات المخصصة تتيح لك التحكم في أي الحاويات يمكنها التواصل، لمنع الوصول غير المصرح به بين الخدمات.
+
+## أحجام Docker: ثلاثة أنواع
+
+يوفر Docker ثلاث آليات لاستمرار البيانات. فهم الاختلافات أمر بالغ الأهمية.
+
+### 1. الأحجام المسماة (موصى بها)
+
+الأحجام المسماة يديرها Docker بالكامل. ينشئها ويخزنها وينظفها. تشير إليها بالاسم.
+
+```bash
+# Create a named volume
+docker volume create my-app-data
+
+# Use it with a container
+docker run -d \
+  --name my-postgres \
+  -v my-app-data:/var/lib/postgresql/data \
+  postgres:16-alpine
+```
+
+لنفكّك علامة `-v`: `my-app-data:/var/lib/postgresql/data`
+- **الجانب الأيسر (`my-app-data`)** — اسم الحجم على المضيف
+- **الجانب الأيمن (`/var/lib/postgresql/data`)** — المسار داخل الحاوية حيث يُركَّب الحجم
+
+**ماذا يحدث:** يخزّن Docker بيانات الحجم في مجلد يديره (عادة `/var/lib/docker/volumes/`). تراه الحاوية كمجلد عادي، لكن البيانات تستمر حتى بعد إزالة الحاوية.
+
+```bash
+# Verify the volume exists
+docker volume ls
+# Output: DRIVER    VOLUME NAME
+#         local     my-app-data
+
+# Inspect the volume to see where Docker stores it
+docker volume inspect my-app-data
+# Output includes the Mountpoint: /var/lib/docker/volumes/my-app-data/_data
+```
+
+### 2. التركيبات المرتبطة
+
+التركيبات المرتبطة تربط مجلداً محدداً على جهازك المضيف بمجلد في الحاوية. هي نافذة مباشرة إلى نظام ملفاتك.
+
+```bash
+# Mount the current directory into the container
+docker run -d \
+  --name dev-app \
+  -v $(pwd):/app \
+  node:20-alpine
+```
+
+**متى تستخدم التركيبات المرتبطة مقابل الأحجام المسماة:**
+
+| الجانب | الأحجام المسماة | التركيبات المرتبطة |
+|--------|----------------|-------------------|
+| مُدار بواسطة | Docker | أنت (نظام ملفات المضيف) |
+| قابلية النقل | يعمل على أي مضيف Docker | يعتمد على هيكل مجلدات المضيف |
+| الأفضل لـ | بيانات الإنتاج (قواعد البيانات) | التطوير (إعادة تحميل الكود مباشرة) |
+| النسخ الاحتياطي | استخدم أوامر `docker volume` | نسخ ملفات عادي |
+| الأداء | جيد على جميع المنصات | قد يكون بطيئاً على macOS/Windows |
+| المخاطر | منخفضة — Docker يتعامل معها | أعلى — يمكن تعديل ملفات المضيف |
+
+**سير عمل التطوير مع التركيبات المرتبطة** هو المكان تتألق فيه:
+
+```bash
+docker run -d \
+  --name my-dev-server \
+  -p 3000:3000 \
+  -v $(pwd):/app \
+  -v /app/node_modules \
+  node:20-alpine sh -c "cd /app && npm start"
+```
+
+العلامة `-v` الثانية `/app/node_modules` تُنشئ **حجماً مجهولاً** يحجب التركيبة المرتبطة لمجلد `node_modules`. هذا يمنع `node_modules` على المضيف (إن وُجد) من الكتابة فوق التبعيات المثبتة في الحاوية.
+
+### 3. الأحجام المجهولة
+
+الأحجام المجهولة مثل الأحجام المسماة، لكن بدون اسم. يخصص لها Docker رمز عشوائي.
+
+```bash
+docker run -d -v /data nginx
+```
+
+صيغة `-v /data` (مسار حاوية فقط، بدون نقطتين) تُنشئ حجماً مجهولاً مركباً عند `/data` داخل الحاوية. يستمر على القرص، لكن من الصعب إدارت لأنك لا تستطيع الإشارة إليه إلا برمزه العشوائي.
+
+**متى تستخدم هذا؟** في الغالب بتقنية "الحجب" الموضحة أعلاه (تجاوز تركيبة مرتبطة لمجلد فرعي محدد). للاستمرارية المستقلة، فضّل دائماً الأحجام المسماة.
+
+### أوامر إدارة الأحجام
+
+```bash
+# List all volumes
+docker volume ls
+
+# Inspect a specific volume
+docker volume inspect my-app-data
+
+# Remove unused volumes (be careful!)
+docker volume prune
+
+# Remove a specific volume
+docker volume rm my-app-data
+```
+
+**تحذير:** `docker volume prune` يحذف الأحجام غير المستخدمة من أي حاوية. تأكد من عدم وجود بيانات مهمة في تلك الأحجام قبل تنفيذه.
+
+## التركيبات للقراءة فقط
+
+أحياناً تريد أن تقرأ الحاوية البيانات لكن لا تعدلها. أضف `:ro` (للقراءة فقط) في نهاية تركيب الحجم:
+
+```bash
+docker run -d \
+  -v $(pwd)/config:/app/config:ro \
+  my-app
+```
+
+يمكن للحاوية قراءة الملفات في `/app/config` لكنها لا تستطيع الكتابة أو التعديل. هذا مفيد لـ:
+- ملفات الإعدادات التي لا يجب تغييرها وقت التشغيل
+- المحتوى الثابت الذي يخدمه خادم الويب
+- منع الكتابة العرضية من الحاوية إلى نظام ملفات المضيف
+
+## شبكات Docker: كيف تتواصل الحاويات
+
+بشكل افتراضي، ينشئ Docker شبكة جسر لحاوياتك. لكن للتطبيقات الحقيقية، ستحتاج شبكات مخصصة.
+
+### شبكة الجسر الافتراضية (ولماذا يجب تجنبها)
+
+عند تثبيت Docker، تُنشأ شبكة تسمى `bridge`. تنضم جميع الحاويات إليها افتراضياً ما لم تحدد خلاف ذلك.
+
+```bash
+# These containers are on the default bridge
+docker run -d --name app1 nginx
+docker run -d --name app2 nginx
+```
+
+**المشكلة:** الحاويات على الجسر الافتراضي يمكنها التواصل فقط عبر عناوين IP. لا تستطيع حل أسماء بعضها البعض.
+
+```bash
+docker exec app1 ping app2
+# Output: ping: bad address 'app2'
+
+docker exec app1 ping 172.17.0.3
+# Output: 64 bytes from 172.17.0.3: seq=0 ttl=64 time=0.1 ms
+```
+
+عنوان IP ذلك هش. إذا أعدت تشغيل الحاويات، يمكن أن تتغير عناوين IP. لهذا لا يُوصى بالجسر الافتراضي للإنتاج.
+
+### شبكات الجسر المخصصة (موصى بها)
+
+تحل الشبكات المخصصة مشكلة حل الأسماء. الحاويات على نفس الشبكة المخصصة يمكنها التواصل باستخدام أسماء الحاويات كأسماء مضيفين.
+
+```bash
+# Create a custom network
+docker network create my-app-network
+
+# Run containers on the custom network
+docker run -d --name api-server --network my-app-network my-api
+docker run -d --name database --network my-app-network postgres:16-alpine
+```
+
+الآن يمكن لخادم API الوصول إلى قاعدة البيانات ببساطة باستخدام اسم المضيف `database`:
+
+```bash
+docker exec api-server ping database
+# Output: 64 bytes from database (172.18.0.2): seq=0 ttl=64 time=0.1 ms
+```
+
+**هذا اكتشاف خدمات مبني على DNS.** يشغّل Docker خادم DNS مدمجاً يحل أسماء الحاويات إلى عناوين IP على الشبكات المخصصة. بدون تثبيت عناوين، بدون إدارة يدوية لعناوين IP.
+
+### أنواع الشبكات
+
+| نوع الشبكة | الوصف | متى تستخدم |
+|-------------|-------|-------------|
+| **bridge** | الافتراضية. تتواصل الحاويات على نفس المضيف عبر جسر افتراضي. | معظم التطبيقات ذات المضيف الواحد |
+| **host** | تشترك الحاوية في مكدس شبكة المضيف. لا حاجة لتعيين المنافذ. | عندما يكون أداء الشبكة الأقصى مطلوباً |
+| **none** | لا وصول للشبكة للحاوية. | مهام الدُفعات الحساسة أمنياً |
+| **overlay** | تمتد عبر عدة مضيفي Docker (تُستخدم مع Swarm). | عمليات نشر متعددة المضيفين |
+
+### شبكة المضيف
+
+```bash
+docker run -d --network host nginx
+```
+
+تشترك الحاوية مباشرة في مساحة أسماء شبكة المضيف. يستمع Nginx على المنفذ 80 على المضيف — لا حاجة لـ `-p`. هذا يعطي أفضل أداء للشبكة لكنه يزيل العزل.
+
+**متى تستخدم:** شبكات عالية الأداء حيث يكون عبء تعيين المنافذ مهماً (مثل الوكلاء عالي الإنتاجية). تجنبه لمعظم التطبيقات — فقدان العزل لا يستحق ذلك.
+
+### شبكة none
+
+```bash
+docker run -d --network none my-isolated-app
+```
+
+الحاوية لا تملك واجهة شبكة (باستثناء loopback). لا تستطيع حرفياً الوصول إلى العالم الخارجي. هذا مفيد لـ:
+- مهام المعالجة الدُفعية التي تحتاج نظام الملفات فقط
+- عمليات أمنية حرجة حيث الوصول للشبكة يمثل خطراً
+- اختبار كيف يتعامل تطبيقك مع أعطال الشبكة
+
+### أوامر إدارة الشبكات
+
+```bash
+# List all networks
+docker network ls
+
+# Inspect a network (see connected containers)
+docker network inspect my-app-network
+
+# Connect a running container to a network
+docker network connect my-app-network existing-container
+
+# Disconnect a container from a network
+docker network disconnect my-app-network existing-container
+
+# Remove a network
+docker network rm my-app-network
+```
+
+## مثال عملي: تطبيق مدعوم بقاعدة بيانات
+
+لنضع الأحجام والشبكات معاً في سيناريو واقعي. سنشغل قاعدة بيانات PostgreSQL مع تخزين مستمر ونربطها بتطبيق ويب.
+
+**الخطوة 1: إنشاء الشبكة والحجم**
+
+```bash
+docker network create app-network
+docker volume create pg-data
+```
+
+**الخطوة 2: تشغيل قاعدة البيانات بحجم مسمى**
+
+```bash
+docker run -d \
+  --name postgres-db \
+  --network app-network \
+  -e POSTGRES_USER=appuser \
+  -e POSTGRES_PASSWORD=secretpass \
+  -e POSTGRES_DB=myapp \
+  -v pg-data:/var/lib/postgresql/data \
+  postgres:16-alpine
+```
+
+لنفكّك كل علامة:
+
+- **`-e POSTGRES_USER=appuser`** — يعيّن اسم مستخدم قاعدة البيانات. علامة `-e` تمرر متغيرات البيئة إلى الحاوية.
+- **`-e POSTGRES_PASSWORD=secretpass`** — يعيّن كلمة مرور قاعدة البيانات. صورة PostgreSQL تستخدم هذه المتغيرات للإعداد الأولي.
+- **`-e POSTGRES_DB=myapp`** — ينشئ قاعدة بيانات اسمها `myapp` عند أول تشغيل.
+- **`-v pg-data:/var/lib/postgresql/data`** — يستمر ببيانات قاعدة البيانات في حجم `pg-data`. هنا تخزن PostgreSQL جميع ملفات بياناتها.
+
+**الخطوة 3: التحقق من أن قاعدة البيانات تعمل**
+
+```bash
+docker logs postgres-db
+# Look for: "database system is ready to accept connections"
+```
+
+**الخطوة 4: ربط تطبيق بقاعدة البيانات**
+
+```bash
+docker run -d \
+  --name web-app \
+  --network app-network \
+  -e DATABASE_URL=postgresql://appuser:secretpass@postgres-db:5432/myapp \
+  -p 3000:3000 \
+  my-web-app
+```
+
+لاحظ سلسلة الاتصال: `@postgres-db:5432`. اسم المضيف `postgres-db` يطابق اسم الحاوية على الشبكة المشتركة. DNS الخاص بـ Docker يحله تلقائياً. بدون عناوين IP، بدون تخمين.
+
+**الخطوة 5: اختبار الاستمرارية**
+
+```bash
+# Write some data to the database
+docker exec postgres-db psql -U appuser -d myapp -c "CREATE TABLE users (id SERIAL, name TEXT);"
+docker exec postgres-db psql -U appuser -d myapp -c "INSERT INTO users (name) VALUES ('Alice');"
+
+# Restart the database container
+docker stop postgres-db && docker start postgres-db
+
+# Verify the data survived
+docker exec postgres-db psql -U appuser -d myapp -c "SELECT * FROM users;"
+# Output:  id | name
+#         ----+-------
+#           1 | Alice
+```
+
+صمدت البيانات لأن حجم `pg-data` موجود بشكل مستقل عن الحاوية. حتى إذا نفّذت `docker rm postgres-db` وأنشأت حاوية جديدة بنفس الحجم، ستبقى البيانات موجودة.
+
+**الخطوة 6: التنظيف**
+
+```bash
+docker stop web-app postgres-db
+docker rm web-app postgres-db
+docker network rm app-network
+docker volume rm pg-data   # Only if you don't need the data anymore
+```
+
+## أخطاء شائعة ونصائح
+
+- **نسيان استخدام الأحجام مع قواعد البيانات** — هذا أشهر وأخطر خطأ. استخدم دائماً، دائماً حجماً مسمى لمجلدات بيانات قاعدة البيانات.
+
+- **استخدام التركيبات المرتبطة في الإنتاج** — التركيبات المرتبطة تعتمد على هيكل مجلدات المضيف. ممتازة للتطوير (إعادة تحميل الكود مباشرة) لكنها هشة في الإنتاج. استخدم الأحجام المسماة لبيانات الإنتاج.
+
+- **عدم إنشاء شبكة مخصصة** — إذا كنت تشغل حاويات متعددة تحتاج للتواصل، ضعها على شبكة مخصصة. الجسر الافتراضي لا يدعم دقة DNS.
+
+- **كشف منافذ قاعدة البيانات للمضيف** — لا تستخدم `-p 5432:5432` لقاعدة بياناتك في الإنتاج. فقط حاوية التطبيق تحتاج الوصول إليها، وهي تفعل ذلك عبر شبكة Docker. كشف المنفذ خطر أمني.
+
+- **التركيب فوق مجلدات حاوية موجودة** — عندما تركّب حجماً عند مسار لديه ملفات بالفعل في الصورة (مثل `/var/lib/postgresql/data`)، يأخذ محتوى الحجم الأسبقية. عند أول تشغيل، ينسخ Docker محتوى الصورة إلى الحجم. هذا جيد لقواعد البيانات، لكن انتبه لأنه قد يخفي ملفات تتوقع وجودها.
+
+- **نسيان `:ro` لملفات الإعدادات** — إذا كانت الحاوية تحتاج فقط قراءة ملف إعدادات، ركّبه كقراءة فقط. هذا يمنع الحاوية من تعديل ملفات المضيف بالخطأ.
+
+- **عدم تنظيف الأحجام المجهولة** — الأحجام المجهولة تتراكم مع الوقت. استخدم `docker volume prune` دورياً لتنظيف الأحجام غير المستخدمة.
+
+## مخطط تفاعلي
+
+استكشف كيف تربط الأحجام والشبكات الحاويات:
+
+<Diagram config={dockerVolumesNetworks} />

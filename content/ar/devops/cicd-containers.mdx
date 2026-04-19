@@ -1,0 +1,354 @@
+---
+title: "CI/CD مع الحاويات"
+module: devops
+level: intermediate
+duration: "40 min"
+diagram: devops-cicd-pipeline
+description: "بناء ونشر صور الحاويات في خطوط CI/CD باستخدام GitHub Actions وGitLab CI."
+order: 1
+---
+
+# CI/CD مع الحاويات
+
+تخيل خط تجميع في مصنع. المواد الخام تدخل من ناحية، والآلات تشكلها وتختبرها في كل محطة، والمنتجات الجاهزة تخرج من الناحية الأخرى — متسقة ومفحصة وجاهزة للشحن. هذا بالضبط ما يفعله CI/CD لصور الحاويات الخاصة بك. في كل مرة تدفع كودًا، يتولى خط آلي المهمة: يبني صورتك، يختبرها، يفحصها بحثًا عن ثغرات، يدفعها إلى سجل، وينشرها. لا خطوات يدوية، ولا "يعمل على جهازي"، ولا مفاجآت في الإنتاج.
+
+إذا سبق لك أن بنيت صورة Docker يدويًا، ودفعتها إلى سجل، ثم حدثت ملفات YAML الخاصة بالنشر يدويًا، فأنت تعرف مدى خطأ هذا النهج. CI/CD يزيل هذا العبء ويجعل كل إصدار قابلاً للتكرار والتدقيق والآمان.
+
+## ما هو CI/CD للحاويات؟
+
+**CI (التكامل المستمر)** يعني أن كل تغيير في الكود يتم بناؤه واختباره تلقائيًا. بالنسبة للحاويات، يعني هذا بناء صورة جديدة من Dockerfile عند كل دفعة وتشغيل مجموعة الاختبارات داخل تلك الصورة.
+
+**CD (التسليم/النشر المستمر)** يعني أن الصور المختبرة يتم دفعها تلقائيًا إلى سجل ونشرها في البيئة المستهدفة — التجهيز أو الإنتاج أو كليهما.
+
+معًا، يمنحك CI/CD خطًا يحوّل الكود المصدري إلى حاوية تعمل بدون أي تدخل يدوي.
+
+## لماذا يهم هذا؟
+
+- **الاتساق** — كل صورة تُبنى بنفس الطريقة، في نفس البيئة النظيفة. انتهى عصر "لكنها كانت تعمل على حاسوبي المحمول."
+- **السرعة** — الدفع إلى الفرع الرئيسي يشغل الخط الكامل في دقائق. البناء والنشر اليدوي يستغرق ساعات ويضيف تأخيرات.
+- **الأمان** — الفحص الأمني الآلي يكتشف الثغرات *قبل* أن تصل إلى الإنتاج. لا يمكنك نسيان الفحص عندما تقوم الآلة بذلك نيابة عنك.
+- **إمكانية التدقيق** — كل صورة موسومة برقم التزام SHA. تعرف دائمًا أي كود يعمل في أي بيئة، ويمكنك التراجع إلى أي نسخة فورًا.
+- **التعاون** — عدة مطورين يمكنهم دفع الكود بثقة، عالمين أن الخط سيتحقق من تغييراتهم قبل أن يصبح أي شيء حيًا.
+
+## المفاهيم الأساسية
+
+### مسار الخط الكامل
+
+خط CI/CD بمستوى الإنتاج للحاويات يتكون من خمس مراحل. كل مرحلة هي بوابة — إذا فشل أي شيء، يتوقف الخط ولن تصل الصورة إلى مستخدميك.
+
+```
+Push ──► Build ──► Test ──► Scan ──► Push ──► Deploy
+           │         │        │        │
+           ▼         ▼        ▼        ▼
+        Docker    Unit &   Trivy    Registry
+        build     integ.   Grype   (GHCR/ECR)
+```
+
+1. **البناء** — Docker يبني الصورة من Dockerfile. هنا تكون البنيات متعددة المراحل والتخزين المؤقت للطبقات أكثر أهمية.
+2. **الاختبار** — تشغيل اختبارات الوحدة واختبارات التكامل والفحص داخل الصورة المبنية حديثًا. إذا فشلت الاختبارات، يتم تجاهل الصورة.
+3. **الفحص** — أدوات الأمان تفحص طبقات الصورة بحثًا عن ثغرات معروفة (CVEs). الاكتشافات الحرجة توقف الخط.
+4. **الدفع** — الصورة المعتمدة تُوسم وتُدفع إلى سجل حاويات مثل GHCR أو Docker Hub أو AWS ECR.
+5. **النشر** — الخط يحدّث نشر Kubernetes أو مجموعة Docker Compose أو خدمة سحابية لاستخدام الصورة الجديدة.
+
+### GitHub Actions — سطرًا بسطر
+
+GitHub Actions هو منصة CI/CD الأكثر شيوعًا للمشاريع مفتوحة المصدر والعديد من المشاريع التجارية. إليك خطًا كاملاً يبني ويفحص ويدفع صورة Docker.
+
+```yaml
+# .github/workflows/docker-build.yml
+name: Build and Push Docker Image
+
+# Trigger: run this pipeline on every push to main
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    # Grant the workflow permission to push to GHCR
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # Step 1: Check out your repository code
+      # This pulls your code into the runner so Docker can access the Dockerfile
+      - uses: actions/checkout@v4
+
+      # Step 2: Set up Docker Buildx for advanced build features
+      # Buildx enables caching, multi-platform builds, and better layer reuse
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Step 3: Log in to GitHub Container Registry
+      # Uses the built-in GITHUB_TOKEN — no secrets to manage
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 4: Scan the image for vulnerabilities BEFORE pushing
+      # If CRITICAL or HIGH CVEs are found, exit-code: 1 fails the pipeline
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+      # Step 5: Build and push the image
+      # Two tags: the commit SHA (exact version) and latest (current HEAD)
+      # cache-from and cache-to reuse layers from previous builds — huge speedup
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+```
+
+**تفاصيل رئيسية يجب فهمها:**
+
+- `permissions: packages:write` — GitHub Actions يحتاج إذنًا صريحًا لدفع الصور إلى GHCR. بدون هذا، تفشل خطوة الدفع بخطأ 403.
+- `${{ github.sha }}` — هذا هو تجزئة التزام Git. وسم الصور برقم SHA يعني أن كل بناء قابل للتعريف الفريد وإعادة الإنتاج.
+- `cache-from: type=gha` — يستخدم واجهة التخزين المؤقت في GitHub Actions. يتم إعادة استخدام طبقات البناء السابقة، مما يقلل أوقات البناء من دقائق إلى ثوانٍ في التشغيلات اللاحقة.
+- `exit-code: "1"` في خطوة Trivy — هذا ما يجعل الفحص الأمني *بوابة*، وليس مجرد تقرير. يفشل الخط إذا وُجدت ثغرات حرجة.
+
+### GitLab CI — سطرًا بسطر
+
+GitLab CI مدمج مباشرة في GitLab ويستخدم ملف `.gitlab-ci.yml` في جذر المستودع. إليك خطًا معادلاً:
+
+```yaml
+# .gitlab-ci.yml
+stages:
+  - build
+  - test
+  - scan
+  - deploy
+
+# Build the Docker image
+docker-build:
+  stage: build
+  image: docker:24
+  services:
+    - docker:24-dind    # Docker-in-Docker: lets us run Docker inside the CI runner
+  before_script:
+    # Log in to the GitLab Container Registry
+    # CI_REGISTRY_PASSWORD is a built-in CI variable — no manual secrets needed
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin $CI_REGISTRY
+  script:
+    # Build the image, tagged with the commit SHA
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA .
+    # Push to the GitLab registry
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+
+# Run tests inside the built image
+docker-test:
+  stage: test
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    # Run the image and execute the test command inside it
+    - docker run --rm $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA npm test
+
+# Security scanning with Trivy
+docker-scan:
+  stage: scan
+  image: docker:24
+  services:
+    - docker:24-dind
+  script:
+    # Install Trivy scanner
+    - apk add --no-cache curl
+    - curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh
+    # Scan and fail on CRITICAL findings
+    - trivy image --exit-code 1 --severity CRITICAL $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
+```
+
+**الاختلافات الرئيسية عن GitHub Actions:**
+
+| الميزة | GitHub Actions | GitLab CI |
+|--------|---------------|-----------|
+| بيئة المشغل | أجهزة افتراضية مستضافة من GitHub | مشغلات ذاتية الاستضافة أو مشتركة |
+| Docker داخل Docker | غير مطلوب (Buildx) | مطلوب عبر `services: docker:24-dind` |
+| مصادقة السجل | `GITHUB_TOKEN` (تلقائي) | `CI_REGISTRY_*` (متغيرات مدمجة) |
+| التخزين المؤقت | واجهة تخزين GCA المؤقت | يدوي أو تخزين مؤقت في السجل |
+| إدارة الأسرار | أسرار المستودع | متغيرات CI/CD |
+
+### استراتيجية وسم الصور
+
+الوسم هو كيفية تعريف وتتبع الصور. استراتيجية وسم جيدة ليست اختيارية — هي كيف تجيب عن السؤال "أي كود يعمل في الإنتاج الآن؟"
+
+| الوسم | متى يُطبّق | الغرض | مثال |
+|------|-----------|-------|------|
+| `sha-abc1234` | كل بناء | نسخة دقيقة وقابلة لإعادة الإنتاج مرتبطة بالالتزام | `my-app:sha-a1b2c3d` |
+| `latest` | دفع الفرع الرئيسي | يشير إلى أحدث بناء للفرع الرئيسي | `my-app:latest` |
+| `v1.2.3` | وسم Git (إصدار) | إصدار دلالي لإصدارات الإنتاج | `my-app:v1.2.3` |
+| `canary` | نشر التجهيز | مرشح ما قبل الإصدار لاختبار الكناري | `my-app:canary` |
+| `pr-42` | طلب سحب | صورة مؤقتة لاختبار طلب سحب | `my-app:pr-42` |
+
+**أفضل ممارسة:** لا تنشر أبدًا `latest` في الإنتاج. استخدم دائمًا وسم إصدار محدد أو رقم التزام SHA. `latest` هدف متحرك — يمكن أن يتغير بين عمليات النشر، مما يجعل التراجع مستحيلاً.
+
+### استراتيجيات التخزين المؤقت
+
+بناء Docker يمكن أن يكون بطيئًا — تنزيل الصور الأساسية، تثبيت الحزم، تجميع الكود. التخزين المؤقت يعيد استخدام الطبقات من البناءات السابقة لتخطي العمل الذي لم يتغير.
+
+```yaml
+# GitHub Actions — use the GHA cache backend
+- name: Build and push
+  uses: docker/build-push-action@v5
+  with:
+    context: .
+    push: true
+    cache-from: type=gha      # Pull cached layers from GitHub's cache
+    cache-to: type=gha,mode=max  # Save ALL layers (not just final) to cache
+```
+
+```dockerfile
+# Dockerfile — order layers from least to most frequently changed
+FROM node:20-alpine AS builder
+
+# Copy package files FIRST — this layer is cached unless dependencies change
+COPY package*.json ./
+RUN npm ci
+
+# Copy source code LAST — this changes every build
+COPY . .
+RUN npm run build
+```
+
+السر هو ترتيب الطبقات. ضع الأشياء التي تتغير نادرًا (الصورة الأساسية، تثبيت التبعيات) مبكرًا في Dockerfile، والأشياء التي تتغير كثيرًا (الكود المصدري) متأخرًا. Docker يخزن كل طبقة مؤقتًا بشكل مستقل، لذا فقط الطبقات بعد الطبقة المتغيرة تحتاج إلى إعادة البناء.
+
+## مثال عملي — خط CI/CD كامل
+
+لنبني خطًا حقيقيًا لواجهة برمجة تطبيقات Node.js. إليك هيكل المشروع:
+
+```
+my-api/
+├── .github/
+│   └── workflows/
+│       └── ci.yml          # The CI/CD pipeline
+├── Dockerfile               # Multi-stage production build
+├── package.json             # Dependencies
+├── src/
+│   └── index.js             # Application code
+└── tests/
+    └── api.test.js          # Integration tests
+```
+
+**Dockerfile** — بناء متعدد المراحل جاهز للإنتاج:
+
+```dockerfile
+# Stage 1: Install dependencies
+FROM node:20-alpine AS deps
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Stage 2: Build the application
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Stage 3: Production image — minimal, no build tools
+FROM node:20-alpine AS runner
+WORKDIR /app
+RUN addgroup -g 1001 appgroup && adduser -u 1001 -G appgroup -s /bin/sh -D appuser
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+USER appuser
+EXPOSE 3000
+CMD ["node", "dist/index.js"]
+```
+
+**الخط** — سير عمل CI/CD الكامل:
+
+```yaml
+# .github/workflows/ci.yml
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npm test
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.ref == 'refs/heads/main' }}
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+            ghcr.io/${{ github.repository }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+```
+
+**ماذا يحدث عند الدفع إلى الفرع الرئيسي:**
+
+1. مهمة `test` تعمل أولاً — يجب أن يجتاز `npm test`.
+2. فقط حينها تبدأ `build-and-push` (بسبب `needs: test`).
+3. Trivy يفحص الصورة — أي CVE حرج أو مرتفع يفشل البناء.
+4. Docker يبني الصورة مع التخزين المؤقت للطبقات ويدفعها إلى GHCR.
+5. الصورة موسومة برقم التزام SHA و`latest` معًا.
+6. في طلبات السحب، يتم بناء الصورة وفحصها لكن **لا تُدفع** (يتحكم في ذلك `push: ${{ github.ref == 'refs/heads/main' }}`).
+
+## الأخطاء الشائعة والنصائح
+
+- **خطأ: دفع `latest` إلى الإنتاج** — `latest` ليس إصدارًا، إنه مؤشر. إذا دفع شخص صورة معطلة إلى `latest`، فإن نشرك التالي سيجلب الصورة المعطلة. **نصيحة:** انشر دائمًا برقم التزام SHA أو وسم إصدار دلالي.
+
+- **خطأ: نسيان إذن `packages: write`** — GitHub Actions يفترض أذونات القراءة فقط افتراضيًا. خطوة الدفع ستفشل بخطأ 403 غامض. **نصيحة:** عيّن دائمًا `permissions: packages: write` في سير عملك.
+
+- **خطأ: فحص أمني لا يوقف** — تشغيل Trivy بدون `exit-code: 1` يطبع فقط تقريرًا. يستمر الخط ويدفع صورة معرضة للخطر. **نصيحة:** عيّن دائمًا `exit-code: 1` في خطوة الفحص.
+
+- **خطأ: بناء بطيء** — إعادة بناء كل الطبقات من الصفر عند كل دفعة يضيع الوقت. **نصيحة:** رتب Dockerfile من الطبقات الأقل تغيرًا إلى الأكثر تغيرًا، وفعّل التخزين المؤقت للبناء (`cache-from`/`cache-to`).
+
+- **خطأ: عبء Docker داخل Docker** — GitLab CI يتطلب Docker داخل Docker، مما يضيف عبئًا كبيرًا. **نصيحة:** استخدم أداة البناء Kaniko مع GitLab CI — تبني الصور بدون الحاجة إلى عفريت Docker، مما يجعل البناء أسرع وأكثر أمانًا.
+
+- **نصيحة: استخدم البناء متعدد المراحل** — صورتك الإنتاجية يجب ألا تحتوي على مجمعات أو تبعيات تطوير أو كود مصدري. البناء متعدد المراحل ينسخ فقط مخرجات وقت التشغيل إلى صورة نهائية مصغرة، مما يقلل مساحة الهجوم وحجم الصورة.
+
+- **نصيحة: ثبّت إصدارات الأفعال** — استخدم `@v3` أو `@sha256:...` لأفعال GitHub Actions، وليس `@master`. الأفعال غير المثبتة يمكن أن تتغير بدون تحذير وتعطل خطك.
+
+<Diagram config={devopsCicdPipeline} />

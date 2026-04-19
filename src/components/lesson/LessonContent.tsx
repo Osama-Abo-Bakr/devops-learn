@@ -33,7 +33,11 @@ export default function LessonContent({
   topic,
   locale,
 }: LessonContentProps) {
-  const rawContent = getLessonContent(locale as "en" | "ar", topic, lesson.slug);
+  let rawContent = getLessonContent(locale as "en" | "ar", topic, lesson.slug);
+  // Fallback to English when localized content is missing
+  if (!rawContent && locale !== "en") {
+    rawContent = getLessonContent("en", topic, lesson.slug);
+  }
   const textContent = rawContent ? stripInteractiveTags(rawContent) : "";
   const resources = getResourcesForTopic(topic);
   return (

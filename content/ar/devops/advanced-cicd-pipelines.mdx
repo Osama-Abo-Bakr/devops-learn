@@ -1,0 +1,314 @@
+---
+title: "خطوط CI/CD المتقدمة"
+module: devops
+level: advanced
+duration: "50 min"
+diagram: advanced-cicd-pipeline
+description: "خطوط متعددة المراحل، نشر الكناري، استراتيجيات الأزرق/الأخضر، بوابات الموافقة، والتراجع الآلي."
+order: 5
+---
+
+# خطوط CI/CD المتقدمة
+
+خط CI/CD الأساسي يبني ويختبر وينشر. هذا هو الحد الأدنى. ما يميز خط الإنتاج عن خط تجريبي هو كيف يتعامل مع **المخاطرة** — مخاطرة نشر كود معطل، مخاطرة التوقف، مخاطرة وصول إصدار سيء إلى كل مستخدميك دفعة واحدة. الخطوط المتقدمة تستخدم بوابات متعددة المراحل، تحويل تدريجي لحركة المرور، تحليل آلي، وتراجع فوري لجعل النشر مملًا بدلاً من مرعبًا.
+
+إذا كان خطك لا يزال ينشر 100% من حركة المرور إلى إصدار جديد ويأمل في الأفضل، هذا الدرس لك.
+
+## خطوط متعددة المراحل مع بوابات الموافقة
+
+خط الإنتاج الحقيقي ليس خطًا مستقيمًا من الالتزام إلى النشر. لديه **بيئات** (تطوير، تجهيز، إنتاج) و**بوابات** بينها. البوابة هي نقطة تفتيش — إما آلية (الاختبارات تجتاز، الفحص نظيف) أو يدوية (إنسان يراجع ويوافق).
+
+### مراحل الخط
+
+```
+Commit ──► Build ──► Test ──► Scan ──► Deploy (Dev)
+                                                │
+                                        Approval Gate ◄── Human review
+                                                │
+                                          Deploy (Staging)
+                                                │
+                                        Integration Tests
+                                                │
+                                        Approval Gate ◄── Change management
+                                                │
+                                          Canary (5%)
+                                                │
+                                         Auto-Analysis ──► Rollback if unhealthy
+                                                │
+                                          Production (100%)
+```
+
+**لماذا تهم بوابات الموافقة:** ليس كل نشر يجب أن يكون آليًا. ترحيلات قواعد البيانات، التغييرات الجذرية على API، والإصلاحات الشاملة للبنية التحتية تحتاج عيون بشرية. بوابات الموافقة تفرض سياسات إدارة التغيير دون إبطاء النشرات الروتينية.
+
+### المهام المتوازية
+
+المراحل التي لا تعتمد على بعضها يجب أن تعمل بالتوازي. اختبارات الوحدة واختبارات التكامل والفحوصات الأمنية يمكنها جميعًا العمل على نفس القطعة المبنية في وقت واحد:
+
+```yaml
+# .github/workflows/pipeline.yml
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm test
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm run test:integration
+
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: "fs"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+  deploy-staging:
+    needs: [unit-tests, integration-tests, security-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Deploy to staging"
+```
+
+**الفكرة الرئيسية:** المهام الثلاث (اختبار/فحص) تعمل بالتزامن. عبارة `needs` في `deploy-staging` تنتظر اجتياز الثلاثة جميعًا. إجمالي وقت الخط يصبح مدة أبطأ مهمة متوازية، وليس مجموع كل المهام.
+
+## استراتيجيات النشر
+
+### نشر الأزرق/الأخضر
+
+الأزرق/الأخضر يحافظ على بيئتي إنتاج متطابقتين. بيئة **الأزرق** تشغل الإصدار الحالي. بيئة **الأخضر** تشغل الإصدار الجديد. حركة المرور تتحول فورًا من الأزرق إلى الأخضر بمجرد اجتياز الأخضر لفحوصات الصحة.
+
+```
+Before switch:          After switch:
+┌──────────┐           ┌──────────┐
+│  Blue     │ ◄── 100%  │  Blue     │ (idle, ready for rollback)
+│  v1.0    │           │  v1.0    │
+└──────────┘           └──────────┘
+
+┌──────────┐           ┌──────────┐
+│  Green    │           │  Green    │ ◄── 100%
+│  v1.1    │           │  v1.1    │
+└──────────┘           └──────────┘
+```
+
+**المزايا:** تحويل فوري، تراجع فوري (العودة إلى الأزرق)، انعدام التوقف.
+
+**العيوب:** يتطلب ضعف البنية التحتية. كلتا البيئتين يجب أن تكونا مجهزتين بالكامل وجاهزتين.
+
+### نشر الكناري
+
+الكناري يوجّه نسبة صغيرة من حركة المرور إلى الإصدار الجديد ويراقب صحته. إذا بدت المقاييس جيدة، تزداد حركة المرور تدريجيًا. إذا حدث خطأ ما، يتراجع الكناري تلقائيًا.
+
+```
+Canary flow:
+
+5% ──► Analyze metrics ──► Healthy? ──► 25% ──► Analyze ──► 50% ──► 100%
+                            │
+                            Unhealthy?
+                            │
+                            ▼
+                         Rollback (0%)
+```
+
+**مع Argo Rollouts:**
+
+```yaml
+# rollout.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: my-app
+spec:
+  replicas: 10
+  strategy:
+    canary:
+      steps:
+      - setWeight: 5          # Route 5% traffic to canary
+      - pause: {duration: 5m} # Observe for 5 minutes
+      - setWeight: 25         # Increase to 25%
+      - pause: {duration: 5m}
+      - setWeight: 50         # Increase to 50%
+      - pause: {duration: 5m}
+      - setWeight: 100        # Full rollout
+      canaryService: my-app-canary
+      stableService: my-app-stable
+```
+
+**مع Flagger:**
+
+```yaml
+# canary.yaml
+apiVersion: flagger.app/v1beta1
+kind: Canary
+metadata:
+  name: my-app
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: my-app
+  service:
+    port: 8080
+  analysis:
+    interval: 1m
+    threshold: 5       # Rollback after 5 failed checks
+    maxWeight: 50
+    stepWeight: 10      # Increase 10% per interval
+    metrics:
+    - name: request-success-rate
+      threshold: 99     # Require 99% success rate
+    - name: request-duration
+      threshold: 500    # Require p99 < 500ms
+```
+
+### مقارنة الاستراتيجيات
+
+| الاستراتيجية | التوقف | سرعة التراجع | تكلفة البنية التحتية | نطاق المخاطرة |
+|-----------|--------|-------------|-------------------|-------------|
+| الأزرق/الأخضر | انعدام | فوري (تحويل) | 2x (بيئتان) | منخفض (بيئة كاملة مختبرة) |
+| الكناري | انعدام | سريع (تقليل المرور) | 1x + حجرات كناري | منخفض جدًا (تعرض تدريجي) |
+| المتدرج | قصير | متوسط (إعادة تشغيل) | 1x | متوسط (كل العقد تحصل على الإصدار الجديد) |
+| إعادة الإنشاء | نعم | بطيء (إعادة النشر) | 1x | عالي (كل شيء دفعة واحدة) |
+
+## تحليل الكناري الآلي
+
+القوة الحقيقية لنشر الكناري ليست في تحويل حركة المرور — بل في **التحليل الآلي**. بدلاً من إنسان يحدق في لوحات المعلومات، برمجيات تقارن مقاييس الكناري مع الأساسيات وتتخذ قرار الترقية/التراجع.
+
+### ما الذي يُحلَّل
+
+- **معدل الأخطاء** — هل يعيد الكناري أخطاء 5xx أكثر من الأساسي؟
+- **زمن الاستجابة** — هل أوقات الاستجابة p50 وp95 وp99 أعلى في الكناري؟
+- **المعالج/الذاكرة** — هل يستهلك الكناري موارد أكثر بشكل ملحوظ؟
+- **مقاييس مخصصة** — مقاييس أعمال (معدل التحويل، التخلي عن السلة، إلخ)
+
+### كيف يعمل
+
+```
+Canary (5%) ──► Metrics Server ──► Analysis Engine ──► Decision
+     │                                      │
+Baseline ──► Metrics Server ──►          │
+                                              │
+                                              ├── Promote (increase traffic)
+                                              └── Rollback (restore baseline)
+```
+
+محرك التحليل يستخدم طرقًا إحصائية (وليس مجرد فحص عتبات) لتحديد ما إذا كان الكناري أسوأ فعلاً أم أن الفرق ضمن التباين الطبيعي. هذا يمنع تراجعات كاذبة من مقاييس صاخبة.
+
+## التراجع الآلي
+
+التراجع ليس خطة — إنه رد فعل. لحظة حدوث خطأ ما، يعود النظام للوراء دون انتظار تدخل بشري.
+
+### محفزات التراجع
+
+| المحفز | الكشف | الإجراء |
+|--------|------|--------|
+| ارتفاع مفاجئ في الأخطاء | معدل 5xx يتجاوز 1% لدقيقتين | تراجع فوري |
+| تراجع في زمن الاستجابة | p99 يتجاوز ضعف الأساسي | تراجع فوري |
+| فشل فحص الصحة | حجرة تفشل فحص الجاهزية | تصغير الكناري |
+| عمليات قتل OOM | حاوية مقتولة بـ OOM killer | تراجع فوري |
+| يدوي | إنسان ينقر زر "تراجع" | تراجع فوري |
+
+### استراتيجية التراجع مع صور الحاويات
+
+التراجع الأكثر موثوقية في نظام قائم على الحاويات هو **إعادة نشر وسم الصورة السابق**. الصورة القديمة موجودة بالفعل في سجلك — بدون إعادة بناء، بدون انتظار، بدون غموض.
+
+```bash
+# Instant rollback — redeploy previous version
+kubectl set image deployment/my-app \
+  my-app=registry.example.com/my-app:abc1234 \  # Previous working tag
+  --record
+```
+
+**لا تعيد أبدًا التزام Git وتبني من جديد.** إعادة البناء تنتج صورة مختلفة (الطوابع الزمنية ومعرفات البناء تختلف). الصورة القديمة في السجل هي القطعة الفعلية التي كانت تعمل قبلًا — حتمية وفورية.
+
+## مثال عملي — خط متقدم كامل
+
+```yaml
+# .github/workflows/advanced-pipeline.yml
+name: Advanced CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image-tag: ${{ steps.meta.outputs.tags }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  test:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        suite: [unit, integration, e2e]
+    steps:
+      - uses: actions/checkout@v4
+      - run: npm ci && npm run test:${{ matrix.suite }}
+
+  security:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/${{ github.repository }}:${{ github.sha }}
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+  deploy-staging:
+    needs: [test, security]
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - run: kubectl set image deployment/my-app my-app=ghcr.io/org/my-app:${{ github.sha }}
+
+  approval:
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production-approval  # Requires manual approval in GitHub
+    steps:
+      - run: echo "Production deployment approved"
+
+  deploy-production:
+    needs: approval
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          # Deploy as canary (5%)
+          kubectl apply -f k8s/canary-rollout.yaml
+          # Monitoring handles analysis and promotion automatically
+```
+
+## الخلاصات الرئيسية
+
+- **بوابات الموافقة** تفرض مراجعة بشرية للنشرات عالية المخاطر دون إعاقة النشرات الروتينية.
+- **المهام المتوازية** تقلل وقت الخط الفعلي من مجموع كل المراحل إلى مدة الأبطأ.
+- **الأزرق/الأخضر** يعطي تحويلًا فوريًا وتراجعًا بتكلفة بنية تحتية مضاعفة؛ **الكناري** يعطي تعرضًا تدريجيًا بتكلفة محدودة.
+- **تحليل الكناري الآلي** (Argo Rollouts، Flagger، Kayenta) يستبدل مراقبة الإنسان للوحات المعلومات بالمقارنة الإحصائية.
+- **التراجع رد فعل**، وليس خطة — أعد نشر وسم الصورة غير القابل للتغيير السابق من السجل.
+
+<Diagram config={advancedCicdPipeline} />

@@ -1,0 +1,380 @@
+---
+title: "مجموعات الخدمات المتعددة"
+module: compose
+level: beginner
+duration: "35 min"
+diagram: compose-multi-service
+description: "ربط خدمات متعددة: تطبيق ويب، قاعدة بيانات، وذاكرة تخزين مؤقت في مجموعة واحدة."
+order: 2
+---
+
+# مجموعات الخدمات المتعددة — بناء تطبيقات حقيقية
+
+تخيّل أنك تبني منزلاً. المنزل ليس مجرد أربعة جدران وسقف — فيه سباكة، وأسلاك كهربائية، وأساس، وعزل، كلها تعمل معاً. التطبيق الحقيقي هو نفس الشيء. إنه ليس حاوية واحدة تعمل بمعزل. بل هو خادم ويب يتحدث إلى قاعدة بيانات، وذاكرة تخزين مؤقت تُسرّع الاستجابات، وربما معالج خلفي ينفذ المهام. Docker Compose هو المخطط الذي يربطها كلها ببعضها.
+
+في هذا الدرس، ستتعلم كيف تُعرّف وتتصل وتدير تطبيقات متعددة الخدمات. هذا هو قلب ما يجعل Compose قوياً — ملف واحد، أمر واحد، ومجموعتك بالكامل تنهض.
+
+## ما هي مجموعة الخدمات المتعددة؟
+
+مجموعة الخدمات المتعددة هي مجموعة من الحاويات تعمل معاً لتشكيل تطبيق كامل. كل حاوية تشغّل خدمة واحدة (عملية واحدة، مسؤولية واحدة)، وتتصل عبر شبكة مشتركة. يتيح لك Compose تعريف المجموعة بالكامل — كل خدمة، كل اتصال، كل تبعية — في ملف `docker-compose.yml` واحد.
+
+فكّر فيها كوصفة لتطبيقك. بدلاً من بدء كل مكوّن على حدة، تكتب الوصفة كاملة مرة واحدة، ثم تقول فقط "اطبخ" (حسناً، `docker compose up`).
+
+## لماذا يهم هذا؟
+
+- **التطبيقات الحقيقية متعددة الخدمات** — تطبيق ويب بدون قاعدة بيانات هو مجرد صفحة ثابتة. قاعدة بيانات بدون ذاكرة تخزين مؤقت بطيئة تحت الحمل. أنت بحاجة إلى خدمات متعددة تعمل معاً.
+- **أمر واحد يبدأ كل شيء** — لا مزيد من تشغيل خمسة أوامر `docker run` منفصلة في خمس نوافذ طرفية. `docker compose up` يبدأ مجموعتك بالكامل بالترتيب الصحيح.
+- **اكتشاف الخدمات تلقائي** — تجد الحاويات بعضها بالاسم، وليس بعنوان IP. لا ملفات إعدادات لتحديثها عندما تُعاد تشغيل حاوية وتحصل على IP جديد.
+- **التبعيات صريحة** — يعرف Compose أن تطبيقك يعتمد على قاعدة البيانات، لذا يبدأ قاعدة البيانات أولاً. لا ظروف سباق، لا نصوص بدء غير مستقرة.
+- **القابلية للتكرار** — كل مطور في فريقك يحصل على نفس المجموعة بالضبط بنفس الأمر بالضبط. "يعمل على جهازي" تصبح "يعمل على جهاز الجميع."
+
+## المفاهيم الأساسية
+
+### بنية ملف Compose
+
+كل ملف Compose له بنية متسقة. إليك الأقسام الرئيسية التي ستواجهها:
+
+```yaml
+services:          # Required — defines your containers
+  web:
+    image: nginx
+  db:
+    image: postgres
+
+volumes:           # Optional — named volume declarations
+  db-data:
+
+networks:          # Optional — custom network definitions
+  frontend:
+  backend:
+```
+
+**سطراً بسطر:**
+
+- `services:` — المفتاح الرئيسي الوحيد المطلوب. كل مفتاح فرعي يعرّف خدمة واحدة (حاوية واحدة).
+- `volumes:` — تعلن عن أحجام مسماة يمكن للخدمات تركيبها. هذه تبقي البيانات عبر إعادة تشغيل الحاويات.
+- `networks:` — تُعرّف شبكات مخصصة لعزل الخدمات. بشكل افتراضي، ينشئ Compose شبكة واحدة لجميع الخدمات.
+
+### اكتشاف الخدمات — كيف تجد الحاويات بعضها
+
+هذه واحدة من أقوى ميزات Compose، وهي أيضاً واحدة من الأسهل فهماً.
+
+عندما تشغّل `docker compose up`، ينشئ Compose شبكة مشتركة ويربط كل خدمة بها. خادم DNS المدمج في Docker يربط تلقائياً اسم كل خدمة بعنوان IP لحاويتها. هذا يعني:
+
+- خدمة مسماة `db` يمكن الوصول إليها عند اسم المضيف `db` من أي خدمة أخرى.
+- خدمة مسماة `cache` يمكن الوصول إليها عند اسم المضيف `cache`.
+- لا عناوين IP مشفرة. لا تحديث لملفات الإعدادات عند إعادة تشغيل الحاويات.
+
+```yaml
+services:
+  web:
+    environment:
+      # The web app connects to the database using the service name "db"
+      DATABASE_URL: "postgres://appuser:secretpass@db:5432/appdb"
+      # Same for Redis — just use the service name "cache"
+      REDIS_URL: "redis://cache:6379"
+
+  db:
+    image: postgres:16-alpine
+
+  cache:
+    image: redis:7-alpine
+```
+
+**سطراً بسطر:**
+
+- `DATABASE_URL: "postgres://appuser:secretpass@db:5432/appdb"` — لاحظ أن اسم المضيف هو مجرد `db`، وليس عنوان IP. يحل DNS الخاص بـ Docker هذا تلقائياً.
+- `REDIS_URL: "redis://cache:6379"` — `cache` هو اسم الخدمة المعرّف أدناه. DNS الخاص بـ Docker يتولى الباقي.
+
+**ما يحدث خلف الكواليس:** عندما تحاول حاوية `web` الاتصال بـ `db:5432`، يبحث خادم DNS الخاص بـ Docker (الذي يعمل على `127.0.0.11` داخل الحاوية) عن عنوان IP لحاوية `db` ويعيده. إذا أُعيدت تشغيل حاوية `db` وحصلت على IP جديد، يُحدّث DNS تلقائياً. تطبيقك لا يحتاج أبداً لمعرفة ذلك.
+
+### depends_on — التحكم في ترتيب البدء
+
+بشكل افتراضي، يبدأ Compose الخدمات بالترتيب الذي عُرّفت به، لكنه لا ينتظر حتى تكون خدمة "جاهزة" قبل بدء التالية. قد تبدأ حاوية قاعدة البيانات خلال ثانيتين لكنها تحتاج 10 ثوانٍ إضافية قبل أن تقبل الاتصالات. إذا بدأ تطبيقك خلال تلك الثواني العشر، سيفشل في الاتصال.
+
+يُصلح `depends_on` هذا بإخبار Compose عن تبعيات الخدمات:
+
+```yaml
+services:
+  web:
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+```
+
+**سطراً بسطر:**
+
+- `depends_on:` — يخبر Compose أن `web` تعتمد على خدمات أخرى.
+- `db: condition: service_healthy` — لن يبدأ Compose خدمة `web` حتى تُبلغ `db` عن صحتها عبر فحص الصحة. هذا يعني أن قاعدة البيانات جاهزة فعلاً لقبول الاتصالات، وليست مجرد قيد التشغيل.
+- `cache: condition: service_started` — سيبدأ Compose خدمة `web` بمجرد بدء `cache`. لا ينتظر حتى يكون Redis جاهزاً بالكامل — Redis يبدأ بسرعة كبيرة لدرجة أن `service_started` عادة ما تكون كافية.
+
+**الشرطان:**
+
+| الشرط | ما يعنيه | متى تستخدمه |
+|---|---|---|
+| `service_started` | الحاوية قد بدأت | للخدمات سريعة البدء مثل Redis، أو عندما لا تملك فحص صحة |
+| `service_healthy` | فحص صحة الحاوية ناجح | لقواعد البيانات والخدمات التي تحتاج وقتاً لتصبح جاهزة |
+| `service_completed_successfully` | الحاوية عملت وخرجت بالكود 0 | للحاويات التمهيدية أو مهام الترحيل |
+
+**مهم:** `depends_on` يتحكم فقط في ترتيب البدء أثناء `docker compose up`. لا يجعل Compose يعيد تشغيل الخدمات التابعة إذا تحطمت التبعية. لذلك، تحتاج إلى سياسات إعادة التشغيل (مغطاة في درس Production Compose).
+
+### فحوص الصحة — معرفة متى تكون الخدمة جاهزة فعلاً
+
+فحص الصحة هو أمر يشغّله Docker داخل الحاوية بشكل دوري لتحديد ما إذا كانت الخدمة تعمل. بدون فحص الصحة، يعرف Docker فقط ما إذا كانت عملية الحاوية تعمل — وليس ما إذا كانت تؤدي مهمتها فعلاً.
+
+```yaml
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: appuser
+      POSTGRES_PASSWORD: secretpass
+      POSTGRES_DB: appdb
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U appuser"]  # Run this command to check health
+      interval: 5s      # Check every 5 seconds
+      timeout: 5s       # If the command takes longer than 5s, consider it failed
+      retries: 5        # After 5 consecutive failures, mark as unhealthy
+      start_period: 10s # Give 10s grace period before first check (startup time)
+```
+
+**سطراً بسطر:**
+
+- `test: ["CMD-SHELL", "pg_isready -U appuser"]` — يشغّل أمر `pg_isready` داخل الحاوية. هذا هو أداة فحص الجاهزية المدمجة في Postgres. صيغة `CMD-SHELL` تشغّل الأمر عبر shell، مما يسمح بميزات shell مثل الأنابيب ومتغيرات البيئة.
+- `interval: 5s` — كم مرة يشغّل Docker فحص الصحة. 5 ثوانٍ قيمة افتراضية جيدة للتطوير.
+- `timeout: 5s` — إذا استغرق `pg_isready` أكثر من 5 ثوانٍ للاستجابة، يُعتبر الفحص فاشلاً. هذا يلتقط الحالات التي تكون فيها قاعدة البيانات مثقلة.
+- `retries: 5` — يجب أن تفشل الحاوية في 5 فحوصات متتالية قبل وضع علامة غير صحي عليها. هذا يمنع الإيجابيات الكاذبة من الانقطاعات العابرة.
+- `start_period: 10s` — خلال أول 10 ثوانٍ بعد بدء الحاوية، لا تُحتسب فحوصات الصحة الفاشلة ضمن حد الإعادة. هذا يعطي Postgres وقتاً للتهيئة.
+
+**أوامر فحص الصحة الشائعة:**
+
+| الخدمة | أمر فحص الصحة |
+|---|---|
+| Postgres | `pg_isready -U username` |
+| Redis | `redis-cli ping` (تتوقع `PONG`) |
+| MySQL | `mysqladmin ping -h localhost` |
+| Nginx / أي خادم HTTP | `curl -f http://localhost:PORT/health` |
+| MongoDB | `mongosh --eval "db.adminCommand('ping')"` |
+
+## مثال عملي — تطبيق Flask مع Redis
+
+لنبنِ مجموعة خدمات متعددة كاملة: تطبيق ويب Python Flask يحسب مشاهدات الصفحة، مدعوم بذاكرة تخزين مؤقت Redis. هذا مثال كلاسيكي على Compose لأنه يُظهر اكتشاف الخدمات، وترتيب التبعيات، وفحوص الصحة — كل ذلك في حزمة صغيرة ومفهومة.
+
+**هيكل المشروع:**
+
+```
+flask-redis-app/
+  docker-compose.yml
+  web/
+    Dockerfile
+    app.py
+    requirements.txt
+```
+
+**web/app.py:**
+
+```python
+from flask import Flask
+import redis
+import os
+
+app = Flask(__name__)
+
+# Connect to Redis using the service name "cache" as the hostname
+# Docker DNS resolves "cache" to the Redis container's IP automatically
+r = redis.Redis(
+    host=os.environ.get("REDIS_HOST", "cache"),
+    port=int(os.environ.get("REDIS_PORT", 6379)),
+    decode_responses=True
+)
+
+@app.route("/")
+def hello():
+    # Increment the counter in Redis
+    count = r.incr("hits")
+    return f"Hello! This page has been viewed {count} times."
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
+```
+
+**سطراً بسطر:**
+
+- `host=os.environ.get("REDIS_HOST", "cache")` — يقرأ اسم مضيف Redis من متغير بيئة، مع القيمة الافتراضية `cache` (اسم خدمة Compose). هذا هو اكتشاف الخدمات في العمل.
+- `r.incr("hits")` — يزيد Redis المفتاح `hits` بشكل ذري ويعيد القيمة الجديدة. هذا آمن حتى مع عدة نسخ ويب تضغط Redis في نفس الوقت.
+- `app.run(host="0.0.0.0", port=5000)"` — يربط بجميع الواجهات حتى يمكن الوصول للتطبيق من خارج الحاوية.
+
+**web/requirements.txt:**
+
+```
+flask==3.0
+redis==5.0
+```
+
+**web/Dockerfile:**
+
+```dockerfile
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install dependencies first (layer caching)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY app.py .
+
+# Run the Flask app
+CMD ["flask", "run", "--host=0.0.0.0", "--port=5000"]
+```
+
+**docker-compose.yml:**
+
+```yaml
+services:
+  web:
+    build: ./web                   # Build from the web/Dockerfile
+    ports:
+      - "5000:5000"                # Expose Flask on host port 5000
+    environment:
+      REDIS_HOST: cache            # Service name = Docker DNS hostname
+      REDIS_PORT: "6379"
+      FLASK_ENV: development       # Enable Flask debug mode
+    depends_on:
+      cache:
+        condition: service_healthy # Wait for Redis to be ready
+    restart: unless-stopped        # Auto-restart if the app crashes
+
+  cache:
+    image: redis:7-alpine          # Official Redis image, lightweight
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]  # Check if Redis responds
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  redis-data:                     # Named volume for Redis persistence
+```
+
+**سطراً بسطر:**
+
+- `build: ./web` — يخبر Compose ببناء صورة من Dockerfile في `./web/` بدلاً من سحب صورة جاهزة.
+- `ports: "5000:5000"` — يعيّن منفذ المضيف 5000 إلى منفذ الحاوية 5000، حتى يمكنك زيارة التطبيق في متصفحك.
+- `REDIS_HOST: cache` — هذا هو السحر. يتصل تطبيق Flask بـ Redis باستخدام اسم الخدمة. لا حاجة لعنوان IP.
+- `depends_on: cache: condition: service_healthy` — لن يبدأ Compose خدمة `web` حتى يستجيب Redis لـ `ping`. هذا يمنع أخطاء "connection refused" عند البدء.
+- `restart: unless-stopped` — إذا تحطمت الحاوية، يعيد Compose تشغيلها تلقائياً. لن يعيد تشغيلها إذا أوقفتها يدوياً.
+- `healthcheck: test: ["CMD", "redis-cli", "ping"]` — يشغّل `redis-cli ping` داخل الحاوية. مثيل Redis الصحي يستجيب بـ `PONG`.
+
+**خطوة بخطوة:**
+
+1. أنشئ هيكل المشروع:
+
+```bash
+mkdir -p flask-redis-app/web
+cd flask-redis-app
+```
+
+2. أنشئ الملفات الأربعة الموضحة أعلاه (`app.py`، `requirements.txt`، `Dockerfile`، `docker-compose.yml`).
+
+3. شغّل المجموعة:
+
+```bash
+docker compose up -d --build
+```
+
+**المخرجات المتوقعة:**
+
+```
+[+] Building 12.3s
+ => [web internal] load build definition from Dockerfile
+ => => transferring dockerfile: 186B
+ ...
+[+] Running 3/3
+ ✔ Network flask-redis-app_default     Created
+ ✔ Container flask-redis-app-cache-1  Started
+ ✔ Container flask-redis-app-web-1    Started
+```
+
+4. اختبر التطبيق:
+
+```bash
+curl http://localhost:5000
+```
+
+**المخرجات المتوقعة:**
+
+```
+Hello! This page has been viewed 1 times.
+```
+
+5. اضغط عليه مرة أخرى:
+
+```bash
+curl http://localhost:5000
+```
+
+**المخرجات المتوقعة:**
+
+```
+Hello! This page has been viewed 2 times.
+```
+
+العداد يزداد لأن Redis يحافظ على المفتاح `hits`. حتى لو أعدت تشغيل حاوية الويب، يستمر العد.
+
+6. شاهد السجلات:
+
+```bash
+docker compose logs -f
+```
+
+هذا يبث السجلات من جميع الخدمات. سترى سجلات طلبات Flask وأحداث اتصال Redis.
+
+7. نظّف:
+
+```bash
+docker compose down -v
+```
+
+العلامة `-v` تزيل الحجم المسمى، لذا يُعاد ضبط العداد. بدون `-v`، تبقى بيانات Redis ويستمر العداد في المرة القادمة.
+
+## أوامر Compose الأساسية
+
+إليك الأوامر التي ستستخدمها يومياً عند العمل مع مجموعات خدمات متعددة:
+
+| الأمر | ما يفعله |
+|---|---|
+| `docker compose up -d` | بدء جميع الخدمات في الخلفية |
+| `docker compose down` | إيقاف وإزالة جميع الحاويات (يحافظ على الأحجام) |
+| `docker compose down -v` | إيقاف وإزالة الحاويات وحذف الأحجام أيضاً |
+| `docker compose ps` | عرض الخدمات العاملة وحالتها |
+| `docker compose logs -f web` | متابعة سجلات خدمة `web` |
+| `docker compose logs -f` | متابعة سجلات جميع الخدمات |
+| `docker compose exec db psql -U appuser` | فتح shell لـ Postgres داخل حاوية `db` |
+| `docker compose exec cache redis-cli` | فتح Redis CLI داخل حاوية `cache` |
+| `docker compose restart web` | إعادة تشغيل خدمة الويب فقط |
+| `docker compose build` | إعادة بناء الصور (بعد تغييرات Dockerfile) |
+| `docker compose up -d --build` | إعادة بناء الصور وإعادة تشغيل المجموعة |
+| `docker compose config` | التحقق وعرض ملف Compose المدمج |
+
+## المزالق الشائعة ونصائح
+
+- **"Connection refused" عند البدء** — تطبيقك الويب بدأ قبل أن تكون قاعدة البيانات جاهزة. أضف `depends_on` مع `condition: service_healthy` وعرّف `healthcheck` لقاعدة البيانات. هذه هي المشكلة الأكثر شيوعاً في مجموعات الخدمات المتعددة.
+
+- **نسيان فحص الصحة** — `depends_on: condition: service_healthy` لا يفعل شيئاً بدون `healthcheck` مُعرّف على الخدمة المستهدفة. لا يمكن لـ Compose معرفة متى تكون قاعدة بياناتك جاهزة ما لم تخبره بكيفية التحقق.
+
+- **استخدام `links`** — المفتاح `links` مُلغى. كان الطريقة القديمة لربط الحاويات. يستخدم Compose الحديث اكتشاف الخدمات التلقائي عبر DNS. أزل أي إدخالات `links` من ملفاتك.
+
+- **عدم اقتباس قيم البيئة ذات الأحرف الخاصة** — قيم مثل عناوين URL (`postgres://user:pass@db:5432/db`) يجب أن تُوضع بين علامتي اقتباس: `"postgres://user:pass@db:5432/db"`. النقطتان الفاصلستان ورمز `@` بدون اقتباس يربكان محلل YAML.
+
+- **توقع أن يتعامل `depends_on` مع التحطم** — `depends_on` يتحكم فقط في ترتيب البدء. إذا تحطمت `db` بعد البدء، لن تُعاد تشغيل `web` تلقائياً. استخدم `restart: unless-stopped` على كلتا الخدمتين للمتانة.
+
+- **تعديل الكود ولا شيء يتغير** — إذا غيّرت `app.py` لكنك استخدمت `image:` بدلاً من `build:`، لن يعيد Compose البناء. استخدم `docker compose up -d --build` لفرض إعادة البناء بعد تغييرات الكود.
+
+- **خدمات كثيرة جداً في ملف واحد** — إذا كان ملف Compose يطول (10+ خدمات)، فكّر في تقسيمه بملفات التخطي أو الانتقال إلى أداة تنسيق أكثر تخصصاً مثل Kubernetes.
+
+<Diagram config={composeMultiService} />

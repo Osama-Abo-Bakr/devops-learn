@@ -1,0 +1,452 @@
+---
+title: "متغيرات البيئة والتوسع"
+module: compose
+level: intermediate
+duration: "30 min"
+description: "استخدام ملفات .env، ومتغيرات البيئة، وتوسيع الخدمات أفقياً."
+order: 4
+---
+
+# متغيرات البيئة والتوسع — إعدادات بدون إعادة بناء
+
+تخيّل أنك طبّاخ تدير مطعماً. لن تعيد بناء المطبخ في كل مرة تتغير القائمة — بل فقط تستبدل المكوّنات. متغيرات البيئة تعمل بنفس الطريقة مع الحاويات. بدلاً من خبز الإعدادات داخل الصورة (مما يتطلب إعادة بناء)، تمررها في وقت التشغيل. الصورة تبقى كما هي؛ فقط الإعدادات تتغير. وعندما يأتي زحام العشاء، تستدعي طبّاخين إضافيين — هذا هو التوسع الأفقي. يغطي هذا الدرس كليهما: كيف تُهيئ خدماتك ديناميكياً، وكيف تشغّل نسخاً متعددة عندما لا تكفي واحدة.
+
+## ما هي متغيرات البيئة في Compose؟
+
+متغيرات البيئة هي أزواج من المفتاح والقيمة تُمرر إلى حاوية في وقت التشغيل. تتيح لك تهيئة خدمة دون تعديل الصورة أو ملف Compose نفسه. صورة واحدة يمكنها العمل في التطوير والاختبار والإنتاج — فقط غيّر متغيرات البيئة.
+
+## لماذا يهم هذا؟
+
+- **نفس الصورة، بيئات متعددة** — ابنِ مرة، انشر في كل مكان. عنوان URL لقاعدة بيانات التطوير وعنوان URL لقاعدة بيانات الإنتاج هما مجرد متغيرات بيئة مختلفة تشير إلى خوادم مختلفة.
+- **الأسرار تبقى خارج الكود** — كلمات المرور ومفاتيح API والرموز تنتمي إلى ملفات البيئة (التي تضيفها إلى gitignore)، وليس في ملف Compose أو صورة Docker.
+- **التوسع يتطلب خدمات عديمة الحالة** — لتشغيل 5 نسخ من تطبيق ويب، يجب أن تكون كل نسخة متطابقة إلا في بيئتها. الإعدادات المشفرة تجعل هذا مستحيلاً.
+- **تعاون الفريق** — يمكن لكل مطور أن يملك ملف `.env.local` خاصاً بإعداداته الشخصية (اسم قاعدة البيانات، إشارات التصحيح) دون تعديل الملفات المشتركة.
+- **التكامل مع CI/CD** — يمكن لخط الأنابيب حقن متغيرات البيئة وقت النشر دون لمس قاعدة الكود.
+
+## المفاهيم الأساسية
+
+### ملف .env — إعدادات مشروعك
+
+يجلس ملف `.env` في نفس الدليل كملف `docker-compose.yml`. يحمله Compose تلقائياً، ويمكنك الإشارة إلى قيمه بصيغة `${VAR}` في ملف Compose.
+
+**.env:**
+
+```bash
+# Database configuration
+POSTGRES_USER=appuser
+POSTGRES_PASSWORD=secretpass
+POSTGRES_DB=myapp_dev
+
+# Application configuration
+APP_PORT=3000
+NODE_ENV=development
+LOG_LEVEL=debug
+
+# External services
+REDIS_URL=redis://cache:6379
+API_KEY=sk-dev-12345
+```
+
+**docker-compose.yml:**
+
+```yaml
+services:
+  web:
+    build: .
+    ports:
+      - "${APP_PORT}:3000"        # Variable substitution — pulls APP_PORT from .env
+    environment:
+      NODE_ENV: ${NODE_ENV}        # development
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
+      LOG_LEVEL: ${LOG_LEVEL}      # debug
+      API_KEY: ${API_KEY}          # sk-dev-12345
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}        # Pulled from .env
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+```
+
+**سطراً بسطر:**
+
+- `"${APP_PORT}:3000"` — يقرأ Compose `APP_PORT` من `.env` ويعوّضه بـ `3000`. المنفذ المنشور يصبح `3000:3000`. ضعه دائماً بين علامتي اقتباس — النقطتان الفاصلستان في تعيينات المنافذ يمكن أن تربكا محلل YAML بدون اقتباس.
+- `${POSTGRES_USER}` — يُعوّض في وقت تحليل Compose، قبل أن تبدأ الحاوية. تتلقى الحاوية القيمة النهائية، وليس مرجع المتغير.
+- `"postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"` — تعويضات متعددة في سلسلة واحدة. الرمزان `$` و`{}` مطلوبان لتعويض المتغيرات في ملفات Compose.
+
+**تمييز مهم:** متغيرات `.env` تُستخدم لـ **تعويض متغيرات ملف Compose** (استبدال `${VAR}` في YAML). هي لا تُمرر تلقائياً إلى الحاويات كمتغيرات بيئة. لضبط متغيرات بيئة الحاوية، يجب استخدام المفتاحين `environment` أو `env_file`.
+
+### مفتاح environment — متغيرات مضمّنة
+
+يضبط مفتاح `environment` متغيرات البيئة مباشرة في ملف Compose. هذا أفضل للقيم التي ليست سرية ومتسقة عبر جميع البيئات.
+
+```yaml
+services:
+  web:
+    environment:
+      NODE_ENV: production           # Key: value syntax (preferred for readability)
+      PORT: "3000"                    # Quotes prevent YAML from parsing as integer
+      LOG_LEVEL: info
+
+      # List syntax (alternative)
+      - "ANOTHER_VAR=some_value"     # Less common, but valid
+```
+
+### مفتاح env_file — التحميل من ملفات خارجية
+
+يقرأ مفتاح `env_file` ملفاً ويمرر كل سطر كمتغير بيئة إلى الحاوية. هذا مثالي للأسرار والإعدادات الخاصة بكل بيئة.
+
+```yaml
+services:
+  web:
+    env_file:
+      - .env                    # Shared defaults
+      - .env.local              # Personal overrides (gitignored)
+```
+
+**.env.local:**
+
+```bash
+# Override defaults for local development
+POSTGRES_DB=myapp_jane          # Jane's personal database
+LOG_LEVEL=debug                  # More verbose logging
+API_KEY=sk-dev-jane-personal     # Jane's personal API key
+```
+
+**سطراً بسطر:**
+
+- `.env` — يُحمّل أولاً، يوفر القيم الافتراضية المشتركة.
+- `.env.local` — يُحمّل ثانياً. إذا ظهر متغير في كلا الملفين، **الملف الأخير يفوز** (`.env.local` يتخطى `.env`).
+- هذا النمط يتيح لكل مطور إعدادات شخصية دون تعديل ملفات متتبعة في git. أضف `.env.local` إلى `.gitignore`.
+
+### .env مقابل env_file مقابل environment — ماذا يوضع أين؟
+
+هذا من أكثر الأجزاء إرباكاً في Compose، لِنكُن صريحين:
+
+| الميزة | ملف `.env` | مفتاح `env_file` | مفتاح `environment` |
+|---|---|---|---|
+| أين يُستخدم | تعويض المتغيرات في YAML الخاص بـ Compose | يُمرر إلى الحاوية كمتغيرات بيئة | يُمرر إلى الحاوية كمتغيرات بيئة |
+| متى يُحلّ | في وقت تحليل Compose (قبل بدء الحاويات) | في وقت إنشاء الحاوية | في وقت إنشاء الحاوية |
+| يمكن الإشارة إليه في YAML؟ | نعم (`${VAR}`) | لا | لا |
+| مرئي داخل الحاوية؟ | لا (إلا إذا كان أيضاً في `environment`/`env_file`) | نعم | نعم |
+| الأفضل لـ | إعدادات مستوى Compose (المنافذ، وسوم الصور، مسارات الأحجام) | الأسرار، قوائم طويلة من متغيرات البيئة | بضع قيم مضمّنة |
+| موقع الملف | جذر المشروع (نفس دليل ملف compose) | أي مسار تحدده | مضمّن في YAML |
+
+**النموذج الذهني:** `.env` يهيئ Compose نفسه (أي منافذ نشرها، أي صورة استخدام). `env_file` و`environment` يهيئان التطبيق داخل الحاوية (عناوين URL لقواعد البيانات، مفاتيح API، إشارات الميزات).
+
+### أسبقية متغيرات البيئة
+
+عندما يُضبط نفس المتغير في أماكن متعددة، يستخدم Compose ترتيب أسبقية (الأعلى يفوز):
+
+| الأولوية | المصدر | مثال |
+|---|---|---|
+| 1 (الأعلى) | `docker compose run -e VAR=val` | تجاوز من سطر الأوامر |
+| 2 | متغيرات بيئة Shell | `export VAR=val && docker compose up` |
+| 3 | `env_file` | `.env`، `.env.local` |
+| 4 | مفتاح `environment` | مضمّن في ملف Compose |
+| 5 (الأدنى) | `Dockerfile` `ENV` | مخبوز في الصورة |
+
+**ما يعنيه هذا عملياً:** إذا ضبطت `NODE_ENV=production` في Dockerfile، لكن `NODE_ENV=development` في مفتاح `environment`، فسترى الحاوية `development` لأن `environment` له أولوية أعلى. إذا مررت أيضاً `NODE_ENV=staging` عبر سطر الأوامر بـ `-e`، فذلك يتغلب على كل شيء.
+
+### تعويض المتغيرات مع قيم افتراضية
+
+يمكنك توفير قيم افتراضية في حال لم يُضبط متغير:
+
+```yaml
+services:
+  web:
+    ports:
+      - "${APP_PORT:-3000}:3000"          # Use APP_PORT, or 3000 if not set
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}  # Use NODE_ENV, or "development" if not set
+      LOG_LEVEL: ${LOG_LEVEL:-info}       # Use LOG_LEVEL, or "info" if not set
+```
+
+**سطراً بسطر:**
+
+- `${APP_PORT:-3000}` — صيغة `:-` تعني "استخدم قيمة `APP_PORT`، لكن إذا لم تكن مضبوطة أو فارغة، استخدم `3000` بدلاً منها." هذا يجعل ملف Compose يعمل حتى بدون ملف `.env`.
+
+**صيغة أخرى:** `${APP_PORT-3000}` (بدون النقطتين) تعني "استخدم القيمة الافتراضية فقط إذا لم يُضبط `APP_PORT`، لكن ليس إذا كان فارغاً." الفرق يهم عندما تضبط متغيراً عمداً كسلسلة فارغة.
+
+### توسيع الخدمات — تشغيل نسخ متعددة
+
+عندما لا تستطيع نسخة واحدة من خدمة التعامل مع الحمل، توسّعها بتشغيل نسخ متعددة. يجعل Compose هذا سهلاً للغاية بعلامة `--scale`.
+
+```bash
+# Run 3 instances of the web service
+docker compose up -d --scale web=3
+```
+
+**ما يحدث:** ينشئ Compose ثلاث حاويات — `web-1`، `web-2`، `web-3`. كل منها نسخة متطابقة من تعريف خدمة `web`. جميعها تتصل بنفس الشبكة ويمكن لجميعها الوصول إلى نفس قاعدة البيانات وذاكرة التخزين المؤقت.
+
+**لكن هناك فخاً** — إذا كانت خدمتك تعيّن منفذ مضيف ثابت، سيفشل التوسع. حاوية واحدة فقط يمكنها الارتباط بالمنفذ 3000 على المضيف. الباقي سيحصل على تعارضات منافذ ويتحطم.
+
+### مشكلة تعارض المنافذ وحلها
+
+عند التوسع، تحتاج لتجنب تعيين منافذ مضيف ثابتة. بدلاً من ذلك، دع وكيل عكسي يتعامل مع التوجيه:
+
+```yaml
+services:
+  web:
+    build: .
+    expose:
+      - "3000"                    # Expose port to other containers (not the host)
+    environment:
+      DATABASE_URL: "postgres://appuser:pass@db:5432/myapp"
+    deploy:
+      replicas: 3                 # Run 3 instances (alternative to --scale flag)
+
+  proxy:
+    image: nginx:alpine
+    ports:
+      - "80:80"                   # Only the proxy publishes a port
+    depends_on:
+      - web
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+```
+
+**سطراً بسطر:**
+
+- `expose: "3000"` — يجعل المنفذ 3000 متاحاً للحاويات الأخرى على نفس الشبكة، لكنه لا ينشره على المضيف. هذا مفتاح تجنب تعارض المنافذ عند التوسع.
+- `deploy: replicas: 3` — يخبر Compose بتشغيل 3 نسخ من خدمة `web`. هذه هي طريقة التوسع عبر ملف Compose، على عكس علامة `--scale` في سطر الأوامر.
+- خدمة `proxy` (Nginx) تنشر المنفذ 80 على المضيف. توزّع الحمل عبر نسخ `web` الثلاث باستخدام إعدادات upstream في Nginx.
+
+**إعدادات Nginx upstream (nginx.conf):**
+
+```nginx
+upstream web_backend {
+    server web:3000;    # Docker DNS round-robins between web-1, web-2, web-3
+}
+
+server {
+    listen 80;
+    location / {
+        proxy_pass http://web_backend;
+    }
+}
+```
+
+**سطراً بسطر:**
+
+- `server web:3000` — يحل Nginx اسم `web` عبر DNS الخاص بـ Docker. عندما تكون هناك حاويات متعددة لخدمة `web`، يعيد خادم DNS الخاص بـ Docker جميع عناوين IP ويتناوب بينها. هذا يعطيك موازنة حمل أساسية بدون أي إعدادات إضافية.
+
+### قيود مهمة على توسع Compose
+
+- **لا يوجد موزّع حمل مدمج** — لا يوزّع Compose الحركة تلقائياً عبر النسخ الموسّعة. تحتاج إلى وكيل عكسي (Nginx، HAProxy، Traefik) أو موزّع حمل على مستوى التطبيق.
+- **لا يوجد توسع تلقائي** — لا يراقب Compose الحمل ويضيف أو يزيل نسخاً. أنت تقرر عدد النسخ يدوياً أو عبر نص برمجي.
+- **الخدمات ذات الحالة لا يجب توسيعها** — لا توسّع قاعدة بيانات أبداً. عدة نسخ من Postgres تكتب في نفس الحجم ستُفسد البيانات. وسّع فقط الخدمات عديمة الحالة (خوادم الويب، خوادم API، المعالجات).
+- **ثبات الجلسة** — إذا كان تطبيقك يخزّن حالة الجلسة محلياً (في الذاكرة)، قد يصل طلب المستخدم إلى نسخة مختلفة في الطلب التالي، مما يفقد جلسته. خزّن الجلسات في Redis أو قاعدة البيانات بدلاً من ذلك.
+
+## مثال عملي — تطبيق ويب قابل للتوسع
+
+لنبنِ مثالاً كاملاً: تطبيق ويب Node.js يمكن توسيعه أفقياً، مدعوماً بـ Postgres وRedis.
+
+**هيكل المشروع:**
+
+```
+scalable-app/
+  docker-compose.yml
+  .env
+  web/
+    Dockerfile
+    package.json
+    server.js
+  proxy/
+    nginx.conf
+```
+
+**.env:**
+
+```bash
+APP_PORT=3000
+POSTGRES_USER=appuser
+POSTGRES_PASSWORD=secretpass
+POSTGRES_DB=appdb
+NODE_ENV=production
+WEB_REPLICAS=3
+```
+
+**docker-compose.yml:**
+
+```yaml
+services:
+  web:
+    build: ./web
+    expose:
+      - "3000"                      # Available to other containers, not the host
+    environment:
+      DATABASE_URL: "postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}"
+      REDIS_URL: "redis://cache:6379"
+      NODE_ENV: ${NODE_ENV:-production}
+    depends_on:
+      db:
+        condition: service_healthy
+      cache:
+        condition: service_started
+    restart: unless-stopped
+    deploy:
+      replicas: ${WEB_REPLICAS:-2}  # Scale from .env, default to 2
+
+  proxy:
+    image: nginx:alpine
+    ports:
+      - "80:80"                     # Single entry point for all web instances
+    volumes:
+      - ./proxy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - web
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  cache:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  db-data:
+```
+
+**proxy/nginx.conf:**
+
+```nginx
+upstream web_app {
+    server web:3000;
+}
+
+server {
+    listen 80;
+    location / {
+        proxy_pass http://web_app;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+**خطوة بخطوة:**
+
+1. أنشئ المشروع والملفات:
+
+```bash
+mkdir -p scalable-app/web scalable-app/proxy
+cd scalable-app
+```
+
+2. أنشئ جميع الملفات الموضحة أعلاه.
+
+3. شغّل المجموعة:
+
+```bash
+docker compose up -d --build
+```
+
+**المخرجات المتوقعة:**
+
+```
+[+] Running 6/6
+ ✔ Container scalable-app-db-1      Started (healthy)
+ ✔ Container scalable-app-cache-1   Started
+ ✔ Container scalable-app-web-1    Started
+ ✔ Container scalable-app-web-2    Started
+ ✔ Container scalable-app-web-3    Started
+ ✔ Container scalable-app-proxy-1   Started
+```
+
+4. تحقق من أن 3 نسخ ويب تعمل:
+
+```bash
+docker compose ps web
+```
+
+**المخرجات المتوقعة:**
+
+```
+NAME                   STATUS         PORTS
+scalable-app-web-1    Up 30 seconds   3000/tcp
+scalable-app-web-2    Up 30 seconds   3000/tcp
+scalable-app-web-3    Up 30 seconds   3000/tcp
+```
+
+5. اختبر موازنة الحمل — أجرِ طلبات متعددة وشاهدها تصل إلى نسخ مختلفة:
+
+```bash
+for i in {1..6}; do curl -s http://localhost; done
+```
+
+تُوزّع الطلبات عبر `web-1` و`web-2` و`web-3` عبر التناوب الدائري لـ DNS الخاص بـ Docker.
+
+6. وسّع ديناميكياً دون إعادة تشغيل المجموعة بالكامل:
+
+```bash
+docker compose up -d --scale web=5
+```
+
+**المخرجات المتوقعة:**
+
+```
+[+] Running 5/5
+ ✔ Container scalable-app-web-1    Running
+ ✔ Container scalable-app-web-2    Running
+ ✔ Container scalable-app-web-3    Running
+ ✔ Container scalable-app-web-4    Started
+ ✔ Container scalable-app-web-5    Started
+```
+
+7. قلّص العدد:
+
+```bash
+docker compose up -d --scale web=2
+```
+
+يوقف Compose الحاويات الزائدة (`web-3`، `web-4`، `web-5`) ويحتفظ بـ `web-1` و`web-2`.
+
+8. تحقق من الإعدادات المحلّلة (مفيد لتصحيح تعويض المتغيرات):
+
+```bash
+docker compose config
+```
+
+هذا يُخرج ملف Compose المدمج بالكامل مع جميع مراجع `${VAR}` محلّلة إلى قيمها الفعلية.
+
+9. نظّف:
+
+```bash
+docker compose down -v
+```
+
+## المزالق الشائعة ونصائح
+
+- **الخلط بين `.env` و`env_file`** — `.env` لتعويض متغيرات Compose (يُستخدم في ملف YAML نفسه). `env_file` لتمرير المتغيرات إلى الحاوية. يخدمان أغراضاً مختلفة. إذا وضعت `POSTGRES_USER=myuser` في `.env` لكنك نسيت مفتاح `environment:` في خدمة `db`، فلن يراه Postgres.
+
+- **تعويض المتغيرات بدون اقتباس في المنافذ** — `"${APP_PORT}:3000"` يجب أن تُوضع بين علامتي اقتباس. بدون اقتباس، النقطتان الفاصلستان وصيغة المتغير تربكان محلل YAML وستحصل على خطأ مبهم.
+
+- **توسيع خدمات ذات حالة** — لا توسّع قواعد البيانات أو الخدمات ذات الحالة المحلية أبداً. إذا كنت تحتاج تكراراً لقاعدة البيانات، استخدم ميزات النسخ المتماثل الخاصة بقاعدة البيانات (نسخ Postgres المتدفق، Redis Sentinel، إلخ)، وليس توسع Compose.
+
+- **نسيان الوكيل العكسي** — إذا وسّعت `web` إلى 3 لكن نسخة واحدة فقط يمكنها تلقي الحركة (لأنها الوحيدة التي تنشر منفذاً)، فأنت لا توسّع فعلياً. استخدم وكيلاً أو أزل تعيين `ports:` واستخدم `expose:` بدلاً منه.
+
+- **القيم الافتراضية المفقودة في تعويض المتغيرات** — إذا لم يُضبط متغير في `.env` وليس لديك قيمة افتراضية (`${VAR}`)، سيحذرك Compose ويستخدم سلسلة فارغة. هذا قد يسبب فشلاً صامتاً. استخدم القيم الافتراضية دائماً: `${VAR:-fallback}`.
+
+- **إضافة `.env` إلى git** — قد يحتوي ملف `.env` على أسرار. أنشئ ملف `.env.example` بقيم وهمية للمستودع، وأضف `.env` و`.env.local` إلى `.gitignore`.
+
+- **التجاوز من سطر الأوامر** — لاختبارات سريعة، يمكنك تجاوز أي متغير: `APP_PORT=8080 docker compose up -d`. متغيرات بيئة Shell لها الأولوية على ملف `.env`.

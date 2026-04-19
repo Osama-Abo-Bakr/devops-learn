@@ -1,0 +1,409 @@
+---
+title: "مخططات Helm"
+module: devops
+level: intermediate
+duration: "35 min"
+description: "تغليف وتصميم ونشر تطبيقات Kubernetes باستخدام Helm — مدير الحزم لـ Kubernetes."
+order: 2
+---
+
+# مخططات Helm
+
+إذا سبق لك استخدام `apt install` على Ubuntu أو `brew install` على Mac، فأنت تفهم Helm بالفعل. إنه مدير الحزم لـ Kubernetes. تمامًا كما يُغلف `apt` برمجيات Linux المعقدة في أمر واحد، يُغلف Helm عمليات نشر Kubernetes المعقدة — بكل ما فيها من Deployments وServices وIngresses وConfigMaps وSecrets — في وحدة واحدة قابلة للتثبيت تسمى **مخطط (Chart)**.
+
+بدون Helm، نشر تطبيق على Kubernetes يعني إدارة مجلد مليء بملفات YAML، وتعديل القيم يدويًا لكل بيئة، وتشغيل `kubectl apply` على كل ملف. مع Helm، تشغل أمرًا واحدًا: `helm install my-app ./my-chart`. المخطط يصمم ملفات YAML، يضخ قيمًا خاصة بكل بيئة، ويدير دورة الحياة كاملة — التثبيت والترقية والتراجع.
+
+## ما هو Helm؟
+
+Helm يحتوي على ثلاث أفكار رئيسية:
+
+1. **المخططات (Charts)** — حزم من بيانات Kubernetes المصممة. فكر في المخطط كخطة: يحدد *ما* يتم نشره، لكنه يترك التفاصيل (وسم الصورة، عدد النسخ، حدود الموارد) كمتغيرات.
+
+2. **القيم (Values)** — المتغيرات التي تملأ القالب. بيئات مختلفة (تطوير، تجهيز، إنتاج) تستخدم ملفات قيم مختلفة، لكن نفس المخطط.
+
+3. **الإصدارات (Releases)** — تثبيت محدد لمخطط. Helm يتتبع كل إصدار، مسجلاً إصداره وإعداداته. هذا يجعل الترقيات والتراجع سهلاً.
+
+## لماذا يهم هذا؟
+
+- **لا مزيد من نسخ ولصق YAML** — بدون Helm، تنسخ الفرق ملفات YAML بين البيئات وتغير القيم يدويًا. هذا يؤدي إلى الانحراف والأخطاء وإعدادات يستحيل تدقيقها. Helm يستبدل كل ذلك بمخطط واحد وملفات قيم متعددة.
+- **نشر بأمر واحد** — `helm install` يطبق كل بيان بالترتيب الصحيح. لا مزيد من تشغيل خمسة أوامر `kubectl apply` مع الأمل ألا يعتمد شيء على شيء لم يُنشأ بعد.
+- **تراجع مدمج** — Helm يتتبع كل مراجعة إصدار. إذا أفسدت ترقية شيئًا ما، `helm rollback my-app 1` يعيدك إلى النسخة السابقة في ثوانٍ. لا حاجة للبحث في تاريخ git.
+- **حزم قابلة للمشاركة** — يمكن نشر المخططات إلى مستودعات (مثل Artifact Hub). يمكن للفرق تثبيت ومشاركة مكدسات تطبيقات كاملة — قواعد بيانات، طوابير رسائل، مراقبة — بأمر واحد.
+- **تماثل البيئات** — نفس المخطط ينشر في التطوير والتجهيز والإنتاج. فقط القيم تختلف. هذا يقضي على مشكلة "يعمل في التجهيز، معطل في الإنتاج" الناتجة عن إعدادات متباعدة.
+
+## المفاهيم الأساسية
+
+### هيكل المخطط
+
+مخطط Helm هو مجلد بهيكل محدد. إليك شكل المخطط النموذجي:
+
+```
+my-chart/
+├── Chart.yaml              # Chart metadata — name, version, description
+├── values.yaml             # Default configuration values
+├── templates/
+│   ├── deployment.yaml      # Templated Deployment manifest
+│   ├── service.yaml         # Templated Service manifest
+│   ├── ingress.yaml         # Templated Ingress manifest
+│   ├── configmap.yaml       # Templated ConfigMap
+│   ├── _helpers.tpl         # Reusable template snippets (named templates)
+│   └── NOTES.txt            # Post-install instructions shown to the user
+├── .helmignore              # Files to exclude from the chart package
+└── charts/                  # Subcharts (dependencies on other Charts)
+```
+
+### Chart.yaml — بطاقة الهوية
+
+كل مخطط لديه `Chart.yaml` يحدد هويته ويعلن عن تبعياته:
+
+```yaml
+apiVersion: v2                # Helm 3 API version
+name: my-app                   # The chart name — used in release tracking
+description: A web application serving user profiles
+type: application              # 'application' for deployable charts, 'library' for shared templates
+version: 1.0.0                # Chart version (follows SemVer) — bump this on every change
+appVersion: "2.1.0"           # Version of the application being deployed (informational)
+maintainers:
+  - name: platform-team
+    email: platform@example.com
+dependencies:
+  - name: postgresql           # Subchart — Helm installs PostgreSQL too
+    version: "^12.0"
+    repository: "https://charts.bitnami.com/bitnami"
+    condition: postgresql.enabled  # Only install if this value is true
+```
+
+**مهم:** `version` و`appVersion` شيئان مختلفان. `version` يتتبع التغييرات على *المخطط نفسه* (تغييرات القالب، ميزات جديدة). `appVersion` يتتبع إصدار *التطبيق* الذي ينشره المخطط. زيّد `version` في كل مرة تعدل فيها المخطط، حتى لو لم يتغير إصدار التطبيق.
+
+### values.yaml — مركز الإعدادات
+
+`values.yaml` يحتوي على كل معلمة قابلة للتكوين لمخططك. هنا ينظر من ينشر مخططك لفهم ما يمكنه تخصيصه:
+
+```yaml
+# How many replicas to run
+replicaCount: 2
+
+# Container image configuration
+image:
+  repository: ghcr.io/my-org/my-app    # Where to pull the image from
+  tag: ""                               # Defaults to .Chart.AppVersion if empty
+  pullPolicy: IfNotPresent              # Pull strategy: Always, IfNotPresent, Never
+
+# Service configuration — how other pods reach this app
+service:
+  type: ClusterIP                       # ClusterIP (internal), NodePort, or LoadBalancer
+  port: 80                              # Service port
+  targetPort: 3000                      # Port the container listens on
+
+# Resource limits — prevent one pod from hogging the node
+resources:
+  limits:
+    cpu: 500m                            # Max 0.5 CPU cores
+    memory: 512Mi                        # Max 512 MiB RAM
+  requests:
+    cpu: 250m                            # Guaranteed 0.25 CPU cores
+    memory: 256Mi                        # Guaranteed 256 MiB RAM
+
+# Ingress — expose the app to the outside world
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: my-app.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+# PostgreSQL subchart toggle
+postgresql:
+  enabled: true                         # Install PostgreSQL alongside the app
+  auth:
+    database: myapp
+```
+
+### التصميم — قوة `{{ .Values }}`
+
+Helm يستخدم قوالب Go لضخ القيم في بيانات Kubernetes. الأقواس المتعرجة المزدوجة `{{ }}` هي حيث يحدث السحر:
+
+```yaml
+# templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # {{ .Chart.Name }} resolves to the chart name from Chart.yaml
+  name: {{ .Chart.Name }}
+  labels:
+    app: {{ .Chart.Name }}
+    version: {{ .Chart.AppVersion }}
+spec:
+  # {{ .Values.replicaCount }} pulls from values.yaml
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ .Chart.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Chart.Name }}
+    spec:
+      containers:
+        - name: {{ .Chart.Name }}
+          # Nested values: .Values.image.repository and .Values.image.tag
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          # The 'default' function provides a fallback if image.tag is empty
+          ports:
+            - containerPort: {{ .Values.service.targetPort }}
+          resources:
+            # toYaml converts the resources object to YAML
+            # nindent 12 adds a 12-space indent (nested inside containers[])
+            {{- toYaml .Values.resources | nindent 12 }}
+```
+
+**شرح ميزات القالب الرئيسية سطرًا بسطر:**
+
+- `{{ .Chart.Name }}` — يصل إلى حقل `name` من `Chart.yaml`. النقطة (`.`) تمثل السياق الحالي.
+- `{{ .Values.replicaCount }}` — يصل إلى القيم من `values.yaml`. كائن `Values` هو ملف القيم بالكامل.
+- `| default .Chart.AppVersion` — الأنبوب (`|`) يمرر الجانب الأيسر عبر دالة `default`. إذا كان `image.tag` فارغًا، يعود إلى `appVersion` الخاص بالمخطط.
+- `{{- toYaml .Values.resources | nindent 12 }}` — العلامة `-` داخل `{{-` تزيل المسافات قبل الوسم. `toYaml` يحول كائن Go إلى نص YAML. `nindent 12` يضيف سطرًا جديدًا ويضيف مسافة بادئة بمقدار 12 مسافة لكل سطر، مما يتطابق مع مستوى التعشيش.
+
+### أوامر Helm — دورة الحياة
+
+Helm يدير دورة حياة تطبيقك بالكامل. إليك الأوامر التي ستستخدمها أكثر:
+
+```bash
+# Install a chart — creates a new release
+helm install my-app ./my-chart
+
+# Install with custom values (overrides defaults from values.yaml)
+helm install my-app ./my-chart -f values-prod.yaml
+
+# Upgrade an existing release to a new chart version or new values
+helm upgrade my-app ./my-chart -f values-prod.yaml
+
+# Install OR upgrade — Helm figures out which one to do (idempotent)
+helm upgrade --install my-app ./my-chart -f values-prod.yaml
+
+# Rollback to a previous revision (revision numbers start at 1)
+helm rollback my-app 1
+
+# List all releases in the current namespace
+helm list
+
+# Uninstall a release — deletes all associated Kubernetes resources
+helm uninstall my-app
+
+# Render templates locally without deploying (great for debugging)
+helm template ./my-chart
+
+# Show the values a release is currently using
+helm get values my-app
+```
+
+### تجاوز القيم حسب البيئة
+
+هنا يتألق Helm. مخطط واحد، بيئات متعددة، قيم مختلفة:
+
+**values-dev.yaml** — موارد محدودة للتطوير المحلي:
+```yaml
+replicaCount: 1
+image:
+  tag: "latest"
+  pullPolicy: Always
+resources:
+  limits:
+    cpu: 250m
+    memory: 256Mi
+ingress:
+  enabled: false
+postgresql:
+  enabled: true
+```
+
+**values-prod.yaml** — إعدادات بمستوى الإنتاج:
+```yaml
+replicaCount: 3
+image:
+  tag: "v2.1.0"
+  pullPolicy: IfNotPresent
+resources:
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+  requests:
+    cpu: 500m
+    memory: 512Mi
+ingress:
+  enabled: true
+  hosts:
+    - host: my-app.example.com
+postgresql:
+  enabled: false        # Use external managed PostgreSQL in production
+```
+
+```bash
+# Deploy to dev
+helm upgrade --install my-app ./my-chart -f values-dev.yaml -n dev
+
+# Deploy to production
+helm upgrade --install my-app ./my-chart -f values-prod.yaml -n prod
+```
+
+### مستودعات المخططات
+
+يمكن نشر المخططات إلى مستودعات، تمامًا مثل حزم npm أو صور Docker:
+
+```bash
+# Add a repository
+helm repo add bitnami https://charts.bitnami.com/bitnami
+
+# Search for charts
+helm search repo postgresql
+
+# Install a chart from a repository
+helm install my-postgres bitnami/postgresql
+
+# Update your local index to get the latest charts
+helm repo update
+```
+
+المستودعات الشائعة تشمل Bitnami (مئات المخططات الجاهزة للإنتاج) وArtifact Hub ("متجر تطبيقات" Helm) وAWS ECR (للمخططات الخاصة).
+
+### Helm مقابل Kustomize
+
+Helm ليس الطريقة الوحيدة لإدارة بيانات Kubernetes. **Kustomize** هو بديل مدمج في `kubectl`. إليك المقارنة:
+
+| الميزة | Helm | Kustomize |
+|--------|------|-----------|
+| النهج | قوالب بتركيب `{{ }}` | تراكبات على YAML خام (بدون قوالب) |
+| منحنى التعلم | أكثر انحدارًا — قوالب Go، دوال، أنابيب | أسهل — فقط YAML مع رقع |
+| التغليف | يمكن نشر المخططات إلى مستودعات | بدون تغليف — يعمل على YAML خام في مجلدات |
+| إدارة دورة الحياة | يتتبع الإصدارات، يدعم التراجع | بدون تتبع الإصدارات — تطبيق فقط |
+| اختلافات البيئات | ملفات قيم منفصلة لكل بيئة | مجلدات تراكب تُرقع YAML الأساسي |
+| التبعيات | مخططات فرعية بقيود إصدار | بدون إدارة تبعيات |
+| الأنسب لـ | تطبيقات معقدة، حزم مشتركة، فرق | مشاريع بسيطة، متشددون حول Kubernetes |
+
+**متى تختار Helm:** لديك تطبيقات معقدة، أو تحتاج مشاركة المخططات بين الفرق، أو تريد تتبع الإصدارات والتراجع. **متى تختار Kustomize:** تفضل YAML خام بدون قوالب، أو لديك احتياجات نشر بسيطة، أو لديك استثمار عميق في GitOps بأدوات مثل ArgoCD.
+
+## مثال عملي — إنشاء ونشر مخطط
+
+لنبني مخططًا من الصفر لواجهة برمجة تطبيقات ويب تسمى `profile-service`.
+
+**الخطوة 1: إنشاء هيكل المخطط**
+
+```bash
+helm create profile-service
+cd profile-service
+```
+
+Helm يولّد مخططًا كاملاً مع قوالب لـ Deployment وService وIngress والمزيد. نظّف ما لا تحتاجه وخصص الباقي.
+
+**الخطوة 2: تعديل Chart.yaml**
+
+```yaml
+apiVersion: v2
+name: profile-service
+description: User profile management API
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+```
+
+**الخطوة 3: تعريف values.yaml**
+
+```yaml
+replicaCount: 2
+
+image:
+  repository: ghcr.io/my-org/profile-service
+  pullPolicy: IfNotPresent
+  tag: ""
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: profile.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 15
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 10
+```
+
+**الخطوة 4: التحقق من أن القوالب تُصيَّر بشكل صحيح**
+
+```bash
+helm template ./profile-service | less
+```
+
+هذا يصيّر كل القوالب إلى المخرج القياسي بدون نشر. راجع المخرجات لتتأكد أن القيم تُضخ بشكل صحيح.
+
+**الخطوة 5: النشر**
+
+```bash
+# Install to a dev namespace
+kubectl create namespace dev
+helm install profile-service ./profile-service -n dev
+
+# Check the release
+helm list -n dev
+kubectl get pods -n dev
+```
+
+**المخرجات المتوقعة:**
+
+```
+NAME              	NAMESPACE	REVISION	UPDATED                                	STATUS  	CHART                   	APP VERSION
+profile-service   	dev      	1       	2026-04-18 10:00:00.000000000 +0000 UTC	deployed	profile-service-0.1.0  	1.0.0
+```
+
+**الخطوة 6: الترقية والتراجع**
+
+```bash
+# Change a value and upgrade
+helm upgrade profile-service ./profile-service -n dev --set replicaCount=3
+
+# Something went wrong? Rollback
+helm rollback profile-service 1 -n dev
+```
+
+## الأخطاء الشائعة والنصائح
+
+- **خطأ: عدم استخدام `helm upgrade --install`** — إذا شغّلت `helm install` على إصدار موجود، يظهر خطأ. وإذا شغّلت `helm upgrade` على إصدار غير موجود، يظهر خطأ أيضًا. **نصيحة:** استخدم `helm upgrade --install` — يثبّت إذا لم يكن الإصدار موجودًا، ويرقّي إذا كان موجودًا.
+
+- **خطأ: تجاوز القيم بـ `--set` في الإنتاج** — `--set replicaCount=10` مناسب للاختبارات السريعة لكنه غير مرئي في git. لا أحد يستطيع تدقيق أو إعادة إنتاجه. **نصيحة:** استخدم دائمًا ملفات `-f values-prod.yaml`. ضعها في التحكم بالإصدارات.
+
+- **خطأ: الخلط بين إصدار المخطط وإصدار التطبيق** — زيادة `appVersion` بدون زيادة `version` يعني أن Helm لا يراه كمخطط جديد. **نصيحة:** زيّد `version` للمخطط في كل تغيير، بغض النظر عما إذا تغير إصدار التطبيق.
+
+- **خطأ: تثبيت القيم في القوالب** — كتابة `image: ghcr.io/my-org/my-app:v1` مباشرة في القالب يهدر الغرض من Helm. **نصيحة:** كل قيمة خاصة ببيئة يجب أن تكون في `values.yaml` أو ملف تجاوز.
+
+- **نصيحة: استخدم `helm template` للتصحيح** — قبل النشر، شغّل `helm template ./my-chart` لرؤية YAML المُصيَّر. هذا يلتقط أخطاء القالب، المسافة البادئة الخاطئة، والقيم المفقودة بدون لمس مجموعتك.
+
+- **نصيحة: استخدم `helm diff upgrade`** — إضافة `helm-diff` تريك بالضبط ما سيتغير قبل الترقية. ثبّتها بـ `helm plugin install https://github.com/databus23/helm-diff`.
+
+- **نصيحة: أقفل تبعياتك** — شغّل `helm dependency update` لتوليد ملف `Chart.lock`. هذا يثبّت الإصدارات الدقيقة للمخططات الفرعية، مانعًا الترقيات المفاجئة.

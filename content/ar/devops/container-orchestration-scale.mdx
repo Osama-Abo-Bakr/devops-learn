@@ -1,0 +1,431 @@
+---
+title: "تنسيق الحاويات على نطاق واسع"
+module: devops
+level: advanced
+duration: "50 min"
+diagram: container-orchestration-scale
+description: "Kubernetes متعدد المجموعات، شبكة الخدمات، التحجيم التلقائي، ConfigMaps، Secrets، وأنماط استعادة الكوارث."
+order: 7
+---
+
+# تنسيق الحاويات على نطاق واسع
+
+تشغيل مجموعة Kubernetes واحدة ببضع خدمات شيء، وتشغيل مجموعات متعددة عبر مناطق، وربطها بشبكة خدمات، وتحجيم أحمال العمل تلقائيًا تحت الضغط، وإدارة الإعدادات والأسرار، وضمان استعادة الكوارث — هذا هو التنسيق على نطاق واسع. هذا الدرس يغطي الأنماط والأدوات التي تجعل Kubernetes الإنتاجي موثوقًا على نطاق متعدد المجموعات ومتعدد المناطق.
+
+## Kubernetes متعدد المجموعات
+
+المجموعة الواحدة هي نقطة فشل واحدة. إذا تعطلت المجموعة، يتعطل كل شيء. أنظمة الإنتاج تشغل مجموعات متعددة عبر المناطق للتوفر العالي واستعادة الكوارث.
+
+### بنية نشط-سلبي
+
+```
+┌─────────────────────────┐        ┌─────────────────────────┐
+│  Primary Cluster         │        │  DR Cluster              │
+│  (us-east-1)            │        │  (eu-west-1)             │
+│                          │        │                          │
+│  ┌──────┐  ┌──────┐    │        │  ┌──────┐  ┌──────┐    │
+│  │ Pod  │  │ Pod  │    │        │  │ Pod  │  │ Pod  │    │
+│  └──────┘  └──────┘    │        │  └──────┘  └──────┘    │
+│         100% traffic     │        │         0% traffic       │
+└─────────────────────────┘        └─────────────────────────┘
+         │                                     ▲
+         │  Failure detected                    │
+         └──────────────────────────────────────┘
+              DNS failover (Route53)
+```
+
+- **الأساسي** يتعامل مع كل حركة المرور عاديًا.
+- **مجموعة DR (استعادة الكوارث)** تبقى دافئة لكنها لا تستقبل حركة مرور.
+- **التحويل:** DNS (Route53، Cloudflare) يكتشف فشل الأساسي ويحول حركة المرور إلى DR.
+- **وقت الاستعادة:** من دقائق (TTL لـ DNS) إلى ثوانٍ (توجيه مبني على فحص الصحة).
+
+### بنية نشط-نشط
+
+```
+┌─────────────────────────┐        ┌─────────────────────────┐
+│  Cluster A               │        │  Cluster B               │
+│  (us-east-1)            │        │  (eu-west-1)             │
+│                          │        │                          │
+│  ┌──────┐  ┌──────┐    │        │  ┌──────┐  ┌──────┐    │
+│  │ Pod  │  │ Pod  │    │        │  │ Pod  │  │ Pod  │    │
+│  └──────┘  └──────┘    │        │  └──────┘  └──────┘    │
+│         60% traffic       │        │         40% traffic       │
+└─────────────────────────┘        └─────────────────────────┘
+         ▲                                     ▲
+         │           GeoDNS routing             │
+         └─────────────────────────────────────┘
+```
+
+- **كلتا المجموعتين تخدم حركة المرور في وقت واحد.**
+- **GeoDNS** يوجه المستخدمين إلى أقرب مجموعة (توجيه مبني على زمن الاستجابة).
+- **المزايا:** زمن استجابة أقل (المستخدمون يصلون لأقرب منطقة)، توفر أعلى (أي مجموعة يمكنها استيعاب حركة مرور الأخرى).
+- **التكلفة:** مضاعفة البنية التحتية + تعقيد نسخ البيانات عبر المجموعات.
+
+### الاتحاد ومستوى التحكم
+
+لإدارة مجموعات متعددة، فكر في **مستوى تحكم موحّد**:
+
+- **KubeFed** (اتحاد Kubernetes) — يزامن الموارد عبر المجموعات.
+- **Karmada** — تنسيق متعدد المجموعات مع سياسات جدولة.
+- **Liqo** — مشاركة مجموعات ندّ لندّ بدون مستوى تحكم مركزي.
+
+## شبكة الخدمات
+
+عندما يكون لديك خدمات موزعة عبر مجموعات متعددة، تحتاج إلى التواصل بأمان وموثوقية. **شبكة الخدمات** توفر هذا كبنية تحتية — بدون تغيير في الكود.
+
+### ما توفره شبكة الخدمات
+
+| القدرة | بدون شبكة خدمات | مع شبكة خدمات |
+|--------|---------------|-------------|
+| تشفير mTLS | كل خدمة تنفذ TLS | mTLS تلقائي بين كل الخدمات |
+| إدارة حركة المرور | منطق إعادة محاولة خاص بكل خدمة | إعادة محاولة مركزية، قواطع دائرة، مهلات |
+| قابلية الملاحظة | كل خدمة تضيف تتبعًا | تتبع موزع تلقائي |
+| التوجيه عبر المجموعات | DNS مخصص + موازنة حمل | اتصال شفاف عبر المجموعات |
+| توجيه الكناري | توجيه مبني على ترويسات مخصصة | تقسيم حركة مرور موزون بالإعدادات |
+
+### بنية Istio
+
+Istio هي شبكة الخدمات الأكثر استخدامًا. تستخدم نمط **الوكيل الجانبي**:
+
+```
+┌──────────────────────────────────────┐
+│  Pod                                  │
+│                                       │
+│  ┌─────────┐      ┌───────────────┐  │
+│  │  App     │ ◄──► │  Envoy Proxy  │  │
+│  │ Container│      │  (sidecar)    │  │
+│  └─────────┘      └───────────────┘  │
+│                         │              │
+└─────────────────────────┼──────────────┘
+                          │
+                    ┌─────┴─────┐
+                    │  Istiod    │  ◄── Control plane
+                    │  (istiod)  │      (config, certificates)
+                    └───────────┘
+```
+
+- **الوكيل الجانبي Envoy** يعترض كل حركة المرور الشبكية الداخلة والخارجة من حاوية التطبيق.
+- **Istiod** (مستوى التحكم) يدير الإعدادات وتدوير الشهادات وإنفاذ السياسات.
+- **mTLS:** كل اتصال بين الخدمات مشفر. الشهادات تتدور تلقائيًا.
+- **إدارة حركة المرور:** Istio يمكنه توجيه الطلبات عبر المجموعات، تقسيم حركة المرور لنشرات الكناري، وتنفيذ قواطع الدائرة.
+
+### الاتصال عبر المجموعات
+
+مع شبكة خدمات، الخدمات في المجموعة A يمكنها استدعاء خدمات في المجموعة B كما لو كانت محلية:
+
+```yaml
+# ServiceEntry for cross-cluster discovery
+apiVersion: networking.istio.io/v1beta1
+kind: ServiceEntry
+metadata:
+  name: api-svc-cluster-b
+spec:
+  hosts:
+  - api-svc.cluster-b.global
+  location: MESH_INTERNAL
+  ports:
+  - number: 8080
+    name: http
+  resolution: DNS
+  endpoints:
+  - address: ingress.cluster-b.example.com
+    ports:
+      http: 15443  # Istio cross-cluster port
+```
+
+كود التطبيق لا يتغير. يستدعي `api-svc.cluster-b.global` وIstio يتولى التوجيه والتشفير وموازنة الحمل عبر المجموعات.
+
+## التحجيم التلقائي الأفقي لل حجرات (HPA)
+
+HPA يحجّم تلقائيًا عدد نسخ الحجرات بناءً على المقاييس المرصودة. هذه هي الطريقة للتعامل مع ارتفاعات حركة المرور بدون تدخل يدوي.
+
+### كيف يعمل HPA
+
+```
+Metrics Server ──► HPA Controller ──► Deployment Controller ──► New Pods
+      │                  │                                           │
+  Collects CPU/    Compares against                                  │
+  memory data     target threshold                                   │
+      │                  │                                           │
+  e.g., 85% CPU    Target: 70% CPU                              Scale from
+                  Current: 85%                                  4 → 6 replicas
+                  Decision: SCALE UP
+```
+
+**إعدادات HPA:**
+
+```yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-svc
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api-svc
+  minReplicas: 2        # Never go below 2 (high availability)
+  maxReplicas: 20       # Never go above 20 (cost control)
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70   # Target 70% CPU utilization
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80   # Target 80% memory utilization
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300  # Wait 5 min before scaling down
+      policies:
+      - type: Percent
+        value: 10          # Remove max 10% of pods per minute
+        periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0    # Scale up immediately
+      policies:
+      - type: Percent
+        value: 100         # Can double pod count
+        periodSeconds: 60
+      - type: Pods
+        value: 4           # Or add max 4 pods at once
+        periodSeconds: 60
+      selectPolicy: Max     # Use whichever policy adds more pods
+```
+
+**السلوكيات الرئيسية:**
+- **التحجيم للأعلى سريع** (فوري، عدواني) — تريد التعامل مع ارتفاعات حركة المرور بسرعة.
+- **التحجيم للأسفل بطيء** (5 دقائق استقرار، حد أقصى 10% تخفيض) — لا تريد التذبذب (تحجيم لأعلى → تحجيم لأسفل → تحجيم لأعلى) خلال انخفاضات قصيرة في المقاييس.
+
+### مقاييس مخصصة
+
+HPA يمكنه التحجيم على مقاييس مخصصة oltre المعالج/الذاكرة:
+
+```yaml
+metrics:
+- type: Pods
+  pods:
+    metric:
+      name: http_requests_per_second
+    target:
+      type: AverageValue
+      averageValue: 1000   # Target 1000 rps per pod
+```
+
+هذا يتطلب **محول Prometheus** لعرض المقاييس المخصصة من Prometheus إلى واجهة مقاييس Kubernetes.
+
+## ConfigMaps وSecrets
+
+### ConfigMaps: الإعدادات غير الحساسة
+
+ConfigMaps تخزن بيانات إعدادات ليست سرية — مستويات السجلات، علامات الميزات، نقاط نهاية API، المهلات:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  LOG_LEVEL: "info"
+  MAX_CONNECTIONS: "100"
+  CACHE_TTL: "300s"
+  API_TIMEOUT: "30s"
+```
+
+**التركيب كمتغيرات بيئة:**
+
+```yaml
+spec:
+  containers:
+  - name: api
+    envFrom:
+    - configMapRef:
+        name: app-config
+```
+
+**التركيب كملفات:**
+
+```yaml
+spec:
+  containers:
+  - name: api
+    volumeMounts:
+    - name: config-volume
+      mountPath: /etc/config
+  volumes:
+  - name: config-volume
+    configMap:
+      name: app-config
+```
+
+### Secrets: البيانات الحساسة
+
+Secrets تخزن بيانات الاعتماد ومفاتيح API والشهادات. مرمزة بـ base64 ويمكن تقييدها بـ RBAC:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-creds
+type: Opaque
+data:
+  POSTGRES_PASSWORD: cGFzc3dvcmQxMjM=   # base64-encoded
+  API_KEY: YWJjZGVmZ2hpams=             # base64-encoded
+```
+
+**مهم:** ترميز Base64 ليس تشفيرًا. افتراضيًا، Secrets مخزنة في etcd بـ base64. للإنتاج:
+
+1. **فعّل التشفير أثناء التخزين** — إعداد Kubernetes لتشفير Secrets في etcd.
+2. **استخدم مديري أسرار خارجيين** — AWS Secrets Manager، HashiCorp Vault، أو Azure Key Vault.
+3. **قيّد RBAC** — اسمح فقط لحسابات خدمات محددة بقراءة Secrets محددة.
+4. **استخدم Sealed Secrets** أو **External Secrets Operator** لإدارة Secrets عبر GitOps.
+
+### مقارنة ConfigMap مقابل Secret
+
+| الميزة | ConfigMap | Secret |
+|--------|-----------|--------|
+| نوع البيانات | غير حساسة | حساسة (كلمات مرور، مفاتيح) |
+| الترميز | نص عادي | Base64 |
+| التشفير أثناء التخزين | لا | قابل للإعداد (يتطلب إعدادًا) |
+| RBAC | وصول افتراضي | وصول مقيد موصى به |
+| خيارات التركيب | متغيرات بيئة، ملفات، أجزاء | متغيرات بيئة، ملفات، أجزاء |
+| حد الحجم | 1 ميبيبايت | 1 ميبيبايت |
+| أفضل ممارسة | علامات ميزات، نقاط نهاية | بيانات اعتماد، شهادات |
+
+## الأجزاء الدائمة
+
+أنظمة ملفات الحاويات مؤقتة — عندما تُعاد تشغيل حجرة، كل البيانات على نظام ملفات الحاوية تُفقد. لأحمال العمل ذات الحالة (قواعد البيانات، طوابير الرسائل)، تحتاج **تخزين دائم** يبقى أطول من دورة حياة الحجرة.
+
+### نمط PV/PVC
+
+```
+┌─────────────────────────────────────────────────┐
+│  Kubernetes Cluster                              │
+│                                                  │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐  │
+│  │  Pod      │    │  PVC     │    │  PV       │  │
+│  │ (db-pod) │───►│ db-data  │───►│ aws-ebs   │  │
+│  └──────────┘    └──────────┘    └──────────┘  │
+│                                                  │
+│  Pod uses PVC    PVC binds to    PV is actual    │
+│  as volume       a PV           storage (EBS)   │
+└─────────────────────────────────────────────────┘
+```
+
+**PersistentVolume (PV):** يمثل تخزينًا فعليًا (AWS EBS، GCE Persistent Disk، NFS، إلخ). ينشئه المسؤولون أو يُوفَّر ديناميكيًا.
+
+**PersistentVolumeClaim (PVC):** طلب تخزين من حجرة. Kubernetes يطابق PVCs مع PVs بناءً على الحجم ووضع الوصول وفئة التخزين.
+
+```yaml
+# PersistentVolumeClaim
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: db-data
+spec:
+  accessModes:
+  - ReadWriteOnce        # Single node read/write
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: standard  # Binds to matching StorageClass
+```
+
+```yaml
+# Pod using the PVC
+apiVersion: v1
+kind: Pod
+metadata:
+  name: db-pod
+spec:
+  containers:
+  - name: postgres
+    image: postgres:16
+    volumeMounts:
+    - name: data
+      mountPath: /var/lib/postgresql/data
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: db-data
+```
+
+**لماذا هذا مهم:** عندما تُحذف حجرة قاعدة البيانات وتُعاد إنشاؤها (بواسطة Deployment أو StatefulSet)، PVC يعيد الربط بنفس PV. البيانات تبقى بعد إعادة تشغيل الحجرات وفشل العقد وترقيات المجموعة.
+
+### StatefulSets لأحمال العمل ذات الحالة
+
+لقواعد البيانات وخدمات ذات حالة أخرى، استخدم **StatefulSets** بدلاً من Deployments:
+
+- **هوية شبكة مستقرة** — الحجرات تحصل على أسماء متوقعة: `db-0`، `db-1`، `db-2`.
+- **تخزين دائم مستقر** — كل حجرة تحصل على PVC خاص بها يبقى بعد إعادة إنشاء الحجرة.
+- **نشر مرتّب** — الحجرات تُنشأ بالترتيب (0، 1، 2) وتُنهى بالترتيب العكسي.
+- **تحديثات متدرجة مرتّبة** — التحديثات تمضي حجرة واحدة في كل مرة، مما يضمن التوفر.
+
+## أنماط استعادة الكوارث
+
+### نسخ قاعدة البيانات
+
+لاستعادة كوارث متعددة المجموعات، يجب أن تنسخ قواعد البيانات عبر المناطق:
+
+```
+Cluster A (us-east-1)                    Cluster B (eu-west-1)
+┌──────────────┐                         ┌──────────────┐
+│  PostgreSQL   │ ── Async replication ──► │  PostgreSQL   │
+│  (primary)    │                         │  (read replica)│
+└──────────────┘                         └──────────────┘
+       │                                        │
+  Read/Write                              Read-only
+  (normal operation)                      (DR: can be promoted)
+```
+
+- **النسخ غير المتزامن:** كتابات الأساسي تُنسخ إلى مجموعة DR بشكل غير متزامن. تأخير نسخ قصير (عادةً أقل من ثانية).
+- **الترقية:** عند التحويل، تُرقّى نسخة DR إلى أساسي. بعض الكتابات أثناء نافذة تأخير النسخ قد تُفقد.
+- **النسخ المتزامن:** صفر فقدان بيانات لكنه يضيف زمن استجابة (كل كتابة يجب أن تؤكدها كلتا المنطقتين). استخدم للبيانات المالية الحرجة.
+
+### النسخ الاحتياطي والاستعادة
+
+إضافة إلى النسخ، النسخ الاحتياطية المنتظمة توفر شبكة أمان إضافية:
+
+```yaml
+# CronJob for PostgreSQL backups
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup
+spec:
+  schedule: "0 2 * * *"    # Daily at 2 AM
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: backup
+            image: postgres:16
+            command:
+            - /bin/sh
+            - -c
+            - |
+              pg_dump -h $DB_HOST -U $DB_USER $DB_NAME | \
+              gzip > /backups/db-$(date +%Y%m%d).sql.gz && \
+              aws s3 cp /backups/db-$(date +%Y%m%d).sql.gz \
+                s3://my-backups/postgres/
+          restartPolicy: OnFailure
+```
+
+## الخلاصات الرئيسية
+
+- **المجموعات المتعددة** ضرورية للتوفر العالي — المجموعة الواحدة هي نقطة فشل واحدة.
+- **النشط-السلبي** أبسط (مجموعة DR في الاستعداد)؛ **النشط-النشط** يوفر زمن استجابة أقل وتوفرًا أعلى بتكلفة تعقيد أكبر.
+- **شبكة الخدمات** (Istio) توفر mTLS وإدارة حركة المرور والاتصال عبر المجموعات بدون تغيير في الكود.
+- **HPA** يحجّم الحجرات تلقائيًا بناءً على المعالج/الذاكرة/مقاييس مخصصة — تحجيم للأعلى بعدوانية، تحجيم للأسفل بحذر.
+- **ConfigMaps** للإعدادات غير الحساسة؛ **Secrets** لبيانات الاعتماد مع ترميز base64 وقيود RBAC.
+- **PV/PVC** يفصل التخزين عن دورة حياة الحجرات — البيانات تبقى بعد إعادة التشغيل.
+- **StatefulSets** توفر هوية مستقرة وتخزين دائم لأحمال العمل ذات الحالة.
+- **نسخ قاعدة البيانات** (غير متزامن أو متزامن) عبر المناطق هو أساس استعادة الكوارث للخدمات ذات الحالة.
+
+<Diagram config={containerOrchestrationScale} />

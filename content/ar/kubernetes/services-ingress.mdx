@@ -1,0 +1,463 @@
+---
+title: "Services و Ingress"
+module: kubernetes
+level: beginner
+duration: "40 min"
+diagram: k8s-services-ingress
+description: "كشف أحمال العمل باستخدام Services (ClusterIP, NodePort, LoadBalancer) وتوجيه الحركة باستخدام Ingress."
+order: 2
+---
+
+# Services و Ingress
+
+تخيّل أنك تحاول الاتصال بصديق، لكنه يغيّر رقم هاتفه كل بضع ساعات. مُحبط، أليس كذلك؟ هذا بالضبط ما يحدث مع الـ Pods في Kubernetes — فهي عابرة، وكل مرة يُعاد إنشاء Pod، يحصل على عنوان IP جديد. الـ **Service** يشبه امتلاك رقم هاتف دائم يوجّه دائمًا إلى صديقك، بغض النظر عن عدد المرات التي يغيّر فيها رقمه الفعلي.
+
+وإذا كان الـ Service رقم هاتف، فإن الـ **Ingress** هو موظف الاستقبال في مبنى مكاتب كبير. تخبر موظف الاستقبال، "أنا هنا من أجل قسم الفواتير" أو "أحتاج فريق المبيعات"، فيوجّهك إلى الطابق الصحيح. الـ Ingress يوجّه حركة HTTP الخارجية إلى الـ Service الصحيح بناءً على أسماء المضيفين ومسارات URL.
+
+## مشكلة الشبكات
+
+إليك التحدي الأساسي:
+
+1. **الـ Pods عابرة** — تُنشأ وتُدمّر باستمرار. عنوان IP للـ Pod ليس موثوقًا.
+2. **الـ Pods مجهولة** — لا تعرف عناوين IP الخاصة بها مسبقًا، ولا يجب أن تحتاج لذلك.
+3. **الـ Pods موزّعة الحمل** — عادةً لديك نسخ متماثلة متعددة، وتريد الحركة موزعة عبرها جميعًا.
+4. **الـ Pods داخلية** — بشكل افتراضي، لا شيء خارج الكتلة يمكنه الوصول إليها.
+
+الـ Services تحل هذه المشاكل الأربعة جميعها.
+
+## ما هو الـ Service؟
+
+الـ **Service** هو تجريد مستقر يوفّر:
+
+- **عنوان IP افتراضي ثابت** (ClusterIP) لا يتغيّر أبدًا
+- **اسم DNS** (`my-service.my-namespace.svc.cluster.local`) يُحلّ إلى ذلك الـ IP
+- **توزيع حمل تلقائي** عبر جميع الـ Pods السليمة التي تتطابق مع الـ selector الخاص به
+- **طبقة فصل** بين المستهلكين والمنتجين — المستهلكون يتحدثون إلى الـ Service، وليس إلى الـ Pods
+
+عندما تنشئ Service، يُخصص Kubernetes له ClusterIP ويُنشئ سجلات DNS. الـ Service يستخدم **selector** للعثور على الـ Pods المتطابقة ويبرمج قواعد `iptables` أو `IPVS` لتوزيع الحركة عبرها.
+
+### كيف توجّه الـ Services الحركة
+
+```text
+Client Pod
+    │
+    ▼  "I need to talk to web-service"
+Service (ClusterIP: 10.96.0.100)
+    │
+    ├──► Pod-1 (10.244.1.5) ←────┐
+    ├──► Pod-2 (10.244.2.8)      │ Round-robin load balancing
+    └──► Pod-3 (10.244.3.12) ←───┘
+```
+
+العميل لا يعرف (أو يهتم) بأي Pod يعالج طلبه. إذا مات Pod-2، يتوقف الـ Service تلقائيًا عن إرسال الحركة إليه ويوجّهها إلى الـ Pods السليمة المتبقية.
+
+## لماذا يهمّ هذا؟
+
+- **شبكات مستقرة لـ Pods غير مستقرة.** بدون Services، كل تغيير في Deployment أو إعادة تشغيل Pod سيكسر كل عميل يتصل بتطبيقك.
+- **توزيع حمل مدمج.** لا حاجة لإعداد HAProxy أو Nginx للحركة الداخلية. Kubernetes يفعل ذلك من أجلك.
+- **اكتشاف الخدمات عبر DNS.** أي Pod يمكنه الوصول إلى أي Service بالاسم. لا ملفات إعدادات، لا سجلات خدمات.
+- **وصول خارجي مُتحكم به.** الـ Services من نوع NodePort و LoadBalancer تتيح لك كشف أحمال عمل محددة للعالم الخارجي.
+- **الـ Ingress يفعّل التوجيه الذكي.** نقطة دخول واحدة يمكنها توجيه الحركة إلى عشرات الـ Services بناءً على مسار URL أو اسم المضيف.
+
+## شرح أنواع الـ Service
+
+يوفّر Kubernetes أربعة أنواع من الـ Services. كل نوع يتحكم في كيفية كشف الـ Service:
+
+| النوع | النطاق | طريقة الوصول | حالة الاستخدام |
+|------|--------|-------------|---------------|
+| **ClusterIP** | داخلي فقط | `my-service.namespace.svc.cluster.local` | تواصل بين الخدمات داخل الكتلة |
+| **NodePort** | خارجي عبر IP العقدة | `<AnyNodeIP>:<NodePort>` (منفذ 30000-32767) | وصول التطوير/الاختبار، أو عندما لا تملك موزّع حمل سحابي |
+| **LoadBalancer** | خارجي عبر موزّع حمل سحابي | مزوّد السحابة يمنحك IP خارجي | وصول إنتاجي خارجي على الكتل السحابية (AWS, GCP, Azure) |
+| **ExternalName** | اسم مستعار DNS | يُرجع سجل CNAME | الإشارة إلى خدمة خارجية (مثل قاعدة بيانات مُدارة) |
+
+### ClusterIP (الافتراضي)
+
+هذا هو أكثر أنواع الـ Service شيوعًا. يمنح أحمال عملك عنوان IP داخلي مستقر واسم DNS. **لا شيء خارج الكتلة يمكنه الوصول إليه.** هذا ما تستخدمه للخدمات المصغّرة الداخلية، وقواعد البيانات، وطبقات التخزين المؤقت.
+
+```yaml
+apiVersion: v1                       # Core API group for Services
+kind: Service
+metadata:
+  name: api-service                  # The DNS name: api-service.default.svc.cluster.local
+spec:
+  type: ClusterIP                   # Default value -- could omit this line entirely
+  selector:
+    app: api                         # Route traffic to Pods with this label
+  ports:
+    - name: http                     # Named port (useful when a Service has multiple ports)
+      protocol: TCP                 # Default is TCP; also supports UDP, SCTP
+      port: 80                      # The port the Service listens on (what clients connect to)
+      targetPort: 3000              # The port the container listens on (inside the Pod)
+```
+
+العلاقة الأساسية: **العملاء يتصلون بـ `port:80`، والـ Service يُوجّه إلى `targetPort:3000`** على الـ Pod. هذا الفصل يعني أنه يمكنك تغيير منفذ الحاوية دون تغيير ما يتصل به العملاء.
+
+تحقق من الـ Service:
+
+```bash
+kubectl apply -f api-service.yaml
+kubectl get svc api-service
+```
+
+```text
+NAME          TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+api-service   ClusterIP   10.96.142.58    <none>        80/TCP    5s
+```
+
+### NodePort
+
+الـ NodePort يفتح منفذًا (30000-32767 بشكل افتراضي) على **كل عقدة** في الكتلة ويوجّه الحركة من ذلك المنفذ إلى الـ Service الخاص بك. يُبنى فوق الـ ClusterIP.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-service
+spec:
+  type: NodePort                    # Opens a port on every cluster node
+  selector:
+    app: web
+  ports:
+    - port: 80                      # Service port (internal)
+      targetPort: 3000              # Container port
+      nodePort: 30080              # Port on each node (30000-32767 range)
+```
+
+الآن يمكنك الوصول إلى تطبيقك عبر `<AnyNodeIP>:30080`. إذا كان لديك ثلاث عقد على 10.0.0.1 و10.0.0.2 و10.0.0.3، فجميع هذه تعمل:
+
+```text
+http://10.0.0.1:30080
+http://10.0.0.2:30080
+http://10.0.0.3:30080
+```
+
+حتى لو لم يكن الـ Pod يعمل على تلك العقدة المحددة، تُوجّه الحركة إلى المكان الصحيح.
+
+### LoadBalancer
+
+الـ Service من نوع LoadBalancer هو ما تستخدمه في الإنتاج على الكتل السحابية. يُوفّر موزّع حمل خارجي (AWS ELB، GCP Cloud Load Balancer، Azure Load Balancer) ويوجّه الحركة إلى الـ NodePort.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-lb
+spec:
+  type: LoadBalancer               # Cloud provider creates an external LB
+  selector:
+    app: web
+  ports:
+    - port: 80
+      targetPort: 3000
+```
+
+```bash
+kubectl get svc web-lb
+```
+
+```text
+NAME     TYPE           CLUSTER-IP     EXTERNAL-IP      PORT(S)        AGE
+web-lb   LoadBalancer   10.96.44.12    203.0.113.42     80:31234/TCP   2m
+```
+
+الـ `EXTERNAL-IP` هو نقطة الدخول العامة الخاصة بك. قد يستغرق الأمر دقيقة أو دقيقتين حتى يُوفّر مزوّد السحابة موزّع الحمل.
+
+**تحذير:** كل Service من نوع LoadBalancer يكلّف مالًا على مزوّدي السحابة. إذا كان لديك 10 خدمات مصغّرة، فهذا يعني 10 موزّعات حمل. هذه بالضبط المشكلة التي يحلها الـ Ingress — موزّع حمل واحد، وServices متعددة.
+
+### ExternalName
+
+هذا نوع خاص من الـ Service لا يوجّه الحركة إلى الـ Pods أصلًا. يُرجع سجل CNAME، مشيرًا إلى اسم DNS خارجي.
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: external-database
+spec:
+  type: ExternalName
+  externalName: db.prod.example.com   # CNAME record pointing here
+```
+
+الآن يمكن للكود داخل الكتلة الاتصال بـ `external-database.default.svc.cluster.local` ويُحلّ إلى `db.prod.example.com`. هذا رائع للانتقال إلى الخدمات المُدارة أو تجريد التبعيات الخارجية.
+
+## التوجيه المبني على الـ Selector
+
+حقل الـ `selector` هو الصلة بين الـ Service والـ Pods الخاص به. الـ Service يراقب باستمرار الـ Pods التي تتطابق مع الـ selector ويُحدّث جدول التوجيه تلقائيًا.
+
+```yaml
+# Service selector
+selector:
+  app: web
+  environment: production
+```
+
+هذا الـ Service يوجّه الحركة إلى أي Pod يحمل **كلا** التصنيفين: `app: web` و `environment: production`. إذا أضفت Pod جديدًا بتصنيفات متطابقة، يبدأ الـ Service بتوجيه الحركة إليه فورًا. أزلت تصنيفًا؟ يتوقف الـ Service عن إرسال الحركة. لا حاجة لإعادة التشغيل.
+
+**مهم:** إذا غيّرت تصنيفات Pod، تتغيّر علاقة الـ Service فورًا. كن حذرًا عند تغيير التصنيفات على الـ Pods العاملة.
+
+## Ingress: شرطي المرور
+
+إذا كانت الـ Services أرقام هواتف، فإن الـ **Ingress** هو موظف الاستقبال الذكي الذي يوجّه الزوار إلى القسم الصحيح. بدلًا من كشف كل Service بموزّع حمل خاص به (مكلف!)، تكشف عن متحكم Ingress واحد وتوجّه الحركة بناءً على:
+
+- **اسم المضيف** — `api.example.com` يذهب إلى الـ Service الخاص بالـ API، `app.example.com` يذهب إلى الواجهة الأمامية
+- **مسار URL** — `/api` يذهب إلى الـ Service الخاص بالـ API، `/` يذهب إلى الـ Service الخاص بالويب
+- **كلاهما** — ادمج اسم المضيف والمسار للتحكم الدقيق
+
+### متحكم Ingress: القطعة المفقودة
+
+الـ **Ingress resource** هو مجرد ملف قواعد. لا يفعل شيئًا بنفسه. تحتاج إلى **Ingress Controller** — بروكسي عكسي (مثل Nginx أو Traefik أو Kong) يقرأ قواعد Ingress ويوجّه الحركة فعلًا.
+
+فكّر في الأمر بهذه الطريقة: الـ Ingress resource هو قائمة قواعد التوجيه، ومتحكم Ingress هو الموجّه الذي ينفّذها. بدون متحكم، قواعد Ingress مجرد أمنيات.
+
+متحكمات Ingress الشائعة:
+
+| المتحكم | الأفضل لـ | الميزة الرئيسية |
+|---------|----------|----------------|
+| **Nginx Ingress** | معظم أحمال العمل | مُختبَر في المعركة، دعم مجتمعي واسع |
+| **Traefik** | الحزم السحابية الأصلية | اكتشاف تلقائي، لوحة تحكم رائعة |
+| **Kong** | إدارة API | إضافات للمصادقة، تحديد المعدل، التسجيل |
+| **Istio Gateway** | إعدادات شبكة الخدمات | مدمج مع ميزات شبكة Istio |
+
+### التوجيه المبني على المسار
+
+```yaml
+apiVersion: networking.k8s.io/v1      # Ingress lives in the networking API group
+kind: Ingress
+metadata:
+  name: app-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /   # Strip the path prefix before forwarding
+spec:
+  ingressClassName: nginx             # Which Ingress Controller handles this resource
+  rules:
+    - host: app.example.com           # Match this hostname
+      http:
+        paths:
+          - path: /                   # Root path goes to the frontend
+            pathType: Prefix          # Prefix matching: /, /about, /contact all match
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 80
+          - path: /api                # /api/* goes to the API backend
+            pathType: Prefix
+            backend:
+              service:
+                name: api-service
+                port:
+                  number: 80
+          - path: /ws                 # /ws/* goes to the WebSocket backend
+            pathType: Prefix
+            backend:
+              service:
+                name: ws-service
+                port:
+                  number: 80
+```
+
+### التوجيه المبني على المضيف
+
+يمكنك أيضًا التوجيه بناءً على أسماء مضيفين مختلفة — مفيد عندما يكون لديك تطبيقات متعددة على نفس الكتلة:
+
+```yaml
+spec:
+  rules:
+    - host: shop.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: shop-frontend
+                port:
+                  number: 80
+    - host: blog.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: blog-frontend
+                port:
+                  number: 80
+```
+
+### إنهاء TLS
+
+الـ Ingress يمكنه التعامل مع HTTPS نيابة عنك. ينهي اتصال TLS عند متحكم Ingress ويُوجّه HTTP نظيفًا إلى الـ Services الخاصة بك. هذا يعني أن الـ Pods لا تحتاج شهادات TLS — الـ Ingress يتولى الأمر.
+
+```yaml
+spec:
+  tls:                                # TLS configuration
+    - hosts:
+        - app.example.com             # This hostname uses TLS
+      secretName: app-tls-secret      # Reference to a Kubernetes Secret with the cert
+  rules:
+    - host: app.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 80
+```
+
+الـ `app-tls-secret` يجب أن يحتوي على `tls.crt` و`tls.key`. يمكنك إنشاؤه يدويًا أو استخدام **cert-manager** لتوفير الشهادات تلقائيًا مع Let's Encrypt.
+
+## مثال عملي: تطبيق متعدد الـ Services
+
+لنربط إعدادًا كاملًا مع واجهة أمامية، وAPI، وتوجيه Ingress.
+
+**هيكل المشروع:**
+
+```text
+k8s/
+├── frontend-deployment.yaml
+├── api-deployment.yaml
+├── frontend-service.yaml
+├── api-service.yaml
+└── ingress.yaml
+```
+
+**frontend-service.yaml:**
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-service
+spec:
+  type: ClusterIP                    # Internal only -- Ingress handles external access
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 3000
+```
+
+**api-service.yaml:**
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-service
+spec:
+  type: ClusterIP
+  selector:
+    app: api
+  ports:
+    - port: 80
+      targetPort: 8080
+```
+
+**ingress.yaml:**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - myapp.example.com
+      secretName: myapp-tls
+  rules:
+    - host: myapp.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend-service
+                port:
+                  number: 80
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api-service
+                port:
+                  number: 80
+```
+
+انشر كل شيء:
+
+```bash
+kubectl apply -f k8s/
+kubectl get ingress
+```
+
+```text
+NAME          CLASS   HOSTS                ADDRESS          PORTS     AGE
+app-ingress   nginx   myapp.example.com    203.0.113.50     80, 443   30s
+```
+
+الآن الحركة تتدفق هكذا:
+
+```text
+Internet
+    │
+    ▼
+Ingress Controller (203.0.113.50)
+    │
+    ├── /        ──►  frontend-service ──►  Frontend Pods (:3000)
+    └── /api     ──►  api-service      ──►  API Pods (:8080)
+```
+
+عنوان IP واحد، شهادة TLS واحدة، واجهات خلفية متعددة. هذه قوة الـ Ingress.
+
+## الأخطاء الشائعة ونصائح
+
+| الخطأ | ما الذي يسوء | كيف تصلحه |
+|-------|-------------|-----------|
+| **عدم تثبيت متحكم Ingress** | تُنشأ موارد Ingress لكن لا شيء يحدث | ثبّت واحدًا: `kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/main/deploy/static/provider/cloud/deploy.yaml` |
+| **الـ Selector لا يتطابق مع أي Pods** | الـ Service لديه نقاط نهاية لكن الحركة لا تتدفق | تحقق بـ `kubectl get endpoints <service-name>` — إذا أظهر `<none>`، فالـ selector خاطئ |
+| **استخدام NodePort في الإنتاج** | كشف المنافذ العالية أمر مزعج وغير آمن | استخدم LoadBalancer أو Ingress للإنتاج |
+| **عدد كبير جدًا من LoadBalancer Services** | كل واحد يكلّف مالًا ويُنشئ موزّع حمل سحابي | جمّع خلف Ingress |
+| **نسيان `ingressClassName`** | تُتجاهل قواعد Ingress إذا لم يتم تحديد متحكم | أضف `ingressClassName: nginx` (أو اسم متحكمك) |
+| **قيم pathType مختلطة** | `Prefix` مقابل `Exact` تتصرفان بشكل مختلف وقد تسبب مفاجآت في التوجيه | استخدم `Prefix` في معظم الحالات؛ `Exact` فقط عندما تحتاج مطابقة دقيقة |
+| **TLS Secret مفقود** | HTTPS لا يعمل، يتراجع Ingress إلى HTTP | أنشئ الـ Secret أو استخدم cert-manager للتوفير التلقائي |
+
+### نصائح احترافية
+
+- استخدم `kubectl port-forward svc/web-service 8080:80` لاختبار الـ Service محليًا بدون كشفه.
+- تحقق من نقاط نهاية الـ Service بـ `kubectl get endpoints <service-name>` — هذا يخبرك إذا كان الـ selector يعمل.
+- استخدم `kubectl describe svc <name>` لرؤية القائمة الكاملة لنقاط النهاية التي يوجه إليها الـ Service.
+- للتطوير المحلي، أدوات مثل `minikube tunnel` أو `kind` مع تعيينات المنافذ تجعل الـ LoadBalancer Services قابلة للوصول على localhost.
+- فضّل Ingress على الـ LoadBalancer Services المتعددة — أرخص ويمنحك تحكمًا أكبر في التوجيه.
+
+## مرجع الأوامر الرئيسية
+
+```bash
+# Working with Services
+kubectl get svc                              # List all Services
+kubectl describe svc <name>                  # Detailed Service info and endpoints
+kubectl get endpoints <name>                 # See which Pods the Service routes to
+kubectl expose deployment <name> --port=80 --target-port=3000  # Quick way to create a Service
+
+# Testing Service connectivity
+kubectl port-forward svc/web-service 8080:80   # Forward local port 8080 to the Service
+kubectl run test --image=busybox --rm -it -- wget -qO- http://api-service:80  # Test from inside the cluster
+
+# Working with Ingress
+kubectl get ingress                          # List all Ingress resources
+kubectl describe ingress <name>              # Detailed Ingress rules and backend info
+kubectl get ingressclass                     # List available Ingress classes
+
+# Debugging
+kubectl get events --field-selector reason=CreatingLoadBalancerFailed  # Check LB provisioning errors
+```
+
+<Diagram config={k8sServicesIngress} />

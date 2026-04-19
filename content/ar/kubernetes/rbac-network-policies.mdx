@@ -1,0 +1,542 @@
+---
+title: "RBAC و Network Policies"
+module: kubernetes
+level: advanced
+duration: "35 min"
+description: "التحكم في الوصول باستخدام Role-Based Access Control وتأمين شبكات الـ Pods باستخدام NetworkPolicies."
+order: 5
+---
+
+# RBAC و Network Policies
+
+الأمان في Kubernetes له بُعدان، وأنت تحتاج كليهما لبناء كتلة آمنة حقًا. الـ **RBAC** يجيب على سؤال "من يستطيع فعل ماذا؟" — فهو يتحكم في الوصول إلى واجهة برمجة Kubernetes. الـ **NetworkPolicies** تجيب على سؤال "ماذا يمكنه التواصل مع ماذا؟" — فهي تتحكم في حركة الشبكة بين الـ Pods. تخطَّ أيًا منهما، وتكون قد تركت الباب مفتوحًا على مصراعيه.
+
+فكّر في الأمر كمبنى مكاتب: الـ RBAC هو نظام بطاقات المفاتيح الذي يحدد من يمكنه دخول أي غرف وتشغيل أي معدات. الـ NetworkPolicies هي نظام الهاتف الداخلي الذي يتحكم في أي الأقسام يمكنها الاتصال ببعضها. مطوّر مبتدئ لا يجب أن يتمكن من الوصول إلى قاعدة بيانات الإنتاج (RBAC)، والخادم الوجهي العام لا يجب أن يتمكن من الدخول عبر SSH إلى الخدمات الداخلية (NetworkPolicies).
+
+## مبدأ الامتيازات الأقل
+
+كل من الـ RBAC والـ NetworkPolicies مبنيان على نفس المبدأ الأساسي: **أعطِ كل كيان فقط الوصول الذي يحتاجه، ولا شيء أكثر.**
+
+- وكيل المراقبة يحتاج لقراءة مقاييس الـ Pod، لكنه لا يحتاج لحذف الـ Deployments.
+- الـ Pod الخاص بالواجهة الأمامية يحتاج للتحدث إلى واجهة برمجة الـ API الخلفية، لكنه لا يحتاج للتحدث إلى قاعدة البيانات.
+- المطوّر يحتاج لعرض السجلات في بيئة التحضير، لكنه لا يجب أن يتمكن من تعديل موارد الإنتاج.
+
+هذا ليس بارانويا — بل هو دفاع متعمق. عندما (وليس إذا) يتم اختراق حساب أو استغلال Pod، يحد مبدأ الامتيازات الأقل من نطاق الضرر. بدون الـ RBAC، يمكن لحساب ServiceAccount مخترق حذف كل مورد في كتلتك. بدون الـ NetworkPolicies، يمكن لـ Pod مخترق استخراج البيانات من كل Pod آخر.
+
+## لماذا يهمّ هذا؟
+
+- **الـ Pods المخترقة أمر حتمي.** إذا اخترق مهاجم Pod واحدً، تمنعه الـ NetworkPolicies من الوصول إلى الـ Pods الأخرى. بدونها، يمكن لكل Pod الوصول إلى كل Pod آخر.
+- **التدمير العرضي شائع.** مهندس مبتدئ يشغّل `kubectl delete` ضد مساحة الأسماء الخاطئة يمكنه التسبب في انقطاع. الـ RBAC يمنع هذا.
+- **الامتثال التنظيمي يتطلب ذلك.** PCI-DSS و SOC 2 و HIPAA و ISO 27001 جميعها تتطلب ضوابط وصول وعزلًا شبكيًا.
+- **الكتل متعددة المستأجرين تحتاج عزلًا.** عندما تتشارك فرق متعددة كتلة واحدة، الـ RBAC والـ NetworkPolicies تفرض الحدود.
+- **مُفعّل بشكل افتراضي (RBAC).** Kubernetes يُفعّل الـ RBAC بشكل افتراضي في الكتل الحديثة. إذا لم تُعدّه بشكل صحيح، قد لا يكون لدى الـ ServiceAccounts أي صلاحيات — أو الأسوأ، صلاحيات cluster-admin.
+
+## RBAC: التحكم في الوصول المبني على الأدوار
+
+الـ RBAC يتحكم في **من** يمكنه تنفيذ **أي إجراءات** على **أي موارد**. كل أمر `kubectl`، كل استدعاء واجهة برمجة من متحكم، وكل طلب تطبيق داخل الكتلة يمر عبر فحوصات الـ RBAC.
+
+### كائنات الـ RBAC الأربعة
+
+يستخدم الـ RBAC أربعة كائنات تتحد في زوجين:
+
+| الكائن | النطاق | الغرض |
+|--------|--------|--------|
+| **Role** | مساحة الأسماء | يحدد الصلاحيات داخل مساحة أسماء واحدة |
+| **ClusterRole** | على مستوى الكتلة | يحدد الصلاحيات عبر جميع مساحات الأسماء (أو للموارد غير المرتبطة بمساحات أسماء) |
+| **RoleBinding** | مساحة الأسماء | يربط Role بكائنات (مستخدمين، مجموعات، ServiceAccounts) داخل مساحة أسماء |
+| **ClusterRoleBinding** | على مستوى الكتلة | يربط ClusterRole بكائنات عبر الكتلة بأكملها |
+
+النمط دائمًا: **Role/ClusterRole** (يحدد الصلاحيات) + **RoleBinding/ClusterRoleBinding** (يُعيّن تلك الصلاحيات لشخص ما).
+
+```text
+┌─────────────────────────────────────────────────────┐
+│                    Cluster Level                      │
+│                                                      │
+│  ClusterRole ─── ClusterRoleBinding ───► Subject     │
+│  (permissions)   (assignment)            (user/SA)    │
+│                                                      │
+├─────────────────────────────────────────────────────┤
+│                  Namespace Level                      │
+│                                                      │
+│  Role ─── RoleBinding ───► Subject                   │
+│  (perms)   (assignment)     (user/SA)                 │
+└─────────────────────────────────────────────────────┘
+```
+
+### Roles و ClusterRoles: تحديد الصلاحيات
+
+الـ **Role** يحدد مجموعة من الصلاحيات داخل مساحة أسماء واحدة. إليك Role يسمح بقراءة الـ Pods وعرض سجلاتها:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1     # RBAC API group
+kind: Role
+metadata:
+  name: pod-reader                          # Name of the Role
+  namespace: staging                        # This Role only applies to the "staging" namespace
+rules:                                      # List of permission rules
+  - apiGroups: [""]                         # "" = the core API group (Pods, Services, ConfigMaps, etc.)
+    resources: ["pods", "pods/log"]         # Which resources this rule applies to
+    verbs: ["get", "list", "watch"]          # Allowed actions: read individual, list collection, watch for changes
+  - apiGroups: [""]
+    resources: ["pods/exec"]                # Allow exec into Pods (shell access)
+    verbs: ["create"]                       # "create" is the verb for exec (it creates an exec session)
+```
+
+كل `rule` له ثلاثة أجزاء:
+
+| الحقل | ما يعنيه | أمثلة |
+|-------|---------|--------|
+| `apiGroups` | مجموعة API التي ينتمي إليها المورد | `""` (أساسي)، `"apps"`، `"batch"`، `"autoscaling"` |
+| `resources` | أنواع موارد Kubernetes | `pods`، `deployments`، `secrets`، `configmaps` |
+| `verbs` | الإجراءات المسموحة | `get`، `list`، `watch`، `create`، `update`، `patch`، `delete` |
+
+الـ **ClusterRole** يعمل بنفس الطريقة لكنه يُطبّق على مستوى الكتلة. استخدم الـ ClusterRoles لـ:
+
+- الموارد غير المرتبطة بمساحات الأسماء (العقد، الأحجام الدائمة، مساحات الأسماء نفسها)
+- الصلاحيات التي يجب أن تُطبّق عبر جميع مساحات الأسماء
+- تجميع الصلاحيات التي يمكن الإشارة إليها من RoleBindings متعددة
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: node-reader                        # No namespace field -- ClusterRoles are cluster-scoped
+rules:
+  - apiGroups: [""]
+    resources: ["nodes"]                    # Nodes are non-namespaced resources
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods"]                    # This grants pod read access across ALL namespaces
+    verbs: ["get", "list", "watch"]
+```
+
+### RoleBindings و ClusterRoleBindings: تعيين الصلاحيات
+
+الـ **RoleBinding** يُعيّن Role لكائن (مستخدم، مجموعة، أو ServiceAccount) داخل مساحة أسماء محددة:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: read-pods                          # Name of the binding
+  namespace: staging                        # Must match the Role's namespace
+subjects:                                   # Who gets the permissions
+  - kind: User                              # Can be User, Group, or ServiceAccount
+    name: jane                              # The username (from your auth provider)
+    apiGroup: rbac.authorization.k8s.io
+roleRef:                                   # Which Role to bind
+  kind: Role                                # Role (namespace-scoped) or ClusterRole
+  name: pod-reader                          # Must match the Role name
+  apiGroup: rbac.authorization.k8s.io
+```
+
+**مهم:** الـ `roleRef` غير قابل للتغيير بعد الإنشاء. إذا كنت بحاجة لتغيير أي Role مرتبط، يجب حذف الـ RoleBinding وإنشاء واحد جديد.
+
+الـ **ClusterRoleBinding** يُعيّن ClusterRole على مستوى الكتلة:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: admin-binding
+subjects:
+  - kind: User
+    name: alice
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: ClusterRole
+  name: cluster-admin                      # Built-in super-admin role -- use with extreme caution
+  apiGroup: rbac.authorization.k8s.io
+```
+
+### نمط مفيد: ClusterRole + RoleBinding
+
+يمكنك ربط **ClusterRole** بـ **RoleBinding**. هذا يمنح صلاحيات محدودة بمساحة الأسماء باستخدام تعريف دور على مستوى الكتلة. هذا هو النمط الموصى به لمجموعات الصلاحيات القابلة لإعادة الاستخدام:
+
+```yaml
+# Define the permissions once as a ClusterRole
+kind: ClusterRole
+metadata:
+  name: pod-reader-global
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch"]
+
+---
+# Then bind it in each namespace where it's needed
+kind: RoleBinding
+metadata:
+  name: pod-reader-staging
+  namespace: staging
+subjects:
+  - kind: User
+    name: jane
+roleRef:
+  kind: ClusterRole                        # Reference the ClusterRole, not a Role
+  name: pod-reader-global
+  apiGroup: rbac.authorization.k8s.io
+```
+
+جين يمكنها قراءة الـ Pods في `staging`، لكن ليس في `production` — لأن الـ RoleBinding موجود فقط في مساحة أسماء staging.
+
+## ServiceAccounts: الـ RBAC للـ Pods
+
+عندما يحتاج تطبيقك الذي يعمل داخل Pod للتحدث إلى واجهة برمجة Kubernetes (مثلاً، متحكم، أو وكيل مراقبة، أو أداة CI/CD)، فإنه يُصادق باستخدام **ServiceAccount**.
+
+كل Pod يُعيّن له ServiceAccount. إذا لم تحدد واحدًا، يحصل على الـ ServiceAccount الـ `default` في مساحة أسمائه. الـ ServiceAccount الافتراضي ليس لديه تقريبًا أي صلاحيات — وهذا بالضبط الصحيح.
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deployment-manager                 # Create a dedicated ServiceAccount
+  namespace: staging
+```
+
+ثم اربطه بـ Role:
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployment-manager-binding
+  namespace: staging
+subjects:
+  - kind: ServiceAccount                   # Bind to a ServiceAccount, not a User
+    name: deployment-manager
+    namespace: staging
+roleRef:
+  kind: Role
+  name: deployment-manager-role
+  apiGroup: rbac.authorization.k8s.io
+```
+
+واستخدمه في الـ Pod الخاص بك:
+
+```yaml
+spec:
+  serviceAccountName: deployment-manager   # Assign the ServiceAccount to the Pod
+  containers:
+    - name: app
+      image: my-app:1.0
+```
+
+**أفضل ممارسة:** لا تستخدم أبدًا الـ ServiceAccount الـ `default` للـ Pods التي تحتاج وصولاً لواجهة البرمجة. أنشئ ServiceAccount مخصص بأقل صلاحيات مطلوبة.
+
+## NetworkPolicies: تأمين شبكات الـ Pods
+
+بشكل افتراضي، يسمح Kubernetes **بكل الحركة بين جميع الـ Pods** في الكتلة. أي Pod يمكنه الوصول إلى أي Pod آخر على أي منفذ. هذا مريح للتطوير لكنه خطير للإنتاج.
+
+الـ **NetworkPolicy** هي قاعدة جدار حماية للـ Pods. تتحكم في أي الـ Pods يمكنها التواصل مع بعضها وعلى أي المنافذ.
+
+### المفاهيم الأساسية
+
+- **الـ NetworkPolicies محدودة بمساحة الأسماء.** تُطبّق على الـ Pods في مساحة الأسماء حيث حُددت السياسة.
+- **إنها تراكمية.** NetworkPolicies متعددة في مساحة أسماء تُدمج — إذا سمحت أي سياسة بالحركة، فهي مسموحة.
+- **تتطلب ملحق CNI متوافقًا.** ليست كل ملحقات CNI تدعم الـ NetworkPolicies. Calico و Cilium و Weave تدعمها. ملحقات CNI الافتراضية في GKE و AKS و EKS تدعمها.
+- **السلوك الافتراضي بدون سياسات:** كل حركة الدخول والخروج مسموحة.
+- **السلوك الافتراضي مع سياسات:** إذا اختير Pod بأي NetworkPolicy، فقط الحركة المسموح بها صراحةً من السياسات تكون مسموحة. كل شيء آخر مرفوض.
+
+### الرفض الافتراضي: نقطة البداية
+
+أهم NetworkPolicy هي **الرفض الافتراضي**. تمنع كل حركة الدخول إلى كل Pod في مساحة أسماء، مما ينشئ صفحة بيضاء تفتحها بشكل انتقائي:
+
+```yaml
+apiVersion: networking.k8s.io/v1           # NetworkPolicy API group
+kind: NetworkPolicy
+metadata:
+  name: deny-all-ingress
+  namespace: my-app                         # Apply to the my-app namespace
+spec:
+  podSelector: {}                           # Empty selector = match ALL Pods in the namespace
+  policyTypes:
+    - Ingress                               # Block all incoming traffic
+  ingress: []                               # Empty ingress list = no traffic allowed in
+```
+
+بعد تطبيق هذا، **لا Pod في مساحة أسماء `my-app` يمكنه استقبال أي حركة من أي مكان.** قد يبدو هذا متطرفًا، لكنه نقطة البداية الصحيحة. الآن تسمح بشكل انتقائي فقط بالحركة التي يحتاجها تطبيقك.
+
+يمكنك أيضًا رفض كل حركة الخروج (الحركة الصادرة):
+
+```yaml
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress                               # Block all outgoing traffic too
+  ingress: []
+  egress: []
+```
+
+**تنبيه:** سياسة رفض الخروج الافتراضية ستفصل تحليل DNS ما لم تسمح به صراحةً. يستخدم DNS منفذ UDP 53 للوصول إلى خدمة DNS في الكتلة. سنغطي هذا في القسم التالي.
+
+### السماح بحركة محددة
+
+لنبني تطبيقًا متعدد الطبقات بثلاث طبقات ونحدد تدفقات الحركة الدقيقة بينها:
+
+```text
+Internet
+    │
+    ▼
+┌──────────┐     ┌──────────┐     ┌──────────┐
+│ Frontend │────►│   API    │────►│ Database │
+│  :3000   │     │  :8080   │     │  :5432   │
+└──────────┘     └──────────┘     └──────────┘
+     ▲                ▲
+     │                │
+     └── can reach ───┘
+     └── nothing else ──┘
+```
+
+القواعد:
+1. الواجهة الأمامية يمكنها استقبال الحركة من الخارج (متحكم Ingress)
+2. الـ API يمكنه استقبال الحركة من الواجهة الأمامية على المنفذ 8080
+3. قاعدة البيانات يمكنها استقبال الحركة من الـ API على المنفذ 5432
+4. لا شيء آخر يمكنه الوصول إلى أي شيء
+
+**السماح للواجهة الأمامية باستقبال الحركة من متحكم Ingress:**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-to-frontend
+  namespace: my-app
+spec:
+  podSelector:
+    matchLabels:
+      app: frontend                         # Apply to Pods with this label
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:                # Allow from any Pod in the ingress namespace
+            matchLabels:
+              name: ingress-nginx           # The Ingress Controller's namespace must have this label
+      ports:
+        - port: 3000                        # Only allow traffic on port 3000
+          protocol: TCP
+```
+
+**السماح للـ API باستقبال الحركة من الواجهة الأمامية:**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-api
+  namespace: my-app
+spec:
+  podSelector:
+    matchLabels:
+      app: api                              # Apply to API Pods
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:                      # Allow from Pods with this label
+            matchLabels:
+              app: frontend                 # Only frontend Pods can reach the API
+      ports:
+        - port: 8080                        # Only on port 8080
+          protocol: TCP
+```
+
+**السماح لقاعدة البيانات باستقبال الحركة من الـ API (بما في ذلك DNS للخروج):**
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-api-to-database
+  namespace: my-app
+spec:
+  podSelector:
+    matchLabels:
+      app: database
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: api                      # Only API Pods can reach the database
+      ports:
+        - port: 5432                        # PostgreSQL port
+          protocol: TCP
+```
+
+إذا طبّقت أيضًا سياسة رفض خروج افتراضية، يجب أن تسمح صراحةً بتحليل DNS:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+  namespace: my-app
+spec:
+  podSelector: {}                           # Apply to ALL Pods in the namespace
+  policyTypes:
+    - Egress
+  egress:
+    - to:                                   # Allow outbound to the DNS service
+        - namespaceSelector:
+            matchLabels:
+              name: kube-system             # DNS runs in kube-system
+        - podSelector:
+            matchLabels:
+              k8s-app: kube-dns             # CoreDNS label
+      ports:
+        - port: 53                          # DNS port
+          protocol: UDP
+        - port: 53
+          protocol: TCP                     # Some DNS queries use TCP
+```
+
+### مرجع محددات الـ NetworkPolicy
+
+تستخدم الـ NetworkPolicies ثلاثة أنواع من المحددات لمطابقة مصادر أو وجهات الحركة:
+
+| نوع المحدد | الصيغة | ما يطابقه |
+|------------|--------|-----------|
+| `podSelector` | `matchLabels: {app: web}` | الـ Pods ذات التصنيفات المتطابقة في **نفس مساحة الأسماء** |
+| `namespaceSelector` | `matchLabels: {name: prod}` | جميع الـ Pods في مساحات الأسماء ذات التصنيفات المتطابقة |
+| كلاهما معًا | كلا المحددين في نفس مدخل `from` | الـ Pods التي تطابق **كلاهما** (منطق AND — نفس محدد pod محدود بمساحة أسماء) |
+| مداخل متعددة | عناصر متعددة في قائمة `from` | أي Pod يطابق **أي** مدخل (منطق OR) |
+
+```yaml
+ingress:
+  - from:
+      - podSelector:                        # Entry 1: Pods in same namespace
+          matchLabels:
+            app: frontend
+      - namespaceSelector:                  # Entry 2: Pods in monitoring namespace (OR with entry 1)
+          matchLabels:
+            name: monitoring
+    - from:
+        - podSelector:                      # Entry 3: Must match BOTH pod AND namespace labels
+            matchLabels:
+              role: logger                  # (AND with namespace selector below)
+          namespaceSelector:
+            matchLabels:
+              name: logging
+```
+
+## مثال عملي: تطبيق متعدد الطبقات مع أمان كامل
+
+لنجمع الـ RBAC والـ NetworkPolicies لإعداد تطبيق آمن كامل.
+
+**هيكل المشروع:**
+
+```text
+k8s/
+├── rbac/
+│   ├── service-account.yaml
+│   ├── role.yaml
+│   └── role-binding.yaml
+├── network-policies/
+│   ├── default-deny.yaml
+│   ├── allow-frontend.yaml
+│   ├── allow-api.yaml
+│   ├── allow-database.yaml
+│   └── allow-dns.yaml
+└── deployments/
+    ├── frontend.yaml
+    ├── api.yaml
+    └── database.yaml
+```
+
+**service-account.yaml:**
+
+```yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: api-server
+  namespace: my-app
+```
+
+**role.yaml:**
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: config-reader
+  namespace: my-app
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+    resourceNames: ["api-config"]            # Only allow reading this specific ConfigMap
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+    resourceNames: ["db-credentials"]        # Only allow reading this specific Secret
+```
+
+**role-binding.yaml:**
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: api-server-config-reader
+  namespace: my-app
+subjects:
+  - kind: ServiceAccount
+    name: api-server
+    namespace: my-app
+roleRef:
+  kind: Role
+  name: config-reader
+  apiGroup: rbac.authorization.k8s.io
+```
+
+هذا يمنح الـ ServiceAccount الخاص بالـ API وصولًا للقراءة فقط لـ ConfigMap واحد وSecret واحد محددين. لا يمكنه قراءة ConfigMaps أخرى، ولا قراءة Secrets أخرى، ولا تعديل أي شيء، ولا الوصول إلى أي نوع موارد آخر.
+
+## الأخطاء الشائعة
+
+| الخطأ | ما الذي يسوء | كيف تصلحه |
+|-------|-------------|-----------|
+| **استخدام cluster-admin بتساهل** | الجميع لديهم وصول مدير — حساب مخترق واحد يعني كارثة | أنشئ Roles دقيقة بأقل امتياز؛ احتفظ بـ cluster-admin لسيناريوهات الطوارئ فقط |
+| **عدم تصنيف مساحات الأسماء** | `namespaceSelector` في الـ NetworkPolicies لا يمكنه مطابقة مساحات أسماء بدون تصنيفات | صنّف مساحات أسمائك: `kubectl label namespace production name=production` |
+| **كسر DNS برفض الخروج** | الـ Pods لا تستطيع حل أسماء الخدمات، مما يكسر كل التواصل الداخلي | أضف قاعدة خروج تسمح بمنفذ UDP/TCP 53 لخدمة DNS في kube-system |
+| **CNI لا يدعم NetworkPolicies** | تُنشأ السياسات لكن لا تُنفّذ — الحركة تتدفق بحرية | تحقق أن ملحق CNI يدعم الـ NetworkPolicies؛ استخدم Calico أو Cilium أو Weave |
+| **نسيان تصنيف مساحة أسماء Ingress** | الـ NetworkPolicies التي تسمح بالحركة من متحكم Ingress لا تجده | صنّف مساحة أسماء Ingress: `kubectl label namespace ingress-nginx name=ingress-nginx` |
+| **استخدام الـ ServiceAccount الافتراضي** | الـ Pods تُصادق على واجهة البرمجة بهوية غير مُتحكم بها | أنشئ ServiceAccounts مخصصة لكل حمل عمل يحتاج وصولاً لواجهة البرمجة |
+| **محددات NetworkPolicy واسعة جدًا** | استخدام `podSelector: {}` في قاعدة دخول يسمح بكل الحركة | كن محددًا مع التصنيفات؛ استخدم الرفض الافتراضي كخط أساسي |
+| **عدم اختبار سياسات الـ RBAC** | تظن أن الصلاحيات صحيحة لكنها ليست كذلك | استخدم `kubectl auth can-i` للتحقق قبل النشر |
+
+### نصائح احترافية
+
+- استخدم `kubectl auth can-i` لاختبار الصلاحيات. أمثلة:
+  - `kubectl auth can-i get pods --as=jane -n staging` — هل يمكن لجين قراءة الـ Pods في staging؟
+  - `kubectl auth can-i delete secrets --as=alice -n production` — هل يمكن لأليس حذف الـ Secrets في الإنتاج؟
+  - `kubectl auth can-i list pods --as=system:serviceaccount:my-app:api-server -n my-app` — اختبار صلاحيات ServiceAccount
+- استخدم `kubectl auth can-i --list` لرؤية جميع الصلاحيات للمستخدم الحالي في مساحة أسماء.
+- ابدأ بـ NetworkPolicies للرفض الافتراضي وافتح تدريجيًا. من الأسهل إضافة قواعد سماح من إيجاد كل الحركة التي حظرتها بالخطأ.
+- صنّف مساحات أسمائك استباقيًا: `kubectl label namespace production env=production name=production team=platform`. ستحتاج هذه التصنيفات للـ NetworkPolicies لاحقًا.
+- استخدم أدوات مثل **Ratify** أو **OPA Gatekeeper** لفرض معايير الـ RBAC والـ NetworkPolicy عبر كتلتك.
+- للشبكات ذات الثقة الصفرية، فكّر في شبكة خدمات مثل **Istio** أو **Linkerd** التي تضيف mTLS وسياسات تفويض دقيقة فوق الـ NetworkPolicies.
+- دقّق كتلتك بانتظام مع `kubectl get clusterrolebindings -o wide` للعثور على الروابط ذات الصلاحيات المفرطة.
+
+## مرجع الأوامر الرئيسية
+
+```bash
+# RBAC
+kubectl get roles -n <namespace>                              # List Roles in a namespace
+kubectl get clusterroles                                       # List ClusterRoles
+kubectl describe role <name> -n <namespace>                   # View Role rules
+kubectl get rolebindings -n <namespace>                        # List RoleBindings
+kubectl get clusterrolebindings                                # List ClusterRoleBindings
+kubectl auth can-i get pods --as=jane -n staging               # Test user permissions
+kubectl auth can-i delete pods --as=system:serviceaccount:my-app:api-server -n my-app  # Test SA permissions
+kubectl auth can-i --list -n staging                          # List all permissions in a namespace
+
+# NetworkPolicies
+kubectl get networkpolicies -n <namespace>                     # List NetworkPolicies
+kubectl describe networkpolicy <name> -n <namespace>          # View policy details
+kubectl label namespace production name=production             # Label a namespace (needed for namespaceSelector)
+```

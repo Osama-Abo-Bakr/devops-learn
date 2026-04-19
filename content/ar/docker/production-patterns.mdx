@@ -1,0 +1,490 @@
+---
+title: "أنماط الإنتاج"
+module: docker
+level: advanced
+duration: "40 min"
+diagram: docker-production-patterns
+description: "أنماط جاهزة للإنتاج: فحوصات الصحة، السجلات، سياسات إعادة التشغيل، وحدود الموارد."
+order: 6
+---
+
+# أنماط الإنتاج: من "يعمل" إلى "يعمل بشكل موثوق"
+
+هناك فرق كبير بين حاوية تعمل على حاسوبك المحمول وأخرى قادرة على الصمود يوماً كاملاً في الإنتاج. على حاسوبك، إذا تعطلت حاوية، تعيد تشغيلها يدوياً. في الإنتاج، في الساعة الثالثة صباحاً، عندما يرتفع الضغط وتنفد ذاكرة الحاوية، لا يوجد أحد ليضغط على إعادة التشغيل. حاوياتك تحتاج أن تكون ذاتية الشفاء، قابلة للمراقبة، ومواطنة صالحة على المضيف.
+
+يغطي هذا الدرس الأنماط والإعدادات التي تحول حاوية التطوير إلى خدمة جاهزة للإنتاج. هذه ليست إضافات اختيارية — بل هي الفرق بين نظام يصمد في ظروف العالم الحقيقي وآخر يسقط بصمت.
+
+## لماذا يهم هذا؟
+
+- **الحاويات تتعطل في الإنتاج** — تسرب الذاكرة، والاستثناءات غير المعالجة، وفشل التبعيات أمر لا مفر منه. بدون فحوصات الصحة وسياسات إعادة التشغيل، تبقى الحاوية المتعطلة معطلة حتى يلاحظ إنسان.
+- **الموارد بلا حدود تقتل الجيران** — حاوية بدون حد للذاكرة يمكن أن تستهلك كل ذاكرة المضيف RAM، مما يتسبب في قاتل OOM لإنهاء حاويات أخرى. حدود الموارد تحمي المضيف بأكمله.
+- **السجلات تملأ الأقراص** — بدون تدوير السجلات، يمكن لتطبيق ثرثان أن يملأ قرص المضيف في ساعات، مما يسقط كل شيء على تلك الآلة.
+- **الإيقاف يجب أن يكون آمناً** — عندما تتوقف حاوية، قد تكون في منتصف معالجة طلب أو الكتابة في قاعدة بيانات. القتل المفاجئ يسبب تلف البيانات وفقدان العمل.
+- **المنسقون يتوقعون هذه الأنماط** — Kubernetes و ECS و Swarm جميعها تعتمد على فحوصات الصحة وحدود الموارد. بدونها، لا يستطيع المنسق اتخاذ قرارات جدولة ذكية.
+
+## فحوصات الصحة: هل تطبيقك يعمل فعلاً؟
+
+أن تكون الحاوية "قيد التشغيل" لا يعني أن تطبيقك يعمل. قد تكون العملية حية لكن عالقة في حالة جمود، أو غير قادرة على الاتصال بقاعدة بياناتها، أو تعيد أخطاء. فحوصات الصحة تخبر Docker (والمنسقين) ما إذا كان التطبيق فعلاً بصحة جيدة.
+
+### HEALTHCHECK في Dockerfile
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:3000/health || exit 1
+```
+
+لنفكّك كل معامل:
+
+- **`--interval=30s`** — كم مرة تُشغَّل فحص الصحة. كل 30 ثانية، يرسل Docker طلباً لنقطة فحص الصحة.
+- **`--timeout=5s`** — كم ينتظر للحصول على استجابة قبل اعتبار الفحص فاشلاً. إذا لم تستجب `/health` خلال 5 ثوانٍ، يعتبر فاشلاً.
+- **`--start-period=10s`** — فترة سماح بعد بدء الحاوية. خلال هذه الثواني العشر، لا تُحسب حالات فشل الفحص ضمن حد المحاولات. هذا يعطي التطبيقات بطيئة البدء وقتاً للتهيئة.
+- **`--retries=3`** — عدد حالات الفشل المتتالية قبل وضع علامة `unhealthy` على الحاوية. فحص واحد فاشل لا يشغّل حالة غير صحي — يتطلب 3 متتالية.
+
+**ماذا يحدث مع حالات الصحة:**
+
+| الحالة | المعنى | ما يفعله Docker |
+|--------|--------|-----------------|
+| `starting` | فترة السماح الأولية (أثناء start-period) | لا شيء — ينتظر تهيئة التطبيق |
+| `healthy` | فحص الصحة ينجح | لا شيء — كل شيء على ما يرام |
+| `unhealthy` | فشل فحص الصحة `retries` مرة متتالية | يضع علامة غير صحي على الحاوية؛ يمكن للمنسقين إعادة تشغيلها |
+
+### فحص الصحة وقت التشغيل
+
+إذا لم تستطع تعديل الصورة، يمكنك إضافة فحص صحة وقت التشغيل:
+
+```bash
+docker run -d \
+  --name my-app \
+  --health-cmd="curl -f http://localhost:3000/health" \
+  --health-interval=30s \
+  --health-timeout=5s \
+  --health-retries=3 \
+  --health-start-period=10s \
+  my-app:1.0
+```
+
+### التحقق من حالة الصحة
+
+```bash
+docker ps
+# Shows health status in the STATUS column
+
+docker inspect --format='{{.State.Health.Status}}' my-app
+# Output: healthy (or unhealthy, or starting)
+
+docker inspect --format='{{json .State.Health}}' my-app | python3 -m json.tool
+# Full health check history with timestamps and exit codes
+```
+
+### تصميم نقطة فحص صحة جيدة
+
+يجب أن تتحقق نقطة `/health` المناسبة من أكثر مجرد "هل العملية حية":
+
+```javascript
+// A meaningful health check for a Node.js app
+app.get('/health', async (req, res) => {
+  const checks = {
+    server: 'ok',
+    database: 'unknown',
+    cache: 'unknown'
+  };
+
+  try {
+    // Can we reach the database?
+    await db.query('SELECT 1');
+    checks.database = 'ok';
+  } catch {
+    checks.database = 'error';
+  }
+
+  try {
+    // Can we reach the cache?
+    await cache.ping();
+    checks.cache = 'ok';
+  } catch {
+    checks.cache = 'error';
+  }
+
+  const isHealthy = checks.database === 'ok' && checks.cache === 'ok';
+  res.status(isHealthy ? 200 : 503).json(checks);
+});
+```
+
+**المبدأ الأساسي:** فحص الصحة يجب أن يتحقق من أن التطبيق يستطيع أداء عمله، لا مجرد أن العملية موجودة. إذا كان تطبيقك يحتاج قاعدة بيانات ليعمل، يجب أن يتحقق فحص الصحة من اتصال قاعدة البيانات.
+
+## سياسات إعادة التشغيل: حاويات ذاتية الشفاء
+
+تخبر سياسات إعادة التشغيل Docker بما يجب فعله عندما تخرج حاوية. بدون سياسة إعادة تشغيل، تبقى الحاوية المتعطلة متوقفة للأبد.
+
+| السياسة | السلوك | متى تستخدم |
+|---------|--------|-------------|
+| `no` | عدم إعادة التشغيل أبداً (الافتراضي) | مهام لمرة واحدة، مهام دُفعية |
+| `always` | إعادة التشغيل دائماً، بغض النظر عن كود الخروج | خدمات حرجة يجب أن تعمل دائماً |
+| `unless-stopped` | مثل `always`، لكن لا يعيد التشغيل بعد إعادة تشغيل البرنامج الخفي إذا أوقفتها يدوياً | معظم خدمات الإنتاج |
+| `on-failure[:max]` | إعادة التشغيل فقط عند كود خروج غير صفري، مع حد أقصى اختياري للمحاولات | خدمات يجب إعادة تشغيلها عند الأخطاء لكن ليس عند الخروج النظيف |
+
+### always مقابل unless-stopped
+
+هذا الفرق يربك الناس:
+
+```bash
+# With --restart always:
+docker run -d --restart always my-app
+
+# You manually stop it: docker stop my-app
+# Then the Docker daemon restarts (e.g., host reboot)
+# Result: the container RESTARTS automatically
+
+# With --restart unless-stopped:
+docker run -d --restart unless-stopped my-app
+
+# You manually stop it: docker stop my-app
+# Then the Docker daemon restarts
+# Result: the container stays STOPPED — Docker remembers your intent
+```
+
+**التوصية:** استخدم `unless-stopped` لمعظم الخدمات. تحترم إيقافك المتعمد بينما تستعيد أيضاً من الأعطال.
+
+### on-failure مع حدود المحاولات
+
+```bash
+docker run -d --restart on-failure:5 my-app
+```
+
+يعيد تشغيل الحاوية حتى 5 مرات فقط إذا خرجت بكود خطأ. بعد 5 حالات فشل، يستسلم Docker. هذا يمنع حلقات إعادة التشغيل اللانهائية للتطبيقات ذات المشاكل المستمرة.
+
+## حدود الموارد: كُن جاراً صالحاً
+
+بدون حدود للموارد، يمكن لحاوية واحدة أن تستهلك كل المعالج والذاكرة على المضيف، مما يجوّع كل حاوية أخرى. هذا خطير بشكل خاص في بيئات الاستضافة المشتركة.
+
+### حدود الذاكرة
+
+```bash
+docker run -d \
+  --memory 512m \
+  --memory-swap 1g \
+  --memory-reservation 256m \
+  my-app
+```
+
+- **`--memory 512m`** — حد صلب. لا تستطيع الحاوية أبداً استخدام أكثر من 512 ميغابايت. إذا حاولت، ينهيها قاتل OOM.
+- **`--memory-swap 1g`** — حد الذاكرة + التبادل الإجمالي. مع ذاكرة `512m` وتبادل `1g`، يمكن للحاوية استخدام 512 ميغابايت كتبادل (1g إجمالي - 512m ذاكرة).
+- **`--memory-reservation 256m`** — حد مرن. يحذرك Docker عندما تتجاوز الحاوية هذا الحد لكنه لا يقتلها. إنها إشارة، لا جدار.
+
+**إرشادات حدود الذاكرة:**
+
+| نوع التطبيق | الذاكرة الموصى بها | السبب |
+|-------------|-------------------|-------|
+| خادم ويب ثابت | 64-128 ميغابايت | Nginx يخدم ملفات ثابتة يحتاج القليل جداً |
+| واجهة برمجية Node.js | 256-512 ميغابايت | تجميع قمامة V8 يعمل أفضل بأحجام كومة متسقة |
+| تطبيق Java | 512 ميغابايت - 2 غيغابايت | JVM يحتاج كومة سخية؛ عيّن `-Xmx` ليتطابق مع حدك |
+| PostgreSQL | 1-4 غيغابايت | يعتمد على `shared_buffers` وعبء العمل |
+| Redis | 256 ميغابايت - 4 غيغابايت | عيّن `maxmemory` في إعدادات Redis ليتطابق مع حد Docker |
+
+### حدود المعالج
+
+```bash
+docker run -d \
+  --cpus 1.5 \
+  --cpuset-cpus 0,1 \
+  my-app
+```
+
+- **`--cpus 1.5`** — يمكن للحاوية استخدام وقت معالج يعادل 1.5 نواة. هذا حد نسبي عبر جميع النوى المتاحة.
+- **`--cpuset-cpus 0,1`** — تثبيت الحاوية على أنوية معالج محددة (0 و1). مفيد للتطبيقات الحرجة أدائياً التي تستفيد من موقع تخزين المعالج المؤقت.
+
+**إرشادات حدود المعالج:**
+
+| السيناريو | تخصيص المعالج | المنطق |
+|-----------|---------------|--------|
+| خادم API (حركة منخفضة) | 0.5 - 1.0 | معظم الوقت في انتظار I/O |
+| خادم API (حركة عالية) | 2.0 - 4.0 | معالجة طلبات مكثفة للمعالج |
+| عامل خلفي | 1.0 | استخدام معتدل ومتسق |
+| استنتاج تعلم آلي | 2.0 - 8.0 | حساب مكثف للمعالج |
+
+### حدود العمليات
+
+```bash
+docker run -d --pids-limit 100 my-app
+```
+
+`--pids-limit` يحدد عدد العمليات والخيوط التي يمكن لحاوية إنشاؤها. هذا يمنع قنابل التشعب — كود خبيث أو عرضي يُنشئ عمليات حتى تنفد معرفات العمليات (PIDs) من المضيف.
+
+حد 100 معقول لمعظم خدمات الويب. Node.js تستخدم عادة 10-30 معرف عملية، وتطبيقات Python/Java قد تستخدم 50-100. إذا احتاج تطبيقك أكثر، زد الحد، لكن عيّن حداً دائماً.
+
+## السجلات: رؤية ما يحدث
+
+في الإنتاج، تحتاج معرفة ما تفعله حاوياتك. يلتقط Docker كل ما تكتبه الحاوية إلى stdout و stderr، لكن الإعداد الافتراضي خطير — السجلات تنمو بلا حدود.
+
+### الافتراضي: برنامج json-file
+
+بشكل افتراضي، يستخدم Docker برنامج سجلات `json-file`. كل سطر سجل يُخزن ككائن JSON في ملف على القرص. بدون حدود، تنمو هذه الملفات للأبد.
+
+```bash
+# Check how much disk space Docker logs are using
+docker system df -v
+# Look for "Local Volumes" and "Containers" space usage
+```
+
+### إعداد تدوير السجلات
+
+عيّن تدوير السجلات دائماً لمنع استنزاف القرص:
+
+```bash
+docker run -d \
+  --log-driver json-file \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
+  my-app
+```
+
+- **`--log-driver json-file`** — اختيار صريح للبرنامج (الافتراضي، لكن من الجيد أن يكون صريحاً)
+- **`--log-opt max-size=10m`** — كل ملف سجل يمكن أن ينمو حتى 10 ميغابايت كحد أقصى. عندما يصل إلى هذا الحجم، يدوره Docker.
+- **`--log-opt max-file=3`** — يبقي 3 ملفات سجل كحد أقصى. عندما يُنشأ رابع، يُحذف الأقدم.
+
+**إجمالي استخدام القرص:** `max-size * max-file = 10 ميغابايت * 3 = 30 ميغابايت` كحد أقصى لكل حاوية.
+
+### إعداد تدوير السجلات عالمياً
+
+بدلاً من إعداد تدوير السجلات لكل حاوية، عيّنه في إعدادات برنامج Docker الخفي (`/etc/docker/daemon.json`):
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+```
+
+يطبق هذا على جميع الحاويات افتراضياً. لا حاجة لتذكر العلامات في كل `docker run`.
+
+### برامج سجلات أخرى
+
+| البرنامج | الوصف | متى تستخدم |
+|----------|-------|-------------|
+| `json-file` | ملفات JSON محلية (الافتراضي) | إعدادات مضيف واحد، التصحيح |
+| `local` | تخزين محلي محسّن، استخدام قرص أقل | الإنتاج مع تسجيل محلي |
+| `syslog` | إعادة التوجيه إلى برنامج syslog | تسجيل مركزي مع بنية syslog |
+| `journald` | إعادة التوجيه إلى سجل systemd | أنظمة تستخدم systemd |
+| `fluentd` | إعادة التوجيه إلى Fluentd | تسجيل مركزي مع Fluentd/ELK |
+| `awslogs` | إعادة التوجيه إلى CloudWatch Logs | عمليات نشر AWS |
+| `gcplogs` | إعادة التوجيه إلى Google Cloud Logging | عمليات نشر GCP |
+
+## الإيقاف الآمن: لا تقتل أثناء الطلب
+
+عندما توقف حاوية، يرسل Docker إشارة `SIGTERM`. يجب أن يلتقط تطبيقك هذه الإشارة، ينهي معالجة الطلبات الحالية، يغلق اتصالات قاعدة البيانات، ثم يخرج. إذا لم يخرج خلال المهلة، يرسل Docker إشارة `SIGKILL` — إنهاء فوري لا يمكن إيقافه.
+
+### تسلسل الإيقاف
+
+```
+docker stop → SIGTERM sent → Grace period (default: 10s) → SIGKILL if still running
+```
+
+### STOPSIGNAL في Dockerfile
+
+```dockerfile
+STOPSIGNAL SIGTERM
+```
+
+هذا يضمن أن Docker يرسل `SIGTERM` بدلاً من الإشارة الافتراضية عند إيقاف الحاوية. معظم التطبيقات تعالج `SIGTERM` بشكل صحيح، لكن بعضها يتوقع `SIGINT` (Ctrl+C) أو `SIGQUIT`. عيّن `STOPSIGNAL` ليتطابق مع ما يتوقعه تطبيقك.
+
+### إعداد المهلة
+
+```bash
+# Give the application 30 seconds to shut down gracefully
+docker run -d --stop-timeout 30 my-app
+```
+
+الافتراضي 10 ثوانٍ. بعض التطبيقات (خاصة تلك ذات الطلبات طويلة التشغيل أو تجمعات اتصال قاعدة البيانات الكبيرة) تحتاج وقتاً أكثر. عيّن المهلة بناءً على أطول مدة طلب لديك زائد هامش أمان.
+
+### الإيقاف الآمن في الكود
+
+يجب أن يعالج تطبيقك الإشارة. إليك مثال Node.js:
+
+```javascript
+const server = app.listen(3000);
+
+// Graceful shutdown handler
+function shutdown() {
+  console.log('Shutting down gracefully...');
+
+  // Stop accepting new connections
+  server.close(() => {
+    console.log('All connections closed');
+
+    // Close database connections
+    db.end().then(() => {
+      console.log('Database connections closed');
+      process.exit(0);
+    });
+  });
+
+  // Force exit after timeout (backup in case something hangs)
+  setTimeout(() => {
+    console.error('Forced shutdown after timeout');
+    process.exit(1);
+  }, 25000);
+}
+
+// Listen for Docker's stop signal
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
+```
+
+**تسلسل الإيقاف في الكود:**
+
+1. توقف عن قبول اتصالات جديدة (`server.close()`)
+2. انتظر إكمال الطلبات الجارية
+3. أغلق اتصالات قاعدة البيانات
+4. اخرج بكود 0 (نجاح)
+5. إذا تعلق شيء، أجبر الخروج بعد 25 ثانية (قبل `SIGKILL` بعد 30 ثانية من Docker)
+
+## عملية Init: حل مشكلة PID 1
+
+في Linux، العملية ذات PID 1 لها مسؤوليات خاصة: تجمع عمليات الزومبي وتوجّه الإشارات. في حاوية Docker، تطبيقك عادة هو PID 1. لكن معظم التطبيقات لم تُصمم لتكون PID 1 — لا تجمع عمليات الزومبي، وقد لا توجه الإشارات إلى العمليات الفرعية.
+
+هذا يمكن أن يسبب:
+- **تراكم عمليات الزومبي** — العمليات الفرعية التي تخرج لا تُنظف، مما يستنزف معرفات العمليات في النهاية
+- **فشل معالجة الإشارات** — `SIGTERM` المرسلة إلى PID 1 قد لا تصل إلى العمليات الفرعية
+
+**الحل: استخدم نظام init.**
+
+```dockerfile
+# Add tini as the init process
+FROM node:20-alpine
+RUN apk add --no-cache tini
+WORKDIR /app
+COPY . .
+USER node
+EXPOSE 3000
+
+# tini becomes PID 1, your app becomes a child process
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "server.js"]
+```
+
+أو وقت التشغيل:
+
+```bash
+docker run -d --init my-app
+```
+
+تستخدم علامة `--init` عملية tini init المدمجة في Docker. تتعامل مع تجميع الزومبي وتوجيه الإشارات بدلاً من تطبيقك.
+
+## مثال عملي: Dockerfile إنتاجي كامل
+
+لنجمع كل شيء من هذا الدرس في Dockerfile واحد محصّن للإنتاج لتطبيق Node.js:
+
+```dockerfile
+# ==============================
+# Stage 1: Build
+# ==============================
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# ==============================
+# Stage 2: Production Runtime
+# ==============================
+FROM node:20-alpine
+
+# Install tini for proper init handling
+RUN apk add --no-cache tini
+
+# Apply security updates
+RUN apk update && apk upgrade --no-cache && rm -rf /var/cache/apk/*
+
+WORKDIR /app
+
+# Install only production dependencies
+COPY package*.json ./
+RUN npm ci --only=production && npm cache clean --force
+
+# Copy built application
+COPY --from=builder /app/dist ./dist
+
+# Create and switch to non-root user
+RUN addgroup -S appgroup && adduser -S appuser -G appgroup
+COPY --chown=appuser:appgroup . .
+USER appuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (r) => { process.exit(r.statusCode === 200 ? 0 : 1) })"
+
+# Proper signal handling
+STOPSIGNAL SIGTERM
+
+EXPOSE 3000
+
+# tini as PID 1 for zombie reaping and signal forwarding
+ENTRYPOINT ["/sbin/tini", "--"]
+CMD ["node", "dist/server.js"]
+```
+
+**شغّله بعلامات الإنتاج:**
+
+```bash
+docker run -d \
+  --name production-app \
+  --restart unless-stopped \
+  --memory 512m \
+  --memory-swap 512m \
+  --cpus 1.0 \
+  --pids-limit 100 \
+  --stop-timeout 30 \
+  --log-driver json-file \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
+  --read-only \
+  --tmpfs /tmp \
+  -p 3000:3000 \
+  my-production-app:1.0
+```
+
+## قائمة فحص الإنتاج
+
+قبل نشر أي حاوية إلى الإنتاج، تحقق من كل عنصر في هذه القائمة:
+
+- **بناء متعدد المراحل** — الصورة النهائية تحتوي فقط تبعيات وقت التشغيل
+- **مستخدم غير جذر** — توجيه `USER` في Dockerfile، أو `--user` وقت التشغيل
+- **فحص الصحة** — `HEALTHCHECK` في Dockerfile يتحقق من صحة التطبيق الفعلية
+- **STOPSIGNAL** — معيّن ليتطابق مع إشارة الإيقاف المتوقعة لتطبيقك
+- **عملية init** — علامة `--init` أو `tini` في ENTRYPOINT لتجميع الزومبي
+- **حدود الموارد** — `--memory` و `--cpus` و `--pids-limit` معينة دائماً
+- **سياسة إعادة التشغيل** — `--restart unless-stopped` للخدمات طويلة التشغيل
+- **تدوير السجلات** — `max-size` و `max-file` مُعدّتان
+- **نظام ملفات للقراءة فقط** — `--read-only` مع `--tmpfs` للمسارات القابلة للكتابة المطلوبة
+- **لا أسرار في الصورة** — جميع الأسرار مُمررة وقت التشغيل أو من مديري أسرار
+- **فحص الصور** — مُدمج في خط CI/CD
+- **صور أساسية مثبتة** — إصدارات محددة، وليس `latest`
+- **`.dockerignore`** — يستبعد الملفات غير الضرورية من سياق البناء
+
+## أخطاء شائعة ونصائح
+
+- **فحوصات صحة تعيد دائماً 200** — فحص صحة يعيد فقط "ok" بدون التحقق من أي شيء أسوأ من عدم وجود فحص. يعطي ثقة زائفة. تحقق من اتصالات قاعدة البيانات، وتوفر المخزن المؤقت، وأي تبعيات حرجة.
+
+- **نسيان stop-timeout** — المهلة الافتراضية البالغة 10 ثوانٍ قد لا تكفي للتطبيقات ذات الطلبات طويلة التشغيل أو تسلسلات الإيقاف البطيئة. قيّس وقت إيقافك الفعلي وعيّن المهلة وفقاً لذلك.
+
+- **تعيين حدود الذاكرة منخفضة جداً** — إذا عيّنت `--memory 64m` لتطبيق Java، سيُقتل JVM بـ OOM فوراً. اختبر بأحمال عمل واقعية قبل تعيين الحدود، واترك دائماً هامش أمان (عيّن الحد بزيادة 20-30% عن ذروة الاستخدام الملاحظة).
+
+- **عدم معالجة SIGTERM** — إذا لم يلتقط تطبيقك `SIGTERM`، فإن `SIGKILL` من Docker (بعد المهلة) يفرض الإنهاء. هذا يعني إسقاط الطلبات الجارية، وقطع اتصالات قاعدة البيانات في منتصف المعاملة، وعدم تنظيف الملفات المؤقتة.
+
+- **تجاهل عمليات الزومبي** — بدون عملية init، تتراكم عمليات الزومبي الفرعية في الحاويات طويلة التشغيل. استخدم `--init` أو أضف `tini` إلى صورتك. هذا مهم بشكل خاص لتطبيقات Node.js و Python التي تُنشئ عمليات فرعية.
+
+- **ملفات السجلات تملأ القرص** — عيّن دائماً `max-size` و `max-file` لتدوير السجلات. عيّن هذا عالمياً في `daemon.json` لئلا تنساه.
+
+- **استخدام `--restart always` لمهام الدُفعات** — مهام الدُفعات التي تخرج بكود 0 عند الإكمال ستُعاد تشغيلها إلى ما لا نهاية مع `--restart always`. استخدم `on-failure` لمهام الدُفعات، أو `unless-stopped` للخدمات.
+
+- **عدم اختبار سلوك إعادة التشغيل** — قبل الذهاب إلى الإنتاج، حاكِ تعطلاً (`docker kill -s SIGSEGV <container>`) وتحقق أن سياسة إعادة التشغيل تعمل كما هو متوقع. اختبر أيضاً أن `docker stop` يشغّل إيقافك الآمن بشكل صحيح.
+
+## مخطط تفاعلي
+
+استكشف كيف تعمل أنماط الإنتاج معاً:
+
+<Diagram config={dockerProductionPatterns} />

@@ -1,0 +1,560 @@
+---
+title: "أفضل ممارسات الأمان"
+module: devops
+level: advanced
+duration: "40 min"
+description: "الدفاع في العمق: أمان الصور، حماية وقت التشغيل، سلامة سلسلة التوريد، والفحص التنظيمي."
+order: 4
+---
+
+# أفضل ممارسات الأمان
+
+تخيل قلعة من العصور الوسطى. الجدار الخارجي يوقف المغيرين العابرين. الخندق يبطئ المهاجمين المصممين. الحصن الداخلي يحمي جواهر التاج حتى لو سقطت الجدران الخارجية. الحراس يجوبون الأرض. الرماة يغطون البوابات. لا دفاع واحد كافٍ — الأمان يأتي من **طبقات**، كل واحدة تشتري وقتًا وتزيد تكلفة الهجوم.
+
+أمان الحاويات يعمل بنفس الطريقة. لا توجد أداة أو إعداد واحد يجعلك آمنًا. بدلاً من ذلك، تبني طبقات من الدفاع — من الكود الذي تكتبه، عبر الصورة التي تبنيها، عبر السجل الذي تخزنها فيه، إلى وقت التشغيل حيث تُنفَّذ، وعبر الشبكة حيث تتواصل. إذا فشلت طبقة، الأخرى لا تزال تحميك. هذا يسمى **الدفاع في العمق**.
+
+## ما هو الدفاع في العمق؟
+
+الدفاع في العمق يعني عدم الثقة بأداة أمنية واحدة أبدًا. كل طبقة لديها حماياتها الخاصة، ويجب على المهاجم اختراقها جميعًا لاختراق نظامك:
+
+| الطبقة | التهديد | الدفاع | الأداة |
+|--------|---------|--------|--------|
+| الكود | تبعيات بـ CVEs معروفة | فحص تبعيات آلي | `npm audit`، Dependabot، Snyk |
+| الصورة | ثغرات الصورة الأساسية | فحص الصور وأساسيات مصغرة | Trivy، Grype، Docker Scout |
+| البناء | بناء متلاعب أو غير قابل لإعادة الإنتاج | بناء موقّع، مصدر البناء | Sigstore، SLSA، GitHub OIDC |
+| السجل | استبدال أو تلاعب بالصورة | ثقة المحتوى، توقيع الصور | Cosign، Notary |
+| وقت التشغيل | تصعيد الصلاحيات، الهروب | غير جذر، نظام ملفات للقراءة فقط، seccomp | Kubernetes SecurityContext |
+| الشبكة | حركة جانبية بين الحجرات | NetworkPolicies، mTLS | Calico، Istio، Cilium |
+| المنسّق | وصول غير مصرح | RBAC، سجلات التدقيق، إدارة الأسرار | Kubernetes RBAC، Vault |
+
+## لماذا يهم هذا؟
+
+- **الحاويات تتشارك نواة المضيف** — على عكس الآلات الافتراضية، الحاويات غير معزولة بالأجهزة. هروب حاوية يمكن أن يعطي المهاجم وصولاً إلى الجهاز المضيف وكل حاوية أخرى عليه. تقوية وقت التشغيل ليست اختيارية.
+- **هجمات سلسلة التوريد في تزايد** — المهاجمون يستهدفون بشكل متزايد خط البناء والتوزيع، وليس التطبيق نفسه. إذا استطاعوا حقن كود خبيث في خط CI أو استبدال صورتك في السجل، فهم يملكون إنتاجك.
+- **الثغرات تختبئ في الصور الأساسية** — `FROM ubuntu:latest` قد تحتوي على مئات الـ CVEs المعروفة. إذا لم تفحص صورك، فأنت تشحن ثغرات معروفة إلى الإنتاج.
+- **الامتثال يتطلب إثباتًا** — أنظمة مثل SOC 2 وPCI-DSS وHIPAA تتطلب دليلًا على أنك تفحص الثغرات وتدير الوصول وتدقق التغييرات. تحتاج أدوات تولّد هذا الدليل تلقائيًا.
+- **تقليل نطاق الضرر** — الدفاع في العمق يعني أنه حتى لو أُخترقت حاوية واحدة، لا يستطيع المهاجم الانتقال إلى خدمات أخرى أو الوصول إلى الأسرار أو تسريب البيانات. كل طبقة تحد مما يمكنه فعله.
+
+## المفاهيم الأساسية
+
+### أمان الصور — بناء أساس متين
+
+صورة الحاوية هي خط الدفاع الأول. كل حزمة ومكتبة وأداة في تلك الصورة هي مساحة هجوم محتملة.
+
+**استخدم صورًا أساسية مصغرة:**
+
+```dockerfile
+# BAD: Full Ubuntu — 400+ packages, hundreds of CVEs
+FROM ubuntu:22.04
+
+# BETTER: Slim variant — fewer packages, smaller attack surface
+FROM python:3.12-slim
+
+# BEST: Distroless — no shell, no package manager, no attack surface
+FROM gcr.io/distroless/python3-debian12
+```
+
+| الصورة الأساسية | الحجم | الحزم | صدفة | مدير حزم |
+|---------------|------|------|------|----------|
+| `ubuntu:22.04` | ~77 MB | 400+ | نعم | apt |
+| `python:3.12-slim` | ~50 MB | ~100 | نعم | apt |
+| `distroless/python3` | ~22 MB | ~30 | لا | لا شيء |
+
+**لماذا distroless؟** المهاجم الذي يحصل على صدفة في حاويتك يحتاج عادةً أدوات مثل `curl` و`wget` و`nc` أو `apt` ليفعل شيئًا مفيدًا. الصور distroless تزيلها جميعًا. إذا لم تكن هناك صدفة، لا توجد طريقة سهلة لاستكشاف الحاوية.
+
+**البناء متعدد المراحل يزيل أدوات البناء:**
+
+```dockerfile
+# Stage 1: Build (has compilers, dev tools — these do NOT go to production)
+FROM golang:1.22 AS builder
+WORKDIR /app
+COPY . .
+RUN CGO_ENABLED=0 go build -o server .
+
+# Stage 2: Production (only the binary — nothing else)
+FROM gcr.io/distroless/static-debian12
+COPY --from=builder /app/server /server
+ENTRYPOINT ["/server"]
+```
+
+مرحلة البناء تحتوي على سلسلة أدوات Go بالكامل. لكن الصورة النهائية تحتوي فقط على الملف الثنائي المُجمَّع — بدون مجمّع، بدون كود مصدري، بدون صدفة. مهاجم يخترق هذه الحاوية لا يكاد يجد شيئًا يعمل به.
+
+**فحص الصور بحثًا عن الثغرات:**
+
+```bash
+# Scan a local image — lists all CVEs by severity
+trivy image my-app:latest
+
+# Scan in CI — fail the pipeline on CRITICAL findings
+trivy image --exit-code 1 --severity CRITICAL my-app:$COMMIT_SHA
+
+# Scan periodically in production — catch new CVEs in already-deployed images
+trivy image --severity HIGH,CRITICAL --ignore-unfixed my-app:production
+```
+
+علامة `--ignore-unfixed` مهمة لفحص الإنتاج: تتخطى الـ CVEs التي لا يتوفر لها رقعة، لكي لا تغمر بتنبيهات لا يمكنك التصرف بشأنها.
+
+### توقيع الصور — ثقّ فيما تنشره
+
+كيف تعرف أن الصورة التي تسحبها من السجل هي نفس الصورة التي بنيتها في CI؟ بدون توقيع، لا تعرف. مهاجم لديه وصول للسجل يمكنه استبدال صورتك بصورة خبيثة تبدو متطابقة.
+
+**Cosign** (جزء من مشروع Sigstore) يوقّع الصور باستخدام توقيع بدون مفاتيح — يستخدم هوية OIDC (حساب GitHub الخاص بك) بدلاً من إدارة مفاتيح خاصة:
+
+```bash
+# Sign an image using GitHub OIDC identity in CI
+cosign sign ghcr.io/my-org/my-app:v1.0.0
+
+# Verify the image signature before deploying
+cosign verify ghcr.io/my-org/my-app:v1.0.0 \
+  --certificate-identity=https://github.com/my-org/my-app/.github/workflows/ci.yml@refs/heads/main \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+```
+
+**فرض التحقق في خط CI/CD:**
+
+```yaml
+# GitHub Actions — verify image signature before deploying
+- name: Verify image signature
+  run: |
+    cosign verify ghcr.io/my-org/my-app:${{ github.sha }} \
+      --certificate-identity=https://github.com/my-org/my-app/.github/workflows/ci.yml@refs/heads/main \
+      --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+
+- name: Deploy to Kubernetes
+  run: kubectl set image deployment/my-app my-app=ghcr.io/my-org/my-app:${{ github.sha }}
+```
+
+مع هذا في مكانه، حتى لو استبدل المهاجم الصورة في السجل، يفشل التحقق من التوقيع ويُحظر النشر.
+
+### أمان سلسلة التوريد — اعرف ما في صورتك
+
+**SBOM (قائمة مواد البرمجيات)** هي قائمة كاملة بكل مكون في صورتك — كل مكتبة، كل تبعية انتقالية، كل إصدار. إنها ملصق المكونات لبرمجياتك.
+
+```bash
+# Generate an SBOM from your image
+syft ghcr.io/my-org/my-app:v1.0.0 -o spdx-json > sbom.json
+
+# Scan the SBOM for vulnerabilities (without rescanning the image)
+grype sbom:sbom.json
+
+# Attach the SBOM to the image in the registry (alongside the signature)
+cosign attach sbom --sbom sbom.json ghcr.io/my-org/my-app:v1.0.0
+```
+
+**SLSA (مستويات سلسلة التوريد للقطع البرمجية)** هو إطار عمل يحدد مستويات أمان سلسلة التوريد. فكر فيه كنموذج نضج:
+
+| مستوى SLSA | ما يضمنه | مثال |
+|-----------|---------|------|
+| المستوى 1 | البناء تم في خدمة، ليس محليًا | خط CI بنى الصورة |
+| المستوى 2 | البناء مصدّق وموقّع | موقّع بـ Cosign في CI |
+| المستوى 3 | منصة البناء محصّنة، المصدر قابل للتحقق | GitHub Actions مع OIDC، بناء غير قابل للتغيير |
+| المستوى 4 | مراجعة ثنائية مطلوبة، بناء محكم | مراجعون مطلوبون + بيئة بناء معزولة |
+
+معظم المؤسسات يجب أن تستهدف المستوى 2 أو 3. المستوى 4 للبنية التحتية الحرجة.
+
+### حماية وقت التشغيل — تقوية الحاوية
+
+حتى مع صورة آمنة، يمكن استغلال حاوية تعمل إذا كانت لديها صلاحيات كثيرة. `SecurityContext` في Kubernetes يتيح لك تقييد ما يمكن للحاوية فعله على مستوى النواة.
+
+**مبدأ أقل صلاحية مطبّق على الحاويات:**
+
+```yaml
+# Kubernetes Pod spec — production-grade security context
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+spec:
+  securityContext:
+    runAsNonRoot: true         # Block the pod if the image tries to run as root
+    runAsUser: 1000            # Run as user ID 1000 (not 0=root)
+    runAsGroup: 1001           # Run as group ID 1001
+    fsGroup: 1001              # Files created by the pod are owned by this group
+    seccompProfile:            # Restrict which system calls the container can make
+      type: RuntimeDefault     # Use the container runtime's default profile
+  containers:
+    - name: my-app
+      image: ghcr.io/my-org/my-app:v1.0.0
+      securityContext:
+        allowPrivilegeEscalation: false  # Prevent sudo, setuid binaries
+        readOnlyRootFilesystem: true     # Container cannot write to its filesystem
+        capabilities:
+          drop: ["ALL"]                  # Remove ALL Linux capabilities (NET_RAW, SYS_ADMIN, etc.)
+      volumeMounts:
+        - name: tmp-volume
+          mountPath: /tmp                # Mount a tmpfs for the only writable directory
+  volumes:
+    - name: tmp-volume
+      emptyDir:
+        medium: Memory                  # In-memory tmp — no disk writes
+```
+
+**ماذا يفعل كل إعداد ولماذا:**
+
+- **`runAsNonRoot: true`** — معظم استغلالات الحاويات تفترض وصول الجذر. إذا كانت الحاوية تعمل كمستخدم غير جذر، يبدأ المهاجم بصلاحيات محدودة. إذا لم يعيّن Dockerfile خاصتك `USER`، هذا الإعداد *يفشل الحجرة* — لن تبدأ. هذا مقصود: يجبرك على أن تكون صريحًا حول من يشغل حاويتك.
+
+- **`readOnlyRootFilesystem: true`** — إذا اخترق مهاجم، لا يستطيع كتابة نصوص خبيثة أو تعديل ملفات الإعدادات أو زرع أبواب خلفية على نظام الملفات. المسار الوحيد القابل للكتابة هو الأجزاء التي تركبها صراحةً (مثل `/tmp`).
+
+- **`drop: ["ALL"]`** — قدرات Linux هي صلاحيات على مستوى النواة تتجاوز صلاحيات Unix القياسية. `CAP_NET_RAW` يتيح لك إرسال حزم شبكة خام. `CAP_SYS_ADMIN` يتيح لك تركيب أنظمة ملفات. إسقاطها جميعًا يعني أن الحاوية يمكنها فقط القيام بعمليات عملية عادية.
+
+- **`allowPrivilegeEscalation: false`** — حتى لو دخل مهاجم إلى الحاوية، لا يستطيع استخدام `sudo` أو ملفات setuid الثنائية لاكتساب صلاحيات أكثر. هذا يقطع مسار تصعيد صلاحيات شائع.
+
+**ملفات تعريف Seccomp — تصفية استدعاءات النظام الدقيقة:**
+
+إذا كان ملف تعريف seccomp الافتراضي متسامحًا أكثر مما تحتاج، يمكنك إنشاء ملف تعريف مخصص يسمح فقط باستدعاءات النظام المحددة التي يحتاجها تطبيقك:
+
+```json
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "syscalls": [
+    {
+      "names": ["read", "write", "exit", "mmap", "brk", "fcntl", "fstat", "poll", "mprotect", "munmap", "rt_sigaction", "clone", "execve"],
+      "action": "SCMP_ACT_ALLOW"
+    }
+  ]
+}
+```
+
+هذا الملف يمنع *كل شيء* افتراضيًا (`SCMP_ACT_ERRNO`) ويسمح صراحةً فقط باستدعاءات النظام التي يحتاجها تطبيق نموذجي. إذا حاول التطبيق أي استدعاء نظام آخر، تعيد النواة خطأ.
+
+### أمان الشبكة — احتواء نطاق الضرر
+
+في مجموعة Kubernetes افتراضية، كل حجرة يمكنها التحدث مع كل حجرة أخرى. إذا أُخترقت حجرة واحدة، يمكن للمهاجم الوصول إلى كل خدمة. **NetworkPolicies** تغيّر هذا بتقييد حركة المرور على مستوى الشبكة.
+
+**المنع الافتراضي — حظر كل حركة المرور إلا ما سُمِح به صراحةً:**
+
+```yaml
+# deny-all.yml — Apply this FIRST to every namespace
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: my-app
+spec:
+  podSelector: {}              # Apply to ALL pods in the namespace
+  policyTypes:
+    - Ingress                  # Block all incoming traffic
+    - Egress                   # Block all outgoing traffic
+```
+
+**ثم السماح فقط بحركة المرور المحددة التي يحتاجها تطبيقك:**
+
+```yaml
+# allow-frontend-to-api.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-api
+  namespace: my-app
+spec:
+  podSelector:
+    matchLabels:
+      app: api                  # Apply to pods labeled app=api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend     # Only allow traffic from frontend pods
+      ports:
+        - port: 8080            # Only on port 8080
+```
+
+**شبكة الخدمات لـ mTLS (TLS المتبادل):**
+
+NetworkPolicies تعمل على مستوى IP/المنفذ. للتشفير والتحكم في الوصول القائم على الهوية، تحتاج شبكة خدمات مثل Istio أو Linkerd. شبكة الخدمات تشفر تلقائيًا كل حركة المرور بين الحجرات (mTLS) وتتيح لك تعريف سياسات وصول بناءً على هوية الخدمة، وليس عناوين IP.
+
+```yaml
+# Istio AuthorizationPolicy — only the frontend can call the API
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: api-only-from-frontend
+  namespace: my-app
+spec:
+  selector:
+    matchLabels:
+      app: api
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/my-app/sa/frontend"]  # Service identity
+      to:
+        - operation:
+            methods: ["GET", "POST"]
+            paths: ["/api/*"]
+```
+
+### فحص الامتثال — دليل آلي
+
+أطر الامتثال (CIS، NIST، PCI-DSS، HIPAA) تتطلب تحققًا مستمرًا من أن بنيتك التحتية تلبي معايير الأمان. أدوات مثل **kube-bench** و**Polaris** تؤتمت هذا:
+
+```bash
+# Run the CIS Kubernetes Benchmark against your cluster
+kube-bench run --targets master,node,etcd
+
+# Check your workloads against best practices
+polaris audit --audit-path ./kubernetes-manifests/
+```
+
+**عمليات فحص CIS الشائعة:**
+
+| الفحص | ما يتحقق منه | لماذا يهم |
+|------|-------------|----------|
+| لا حاويات تعمل كجذر | `runAsNonRoot: true` | الحاويات الجذر يمكنها الهروب |
+| لا حاويات ذات صلاحيات | `privileged: false` | الحاويات ذات الصلاحيات لديها وصول للمضيف |
+| نظام ملفات جذر للقراءة فقط | `readOnlyRootFilesystem: true` | يمنع التعديلات داخل الحاوية |
+| حدود المعالج والذاكرة معينة | `resources.limits` | يمنع هجمات استنزاف الموارد |
+| كل القدرات أسقطت | `drop: ["ALL"]` | يقلل الصلاحيات على مستوى النواة |
+| شبكة المضيف غير مستخدمة | `hostNetwork: false` | يمنع الوصول إلى مكدس شبكة المضيف |
+
+## مثال عملي — تأمين مكدس كامل
+
+لنؤمن تطبيقًا ثلاثي الطبقات: واجهة أمامية (Nginx)، واجهة برمجة تطبيقات (Node.js)، وقاعدة بيانات (PostgreSQL). إليك هيكل المشروع:
+
+```
+secure-stack/
+├── frontend/
+│   ├── Dockerfile
+│   └── k8s/
+│       ├── deployment.yml
+│       └── networkpolicy.yml
+├── api/
+│   ├── Dockerfile
+│   └── k8s/
+│       ├── deployment.yml
+│       └── networkpolicy.yml
+├── database/
+│   └── k8s/
+│       ├── statefulset.yml
+│       └── networkpolicy.yml
+├── k8s/
+│   ├── namespace.yml
+│   ├── default-deny.yml
+│   └── security-context.yml
+└── ci/
+    └── security-pipeline.yml
+```
+
+**الخطوة 1: إنشاء مساحة أسماء مع سياسة شبكة منع افتراضية**
+
+```yaml
+# k8s/namespace.yml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: secure-stack
+  labels:
+    name: secure-stack
+    pod-security.kubernetes.io/enforce: restricted    # Enforce restricted pod security
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+```
+
+```yaml
+# k8s/default-deny.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: secure-stack
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+```
+
+**الخطوة 2: بناء صور آمنة ببناء متعدد المراحل وdistroless**
+
+```dockerfile
+# api/Dockerfile
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+FROM gcr.io/distroless/nodejs20-debian12
+WORKDIR /app
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+USER 1000
+CMD ["dist/index.js"]
+```
+
+**الخطوة 3: النشر بسياق أمان محصّن**
+
+```yaml
+# api/k8s/deployment.yml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: secure-stack
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: ghcr.io/my-org/api:v1.0.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - containerPort: 3000
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 250m
+              memory: 256Mi
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+```
+
+**الخطوة 4: السماح فقط بحركة المرور الضرورية**
+
+```yaml
+# api/k8s/networkpolicy.yml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: api-ingress
+  namespace: secure-stack
+spec:
+  podSelector:
+    matchLabels:
+      app: api
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: frontend      # Only frontend can reach the API
+      ports:
+        - port: 3000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: database       # API can only reach the database
+      ports:
+        - port: 5432
+    - to:                          # Allow DNS resolution
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+```
+
+**الخطوة 5: الفحص والتوقيع والتحقق في CI**
+
+```yaml
+# ci/security-pipeline.yml — GitHub Actions
+name: Security Pipeline
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Scan the Dockerfile for bad practices
+      - name: Lint Dockerfile
+        uses: hadolint/hadolint-action@v3.1.0
+
+      # Build the image
+      - name: Build image
+        run: docker build -t ghcr.io/my-org/api:${{ github.sha }} ./api
+
+      # Scan for vulnerabilities — fail on CRITICAL
+      - name: Vulnerability scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/my-org/api:${{ github.sha }}
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+
+      # Generate and attach SBOM
+      - name: Generate SBOM
+        run: |
+          syft ghcr.io/my-org/api:${{ github.sha }} -o spdx-json > sbom.json
+          cosign attach sbom --sbom sbom.json ghcr.io/my-org/api:${{ github.sha }}
+
+      # Sign the image with keyless signing
+      - name: Sign image
+        uses: sigstore/cosign-installer@v3
+      - run: cosign sign --yes ghcr.io/my-org/api:${{ github.sha }}
+
+      # Verify the CIS benchmark on the cluster
+      - name: CIS Benchmark
+        run: kube-bench run --targets node
+```
+
+## قائمة فحص الأمان
+
+استخدم هذه القائمة لكل نشر. إذا كان أي عنصر غير محدد، لديك فجوة في دفاعك:
+
+- [ ] **الصور تستخدم أساسيات مصغرة أو distroless** — لا صور نظام تشغيل كامل في الإنتاج
+- [ ] **البناء متعدد المراحل يزيل أدوات البناء** — المجمّعات وأدوات التطوير تبقى في مرحلة البناء
+- [ ] **كل الحاويات تعمل كغير جذر** — `runAsNonRoot: true` و`runAsUser: 1000`
+- [ ] **كل قدرات Linux أسقطت** — `drop: ["ALL"]`
+- [ ] **نظام ملفات الجذر للقراءة فقط** — `readOnlyRootFilesystem: true`
+- [ ] **الصور مفحوصة في CI** — Trivy مع `exit-code: 1` عند وجود ثغرات حرجة
+- [ ] **الصور موقّعة بـ Cosign** — توقيع بدون مفاتيح في CI، تحقق قبل النشر
+- [ ] **SBOMs مُولَّدة ومرفقة** — Syft + Cosign لكل صورة
+- [ ] **NetworkPolicies منع افتراضي** — لا ثقة ضمنية بين الحجرات
+- [ ] **حدود الموارد معينة** — حدود المعالج والذاكرة تمنع هجمات استنزاف الموارد
+- [ ] **الأسرار تُدار بأمان** — استخدم Vault أو Sealed Secrets، وليس متغيرات البيئة
+- [ ] **الصور الأساسية محدّثة بانتظام** — جدول إعادة بناء أسبوعية لاستلام رقع الأمان
+- [ ] **سجلات التدقيق مفعّلة** — سجلات تدقيق Kubernetes تتتبع من فعل ماذا
+- [ ] **معايير أمان الحجرات مفروضة** — ملف تعريف مقيد على مستوى مساحة الأسماء
+
+## الأخطاء الشائعة والنصائح
+
+- **خطأ: التشغيل كجذر "لأنه يعمل"** — العديد من صور Docker تفترض الجذر افتراضيًا، والتطبيقات غالبًا "تعمل فقط" بصلاحيات الجذر. **نصيحة:** أضف دائمًا `USER 1000` إلى Dockerfile وعيّن `runAsNonRoot: true` في Kubernetes. إذا تعطل شيء، أصلح مشكلة الصلاحيات بدلاً من التشغيل كجذر.
+
+- **خطأ: فحص الصور مرة واحدة** — CVEs جديدة تُنشر يوميًا. صورة كانت نظيفة أمس قد تحتوي على ثغرات حرجة اليوم. **نصيحة:** افحص في CI عند كل بناء وقم بفحوصات دورية على الصور المنشورة (يوميًا أو أسبوعيًا).
+
+- **خطأ: تجاهل أمان سلسلة التوريد** — معظم الفرق تركز على أمان وقت التشغيل لكن تنسى أن خط البناء نفسه يمكن اختراقه. **نصيحة:** طبّق مستوى SLSA 2 على الأقل: وقّع صورك في CI وتحقق منها قبل النشر.
+
+- **خطأ: NetworkPolicies تسمح بكل شيء** — سياسة بدون قواعد `ingress` أو `egress` لكن مع `policyTypes: [Ingress, Egress]` لا تفعل شيئًا مفيدًا. **نصيحة:** ابدأ بسياسة منع افتراضي وأضف قواعد سمح محددة تدريجيًا.
+
+- **خطأ: تخزين الأسرار في متغيرات البيئة** — متغيرات البيئة مرئية لكل من يستطيع تشغيل `kubectl describe pod`. **نصيحة:** استخدم مدير أسرار (HashiCorp Vault، AWS Secrets Manager) أو أسرار مشفرة (Sealed Secrets، External Secrets Operator).
+
+- **نصيحة: أتمت بتحكمات القبول** — أدوات مثل OPA Gatekeeper أو Kyverno يمكنها فرض سياسات أمان على مستوى API. إذا حاول شخص نشر حجرة بدون `runAsNonRoot: true`، يرفضها تحكم القبول — بدون استثناءات.
+
+- **نصيحة: استخدم `kubectl who-can` لتدقيق RBAC** — شغّل `kubectl who-can create pods` أو `kubectl who-can get secrets` لإيجاد حسابات الخدمة ذات الصلاحيات المفرطة. مبدأ أقل صلاحية ينطبق على الأشخاص وحسابات الخدمة على حد سواء.
