@@ -1,8 +1,10 @@
+import dynamic from "next/dynamic";
 import Navbar from "@/components/layout/Navbar";
 import Footer from "@/components/layout/Footer";
-import AiChat from "@/components/chat/AiChat";
 import StreakXPBar from "@/components/progress/StreakXPBar";
 import { ProgressProvider } from "@/context/ProgressContext";
+
+const AiChat = dynamic(() => import("@/components/chat/AiChat"));
 
 export default function LocaleLayout({
   children,

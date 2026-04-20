@@ -1,18 +1,21 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { getDiagram, getChallenge, getQuiz } from "@/data";
-import DiagramCanvas from "@/components/diagram/DiagramCanvas";
-import DiagramStepBuilder from "@/components/diagram/DiagramStepBuilder";
+import { useState, useCallback, useEffect } from "react";
+import dynamic from "next/dynamic";
+import { getDiagram, getChallenge, getQuiz } from "@/data/client";
 import DiagramViewToggle from "@/components/diagram/DiagramViewToggle";
-import D3LayerStack from "@/components/diagram/d3/D3LayerStack";
-import D3ForceGraph from "@/components/diagram/d3/D3ForceGraph";
-import D3TreeLayout from "@/components/diagram/d3/D3TreeLayout";
-import D3PipelineFlow from "@/components/diagram/d3/D3PipelineFlow";
-import TerminalSimulator from "@/components/terminal/TerminalSimulator";
-import QuizComponent from "@/components/quiz/QuizComponent";
 import { useProgress } from "@/context/ProgressContext";
-import CelebrationEffect from "@/components/celebration/CelebrationEffect";
+import type { DiagramConfig, Challenge, Quiz } from "@/types";
+
+const DiagramCanvas = dynamic(() => import("@/components/diagram/DiagramCanvas"));
+const DiagramStepBuilder = dynamic(() => import("@/components/diagram/DiagramStepBuilder"));
+const D3LayerStack = dynamic(() => import("@/components/diagram/d3/D3LayerStack"));
+const D3ForceGraph = dynamic(() => import("@/components/diagram/d3/D3ForceGraph"));
+const D3TreeLayout = dynamic(() => import("@/components/diagram/d3/D3TreeLayout"));
+const D3PipelineFlow = dynamic(() => import("@/components/diagram/d3/D3PipelineFlow"));
+const TerminalSimulator = dynamic(() => import("@/components/terminal/TerminalSimulator"));
+const QuizComponent = dynamic(() => import("@/components/quiz/QuizComponent"));
+const CelebrationEffect = dynamic(() => import("@/components/celebration/CelebrationEffect"));
 
 interface LessonInteractiveProps {
   diagramId?: string;
@@ -38,9 +41,9 @@ export default function LessonInteractive({
     consumeRecentBadges,
   } = useProgress();
 
-  const diagramConfig = diagramId ? getDiagram(diagramId) : undefined;
-  const challengeConfig = challengeId ? getChallenge(challengeId) : undefined;
-  const quizConfig = quizId ? getQuiz(quizId) : undefined;
+  const [diagramConfig, setDiagramConfig] = useState<DiagramConfig | undefined>();
+  const [challengeConfig, setChallengeConfig] = useState<Challenge | undefined>();
+  const [quizConfig, setQuizConfig] = useState<Quiz | undefined>();
   const [view, setView] = useState<"reactflow" | "d3">("reactflow");
 
   const [quizScore, setQuizScore] = useState<number | null>(null);
@@ -48,6 +51,12 @@ export default function LessonInteractive({
   const [challengeDone, setChallengeDone] = useState(false);
   const [celebrate, setCelebrate] = useState(false);
   const [earnedBadges, setEarnedBadges] = useState<string[]>([]);
+
+  useEffect(() => {
+    if (diagramId) getDiagram(diagramId).then(setDiagramConfig);
+    if (challengeId) getChallenge(challengeId).then(setChallengeConfig);
+    if (quizId) getQuiz(quizId).then(setQuizConfig);
+  }, [diagramId, challengeId, quizId]);
 
   const tryMarkComplete = useCallback(
     (qScore: number | null) => {
@@ -61,7 +70,6 @@ export default function LessonInteractive({
           updateLessonStatus(lessonSlug, "completed");
           addXP(getXPReward("lessonComplete"));
           updateStreak();
-          // Defer badge check to next tick so state has settled
           setTimeout(() => {
             const newBadges = consumeRecentBadges();
             if (newBadges.length > 0) setEarnedBadges(newBadges);
