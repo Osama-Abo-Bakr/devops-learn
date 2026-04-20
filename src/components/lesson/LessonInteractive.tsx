@@ -83,7 +83,7 @@ export default function LessonInteractive({
   );
 
   const handleQuizComplete = useCallback(
-    (score: number) => {
+    (score: number, _answers: (number | null)[]) => {
       setQuizScore(score);
       if (loaded) {
         updateQuizScore(lessonSlug, score);

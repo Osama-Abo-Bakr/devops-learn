@@ -8,6 +8,7 @@ interface ExamResultsProps {
   score: number;
   onRetake: () => void;
   onNewExam: () => void;
+  timerSeconds?: number;
 }
 
 export default function ExamResults({
@@ -16,12 +17,16 @@ export default function ExamResults({
   score,
   onRetake,
   onNewExam,
+  timerSeconds,
 }: ExamResultsProps) {
   const [celebrate, setCelebrate] = useState(false);
+  const [expandedQuestions, setExpandedQuestions] = useState<Set<number>>(new Set());
+
   const correct = answers.filter(
     (a, i) => a === exam.questions[i].correctIndex,
   ).length;
   const total = exam.questions.length;
+  const unanswered = answers.filter((a) => a === null).length;
 
   const scoreColor =
     score >= 80
@@ -43,6 +48,15 @@ export default function ExamResults({
     if (passed) setCelebrate(true);
   }, [passed]);
 
+  function toggleQuestion(index: number) {
+    setExpandedQuestions((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  }
+
   return (
     <>
       <CelebrationEffect trigger={celebrate} score={score} onDone={() => setCelebrate(false)} />
@@ -59,9 +73,10 @@ export default function ExamResults({
         <span className={`rounded-full px-3 py-1 text-sm font-semibold ${passed ? "bg-green-600/20 text-green-400" : "bg-red-600/20 text-red-400"}`}>
           {passed ? "Pass" : "Fail"}
         </span>
-        <p className="text-sm text-gray-400">
-          {correct} correct out of {total} questions
-        </p>
+        <div className="flex gap-4 text-sm text-gray-400">
+          <span>{correct}/{total} correct</span>
+          {unanswered > 0 && <span className="text-gray-500">{unanswered} timed out</span>}
+        </div>
       </div>
 
       {/* Question review */}
@@ -69,44 +84,71 @@ export default function ExamResults({
         <h3 className="mb-4 text-lg font-semibold text-white">
           Question Review
         </h3>
-        <div className="space-y-4">
+        <div className="space-y-3">
           {exam.questions.map((q, i) => {
             const isCorrect = answers[i] === q.correctIndex;
             const source = exam.sources[i];
+            const isExpanded = expandedQuestions.has(i);
 
             return (
               <div
                 key={q.id}
-                className="rounded-lg border border-gray-800 bg-gray-950 p-4"
+                className={`rounded-lg border p-4 ${
+                  isCorrect
+                    ? "border-green-800/50 bg-green-950/20"
+                    : "border-red-800/50 bg-red-950/10"
+                }`}
               >
-                <div className="mb-2 flex items-center gap-2">
-                  <span
-                    className={`text-sm font-medium ${
-                      isCorrect ? "text-green-400" : "text-red-400"
-                    }`}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1">
+                    <div className="mb-1 flex items-center gap-2">
+                      <span
+                        className={`text-sm font-medium ${
+                          isCorrect ? "text-green-400" : "text-red-400"
+                        }`}
+                      >
+                        {answers[i] === null ? "Timed out" : isCorrect ? "Correct" : "Incorrect"}
+                      </span>
+                      <span
+                        className={`rounded px-1.5 py-0.5 text-xs font-medium ${
+                          source === "curated"
+                            ? "bg-blue-600/20 text-blue-400"
+                            : "bg-purple-600/20 text-purple-400"
+                        }`}
+                      >
+                        {source === "curated" ? "Curated" : "AI Generated"}
+                      </span>
+                    </div>
+                    <p className="text-sm text-white">{q.question}</p>
+                  </div>
+                  <button
+                    onClick={() => toggleQuestion(i)}
+                    className="shrink-0 rounded p-1 text-gray-500 hover:bg-gray-800 hover:text-white"
                   >
-                    {isCorrect ? "Correct" : "Incorrect"}
-                  </span>
-                  <span
-                    className={`rounded px-1.5 py-0.5 text-xs font-medium ${
-                      source === "curated"
-                        ? "bg-blue-600/20 text-blue-400"
-                        : "bg-purple-600/20 text-purple-400"
-                    }`}
-                  >
-                    {source === "curated" ? "Curated" : "AI Generated"}
-                  </span>
+                    <svg
+                      className={`h-4 w-4 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
                 </div>
-                <p className="mb-1 text-sm text-white">{q.question}</p>
-                {!isCorrect && (
-                  <p className="mb-1 text-xs text-gray-400">
-                    Your answer: {answers[i] !== null ? q.options[answers[i]!] : "Skipped"}
-                  </p>
+
+                {isExpanded && (
+                  <div className="mt-3 space-y-2 border-t border-gray-800 pt-3">
+                    {!isCorrect && answers[i] !== null && (
+                      <p className="text-xs text-red-400">
+                        Your answer: {q.options[answers[i]!]}
+                      </p>
+                    )}
+                    <p className="text-xs text-green-400">
+                      Correct answer: {q.options[q.correctIndex]}
+                    </p>
+                    <p className="text-xs text-gray-400">{q.explanation}</p>
+                  </div>
                 )}
-                <p className="text-xs text-gray-400">
-                  Correct: {q.options[q.correctIndex]}
-                </p>
-                <p className="mt-2 text-xs text-gray-500">{q.explanation}</p>
               </div>
             );
           })}

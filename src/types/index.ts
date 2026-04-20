@@ -302,10 +302,14 @@ export interface ProgressState {
 export interface ExamConfig {
   /** Which topics to include */
   topics: Topic[];
-  /** Difficulty level */
-  level: Level;
+  /** Difficulty levels to include */
+  levels: Level[];
   /** Number of questions total */
   questionCount: 5 | 10 | 15 | 20;
+  /** Specific lesson slugs to include (overrides topics+levels if provided) */
+  lessonSlugs?: string[];
+  /** Timer per question in seconds (undefined = no timer) */
+  timePerQuestion?: number;
 }
 
 /** A generated custom exam with mixed curated + AI questions */

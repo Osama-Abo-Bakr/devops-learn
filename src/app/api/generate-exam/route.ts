@@ -1,6 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
-import { getQuiz } from "@/data";
+import { getQuiz } from "@/data/index";
 import modules from "@/data/modules";
 import { getLessonContent, getContentBody } from "@/lib/content";
 import type { Topic, Level, QuizQuestion } from "@/types";
@@ -37,12 +37,18 @@ Respond with ONLY a JSON array. No markdown, no explanation, no code fences. For
 
 function collectCuratedQuestions(
   topics: Topic[],
-  level: Level,
+  levels: Level[],
+  lessonSlugs?: string[],
 ): QuizQuestion[] {
   const pool: QuizQuestion[] = [];
   for (const topic of topics) {
     const mod = modules[topic];
-    const lessons = mod.lessons.filter((l) => l.level === level && l.quiz);
+    let lessons = mod.lessons.filter(
+      (l) => levels.includes(l.level) && l.quiz,
+    );
+    if (lessonSlugs && lessonSlugs.length > 0) {
+      lessons = lessons.filter((l) => lessonSlugs.includes(l.slug));
+    }
     for (const lesson of lessons) {
       const quiz = getQuiz(lesson.quiz!);
       if (quiz) pool.push(...quiz.questions);
@@ -51,11 +57,18 @@ function collectCuratedQuestions(
   return pool;
 }
 
-function collectLessonContent(topics: Topic[], level: Level): string {
+function collectLessonContent(
+  topics: Topic[],
+  levels: Level[],
+  lessonSlugs?: string[],
+): string {
   let content = "";
   for (const topic of topics) {
     const mod = modules[topic];
-    const lessons = mod.lessons.filter((l) => l.level === level);
+    let lessons = mod.lessons.filter((l) => levels.includes(l.level));
+    if (lessonSlugs && lessonSlugs.length > 0) {
+      lessons = lessons.filter((l) => lessonSlugs.includes(l.slug));
+    }
     for (const lesson of lessons) {
       const raw = getLessonContent("en", topic, lesson.slug);
       if (raw) {
@@ -90,24 +103,25 @@ function validateAiQuestions(data: unknown): QuizQuestion[] {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { topics, level, questionCount } = body as {
+    const { topics, levels, questionCount, lessonSlugs } = body as {
       topics: Topic[];
-      level: Level;
+      levels: Level[];
       questionCount: 5 | 10 | 15 | 20;
+      lessonSlugs?: string[];
     };
 
     if (!topics || !Array.isArray(topics) || topics.length === 0) {
       return NextResponse.json({ error: "At least one topic is required" }, { status: 400 });
     }
-    if (!["beginner", "intermediate", "advanced"].includes(level)) {
-      return NextResponse.json({ error: "Invalid level" }, { status: 400 });
+    if (!Array.isArray(levels) || levels.length === 0) {
+      return NextResponse.json({ error: "At least one level is required" }, { status: 400 });
     }
     if (![5, 10, 15, 20].includes(questionCount)) {
       return NextResponse.json({ error: "Invalid questionCount" }, { status: 400 });
     }
 
     // Collect curated questions
-    const curatedPool = collectCuratedQuestions(topics, level);
+    const curatedPool = collectCuratedQuestions(topics, levels, lessonSlugs);
     const curatedCount = Math.min(
       Math.ceil(questionCount * 0.5),
       curatedPool.length,
@@ -126,13 +140,16 @@ export async function POST(req: NextRequest) {
     }
 
     // Collect lesson content for grounding
-    const contentRef = collectLessonContent(topics, level);
+    const contentRef = collectLessonContent(topics, levels, lessonSlugs);
     const topicLabels = topics
       .map((t) => t.charAt(0).toUpperCase() + t.slice(1))
       .join(", ");
+    const levelLabels = levels
+      .map((l) => l.charAt(0).toUpperCase() + l.slice(1))
+      .join(", ");
 
     const userPrompt = `Generate exactly ${aiCount} multiple-choice questions about: ${topicLabels}
-Difficulty level: ${level}
+Difficulty level(s): ${levelLabels}
 
 ${
   contentRef

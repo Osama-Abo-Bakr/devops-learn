@@ -1,19 +1,21 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { QuizQuestion } from "@/types";
 import CelebrationEffect from "@/components/celebration/CelebrationEffect";
 
 interface QuizComponentProps {
   questions: QuizQuestion[];
   title: string;
-  onComplete?: (score: number) => void;
+  onComplete?: (score: number, answers: (number | null)[]) => void;
+  timePerQuestion?: number;
 }
 
 export default function QuizComponent({
   questions,
   title,
   onComplete,
+  timePerQuestion,
 }: QuizComponentProps) {
   const [currentQuestion, setCurrentQuestion] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
@@ -25,13 +27,71 @@ export default function QuizComponent({
   const [celebrate, setCelebrate] = useState(false);
   const [finalScore, setFinalScore] = useState(0);
 
+  // Timer state
+  const [timeLeft, setTimeLeft] = useState(timePerQuestion ?? 0);
+  const [totalElapsed, setTotalElapsed] = useState(0);
+
   const question = questions[currentQuestion];
   const isCorrect = selectedAnswer === question.correctIndex;
+  const hasTimer = timePerQuestion && timePerQuestion > 0;
 
-  function handleSelect(index: number) {
+  // Timer effect
+  useEffect(() => {
+    if (!hasTimer || isFinished || showResult) return;
+
+    setTimeLeft(timePerQuestion!);
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(interval);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [currentQuestion, hasTimer, isFinished, showResult, timePerQuestion]);
+
+  // Total elapsed time
+  useEffect(() => {
+    if (isFinished) return;
+    const interval = setInterval(() => {
+      setTotalElapsed((prev) => prev + 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isFinished]);
+
+  // Auto-advance when timer expires
+  useEffect(() => {
+    if (!hasTimer || isFinished || showResult) return;
+    if (timeLeft === 0 && timePerQuestion) {
+      // Time ran out — mark as unanswered and advance
+      const newAnswers = [...answers];
+      newAnswers[currentQuestion] = null;
+      setAnswers(newAnswers);
+
+      if (currentQuestion < questions.length - 1) {
+        setCurrentQuestion(currentQuestion + 1);
+        setSelectedAnswer(null);
+        setShowResult(false);
+      } else {
+        setIsFinished(true);
+        const correct = newAnswers.filter(
+          (a, i) => a === questions[i].correctIndex,
+        ).length;
+        const score = Math.round((correct / questions.length) * 100);
+        setFinalScore(score);
+        if (score >= 70) setCelebrate(true);
+        onComplete?.(score, newAnswers);
+      }
+    }
+  }, [timeLeft, hasTimer, isFinished, showResult, currentQuestion, answers, questions, timePerQuestion, onComplete]);
+
+  const handleSelect = useCallback((index: number) => {
     if (showResult) return;
     setSelectedAnswer(index);
-  }
+  }, [showResult]);
 
   function handleSubmit() {
     if (selectedAnswer === null) return;
@@ -47,14 +107,17 @@ export default function QuizComponent({
       setSelectedAnswer(null);
       setShowResult(false);
     } else {
+      const finalAnswers = [...answers];
+      finalAnswers[currentQuestion] = selectedAnswer;
+      setAnswers(finalAnswers);
       setIsFinished(true);
-      const correct = answers.filter(
+      const correct = finalAnswers.filter(
         (a, i) => a === questions[i].correctIndex,
       ).length;
       const score = Math.round((correct / questions.length) * 100);
       setFinalScore(score);
       if (score >= 70) setCelebrate(true);
-      onComplete?.(score);
+      onComplete?.(score, finalAnswers);
     }
   }
 
@@ -110,14 +173,39 @@ export default function QuizComponent({
     );
   }
 
+  const timerPercent = hasTimer ? (timeLeft / timePerQuestion!) * 100 : 0;
+  const timerColor =
+    timeLeft <= 5 ? "bg-red-500" : timeLeft <= 15 ? "bg-yellow-500" : "bg-blue-500";
+  const timerUrgent = hasTimer && timeLeft <= 5;
+
   return (
     <div className="rounded-lg border border-gray-700 bg-gray-900 p-6">
-      <div className="mb-4 flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-white">{title}</h3>
-        <span className="text-sm text-gray-400">
-          {currentQuestion + 1}/{questions.length}
-        </span>
-      </div>
+      {/* Timer bar */}
+      {hasTimer && (
+        <div className="mb-4">
+          <div className="flex items-center justify-between text-xs text-gray-400">
+            <span>{currentQuestion + 1}/{questions.length}</span>
+            <span className={timerUrgent ? "animate-pulse font-bold text-red-400" : ""}>
+              {timeLeft}s
+            </span>
+          </div>
+          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-gray-800">
+            <div
+              className={`h-full rounded-full transition-all duration-1000 ease-linear ${timerColor} ${timerUrgent ? "animate-pulse" : ""}`}
+              style={{ width: `${timerPercent}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {!hasTimer && (
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="text-lg font-semibold text-white">{title}</h3>
+          <span className="text-sm text-gray-400">
+            {currentQuestion + 1}/{questions.length}
+          </span>
+        </div>
+      )}
 
       <p className="mb-4 text-white">{question.question}</p>
 
