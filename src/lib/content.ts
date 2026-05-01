@@ -6,7 +6,7 @@ import type { Locale } from "@/types";
 const contentDir = path.join(process.cwd(), "content");
 const REVALIDATE = 3600; // 1 hour
 
-function readLessonContent(
+export function readLessonContent(
   locale: Locale,
   topic: string,
   slug: string,
