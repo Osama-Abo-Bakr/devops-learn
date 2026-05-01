@@ -1,10 +1,8 @@
 import fs from "fs";
 import path from "path";
-import { unstable_cache } from "next/cache";
 import type { Locale } from "@/types";
 
 const contentDir = path.join(process.cwd(), "content");
-const REVALIDATE = 3600; // 1 hour
 
 export function readLessonContent(
   locale: Locale,
@@ -19,7 +17,15 @@ export function readLessonContent(
   }
 }
 
-function readLessonSlugs(locale: Locale, topic: string): string[] {
+export function getLessonContent(
+  locale: Locale,
+  topic: string,
+  slug: string,
+): string | null {
+  return readLessonContent(locale, topic, slug);
+}
+
+export function getLessonSlugs(locale: Locale, topic: string): string[] {
   const topicDir = path.join(contentDir, locale, topic);
   try {
     const files = fs.readdirSync(topicDir);
@@ -30,19 +36,6 @@ function readLessonSlugs(locale: Locale, topic: string): string[] {
     return [];
   }
 }
-
-export const getLessonContent = unstable_cache(
-  async (locale: Locale, topic: string, slug: string) =>
-    readLessonContent(locale, topic, slug),
-  ["lesson-content"],
-  { revalidate: REVALIDATE },
-);
-
-export const getLessonSlugs = unstable_cache(
-  async (locale: Locale, topic: string) => readLessonSlugs(locale, topic),
-  ["lesson-slugs"],
-  { revalidate: REVALIDATE },
-);
 
 export function parseFrontmatter(raw: string): Record<string, string> {
   const match = raw.match(/^---\n([\s\S]*?)\n---/);
