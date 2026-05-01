@@ -2,7 +2,16 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import QuizComponent from "@/components/quiz/QuizComponent";
+import dynamic from "next/dynamic";
+
+const QuizComponent = dynamic(() => import("@/components/quiz/QuizComponent"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center justify-center py-20">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-600 border-t-blue-500" />
+    </div>
+  ),
+});
 import { placementQuiz } from "@/data/quizzes/placement-quiz";
 import { useProgress } from "@/context/ProgressContext";
 import type { Level } from "@/types";

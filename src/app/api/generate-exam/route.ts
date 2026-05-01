@@ -57,11 +57,11 @@ function collectCuratedQuestions(
   return pool;
 }
 
-function collectLessonContent(
+async function collectLessonContent(
   topics: Topic[],
   levels: Level[],
   lessonSlugs?: string[],
-): string {
+): Promise<string> {
   let content = "";
   for (const topic of topics) {
     const mod = modules[topic];
@@ -70,7 +70,7 @@ function collectLessonContent(
       lessons = lessons.filter((l) => lessonSlugs.includes(l.slug));
     }
     for (const lesson of lessons) {
-      const raw = getLessonContent("en", topic, lesson.slug);
+      const raw = await getLessonContent("en", topic, lesson.slug);
       if (raw) {
         const body = getContentBody(raw);
         content += body.slice(0, 1500) + "\n---\n";
@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Collect lesson content for grounding
-    const contentRef = collectLessonContent(topics, levels, lessonSlugs);
+    const contentRef = await collectLessonContent(topics, levels, lessonSlugs);
     const topicLabels = topics
       .map((t) => t.charAt(0).toUpperCase() + t.slice(1))
       .join(", ");
