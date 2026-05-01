@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { getAllModules } from "@/data/modules";
 import ModuleCard from "@/components/progress/ModuleCard";
 
@@ -23,18 +24,18 @@ export default function HomePage() {
             open source.
           </p>
           <div className="flex justify-center gap-4">
-            <a
+            <Link
               href="/learn/docker"
               className="rounded-lg bg-blue-600 px-6 py-3 font-medium text-white transition-colors hover:bg-blue-500"
             >
               Start Learning
-            </a>
-            <a
+            </Link>
+            <Link
               href="/level-test"
               className="rounded-lg border border-gray-600 px-6 py-3 font-medium text-gray-300 transition-colors hover:border-gray-400 hover:text-white"
             >
               Take Level Test
-            </a>
+            </Link>
           </div>
         </div>
       </section>
@@ -69,24 +70,24 @@ export default function HomePage() {
               </div>
             </div>
             <div className="flex shrink-0 flex-col gap-2">
-              <a
+              <Link
                 href="/learn/devops/advanced-cicd-pipelines"
                 className="rounded-lg bg-blue-600 px-5 py-2.5 text-center font-medium text-white transition-colors hover:bg-blue-500"
               >
                 Advanced CI/CD
-              </a>
-              <a
+              </Link>
+              <Link
                 href="/learn/devops/cicd-at-scale-netflix-meta"
                 className="rounded-lg border border-purple-500/40 px-5 py-2.5 text-center font-medium text-purple-300 transition-colors hover:border-purple-400 hover:text-white"
               >
                 Netflix &amp; Meta
-              </a>
-              <a
+              </Link>
+              <Link
                 href="/learn/devops/container-orchestration-scale"
                 className="rounded-lg border border-gray-600 px-5 py-2.5 text-center font-medium text-gray-300 transition-colors hover:border-gray-400 hover:text-white"
               >
                 Orchestration at Scale
-              </a>
+              </Link>
             </div>
           </div>
         </div>

@@ -2,8 +2,19 @@
 
 import { useState } from "react";
 import type { ExamConfig, CustomExam, Topic, Level } from "@/types";
-import QuizComponent from "@/components/quiz/QuizComponent";
-import ExamResults from "@/components/quiz/ExamResults";
+import dynamic from "next/dynamic";
+
+const QuizComponent = dynamic(() => import("@/components/quiz/QuizComponent"), {
+  ssr: false,
+  loading: () => (
+    <div className="flex items-center justify-center py-20">
+      <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-600 border-t-blue-500" />
+    </div>
+  ),
+});
+const ExamResults = dynamic(() => import("@/components/quiz/ExamResults"), {
+  ssr: false,
+});
 import { addExamHistory } from "@/lib/exam-history";
 import { useProgress } from "@/context/ProgressContext";
 import modules from "@/data/modules";

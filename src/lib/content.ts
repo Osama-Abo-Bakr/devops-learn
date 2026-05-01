@@ -1,54 +1,48 @@
 import fs from "fs";
 import path from "path";
-import type { Locale, Lesson } from "@/types";
+import { unstable_cache } from "next/cache";
+import type { Locale } from "@/types";
 
 const contentDir = path.join(process.cwd(), "content");
+const REVALIDATE = 3600; // 1 hour
 
-const contentCache = new Map<string, { data: string | null; ts: number }>();
-const slugsCache = new Map<string, { data: string[]; ts: number }>();
-const CACHE_TTL = 60_000; // 1 minute
-
-export function getLessonContent(
+function readLessonContent(
   locale: Locale,
   topic: string,
   slug: string,
 ): string | null {
-  const key = `${locale}/${topic}/${slug}`;
-  const cached = contentCache.get(key);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
-
   const filePath = path.join(contentDir, locale, topic, `${slug}.mdx`);
   try {
-    const data = fs.readFileSync(filePath, "utf-8");
-    contentCache.set(key, { data, ts: Date.now() });
-    return data;
+    return fs.readFileSync(filePath, "utf-8");
   } catch {
-    contentCache.set(key, { data: null, ts: Date.now() });
     return null;
   }
 }
 
-export function getLessonSlugs(
-  locale: Locale,
-  topic: string,
-): string[] {
-  const key = `${locale}/${topic}`;
-  const cached = slugsCache.get(key);
-  if (cached && Date.now() - cached.ts < CACHE_TTL) return cached.data;
-
+function readLessonSlugs(locale: Locale, topic: string): string[] {
   const topicDir = path.join(contentDir, locale, topic);
   try {
     const files = fs.readdirSync(topicDir);
-    const data = files
+    return files
       .filter((f) => f.endsWith(".mdx"))
       .map((f) => f.replace(/\.mdx$/, ""));
-    slugsCache.set(key, { data, ts: Date.now() });
-    return data;
   } catch {
-    slugsCache.set(key, { data: [], ts: Date.now() });
     return [];
   }
 }
+
+export const getLessonContent = unstable_cache(
+  async (locale: Locale, topic: string, slug: string) =>
+    readLessonContent(locale, topic, slug),
+  ["lesson-content"],
+  { revalidate: REVALIDATE },
+);
+
+export const getLessonSlugs = unstable_cache(
+  async (locale: Locale, topic: string) => readLessonSlugs(locale, topic),
+  ["lesson-slugs"],
+  { revalidate: REVALIDATE },
+);
 
 export function parseFrontmatter(raw: string): Record<string, string> {
   const match = raw.match(/^---\n([\s\S]*?)\n---/);

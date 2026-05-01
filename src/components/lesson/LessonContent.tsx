@@ -28,15 +28,15 @@ function stripInteractiveTags(raw: string): string {
   return body.trim();
 }
 
-export default function LessonContent({
+export default async function LessonContent({
   lesson,
   topic,
   locale,
 }: LessonContentProps) {
-  let rawContent = getLessonContent(locale as "en" | "ar", topic, lesson.slug);
+  let rawContent = await getLessonContent(locale as "en" | "ar", topic, lesson.slug);
   // Fallback to English when localized content is missing
   if (!rawContent && locale !== "en") {
-    rawContent = getLessonContent("en", topic, lesson.slug);
+    rawContent = await getLessonContent("en", topic, lesson.slug);
   }
   const textContent = rawContent ? stripInteractiveTags(rawContent) : "";
   const resources = getResourcesForTopic(topic);

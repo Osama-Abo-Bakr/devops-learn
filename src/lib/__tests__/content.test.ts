@@ -1,15 +1,15 @@
 import { getLessonContent, getContentBody, parseFrontmatter } from "../content";
 
 describe("content utilities", () => {
-  test("getLessonContent returns content for existing lesson", () => {
-    const content = getLessonContent("en", "docker", "containers-101");
+  test("getLessonContent returns content for existing lesson", async () => {
+    const content = await getLessonContent("en", "docker", "containers-101");
     expect(content).toBeTruthy();
     expect(content).toContain("---");
     expect(content).toContain("Container");
   });
 
-  test("getLessonContent returns null for missing lesson", () => {
-    const content = getLessonContent("en", "docker", "nonexistent-lesson");
+  test("getLessonContent returns null for missing lesson", async () => {
+    const content = await getLessonContent("en", "docker", "nonexistent-lesson");
     expect(content).toBeNull();
   });
 

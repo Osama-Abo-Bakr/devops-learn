@@ -1,6 +1,15 @@
 import { notFound } from "next/navigation";
-import { getLesson } from "@/data/modules";
+import { getLesson, getModule } from "@/data/modules";
 import LessonContent from "@/components/lesson/LessonContent";
+
+export const revalidate = 3600; // 1 hour ISR
+
+export async function generateStaticParams() {
+  const mod = getModule("devops");
+  return mod.lessons.map((lesson) => ({
+    module: lesson.slug,
+  }));
+}
 
 interface PageProps {
   params: Promise<{ module: string; locale: string }>;
