@@ -2,13 +2,17 @@ import { notFound } from "next/navigation";
 import { getLesson, getModule } from "@/data/modules";
 import LessonContent from "@/components/lesson/LessonContent";
 
+export const dynamicParams = false;
 export const revalidate = 3600; // 1 hour ISR
 
 export async function generateStaticParams() {
   const mod = getModule("compose");
-  return mod.lessons.map((lesson) => ({
-    module: lesson.slug,
-  }));
+  return mod.lessons.flatMap((lesson) =>
+    (["en", "ar"] as const).map((locale) => ({
+      module: lesson.slug,
+      locale,
+    })),
+  );
 }
 
 interface PageProps {
