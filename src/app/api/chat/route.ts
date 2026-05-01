@@ -1,5 +1,8 @@
 import { GoogleGenAI } from "@google/genai";
 import { NextRequest, NextResponse } from "next/server";
+import { rateLimit } from "@/lib/rate-limit";
+
+const chatLimiter = rateLimit({ windowMs: 86_400_000, maxRequests: 10 });
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
@@ -20,6 +23,15 @@ For each question, answer with:
 If asked about something unrelated to DevOps/containers, politely redirect.`;
 
 export async function POST(req: NextRequest) {
+  const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown";
+  const { allowed, remaining } = chatLimiter(ip);
+  if (!allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded. Please wait a moment." },
+      { status: 429, headers: { "X-RateLimit-Remaining": String(remaining) } },
+    );
+  }
+
   const { message, history } = await req.json();
 
   if (!message) {

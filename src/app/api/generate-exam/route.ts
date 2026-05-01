@@ -3,7 +3,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getQuiz } from "@/data/index";
 import modules from "@/data/modules";
 import { getLessonContent, getContentBody } from "@/lib/content";
+import { rateLimit } from "@/lib/rate-limit";
 import type { Topic, Level, QuizQuestion } from "@/types";
+
+const examLimiter = rateLimit({ windowMs: 86_400_000, maxRequests: 5 });
 
 const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 
@@ -101,6 +104,15 @@ function validateAiQuestions(data: unknown): QuizQuestion[] {
 }
 
 export async function POST(req: NextRequest) {
+  const ip = req.headers.get("x-forwarded-for") || req.headers.get("x-real-ip") || "unknown";
+  const { allowed, remaining } = examLimiter(ip);
+  if (!allowed) {
+    return NextResponse.json(
+      { error: "Rate limit exceeded. Please wait a moment." },
+      { status: 429, headers: { "X-RateLimit-Remaining": String(remaining) } },
+    );
+  }
+
   try {
     const body = await req.json();
     const { topics, levels, questionCount, lessonSlugs } = body as {
