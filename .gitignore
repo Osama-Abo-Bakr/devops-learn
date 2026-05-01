@@ -39,6 +39,14 @@ yarn-error.log*
 # superpowers
 .superpowers/
 
+# claude code / AI assistants
+CLAUDE.md
+AGENTS.md
+.claude/
+
+# test results
+test-results/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
