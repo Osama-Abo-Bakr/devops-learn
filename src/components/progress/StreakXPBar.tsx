@@ -7,7 +7,7 @@ import { getLevelByXP } from "@/data/levels";
 import BadgeDrawer from "./BadgeDrawer";
 
 export default function StreakXPBar() {
-  const { progress, getXPInfo, getBadges } = useProgress();
+  const { progress, getXPInfo, getBadges, loaded } = useProgress();
   const [showBadges, setShowBadges] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
@@ -29,7 +29,7 @@ export default function StreakXPBar() {
 
   return (
     <>
-      <div className="border-b border-gray-800 bg-gray-900/95 backdrop-blur">
+      <div className={`border-b border-gray-800 bg-gray-900/95 backdrop-blur${loaded ? "" : " invisible"}`}>
         {/* Mobile: collapsed view */}
         <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-2 sm:hidden">
           <button

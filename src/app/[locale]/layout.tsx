@@ -20,6 +20,10 @@ const geistMono = Geist_Mono({
 
 const AiChat = dynamic(() => import("@/components/chat/AiChat"));
 
+export function generateStaticParams() {
+  return [{ locale: "en" }, { locale: "ar" }];
+}
+
 export const metadata: Metadata = {
   title: {
     default: "DevOps Learn — Visual Learning Platform",

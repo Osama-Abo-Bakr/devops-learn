@@ -1,5 +1,3 @@
-"use client";
-
 import Link from "next/link";
 import { getAllModules } from "@/data/modules";
 import ModuleCard from "@/components/progress/ModuleCard";
