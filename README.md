@@ -183,6 +183,10 @@ Or via CLI:
 npx vercel
 ```
 
+## Acknowledgements
+
+- **Ahmed Itman** — Mentor & Contributor. Senior SRE/DevOps ([ahmed.itman@thndr.app](mailto:ahmed.itman@thndr.app))
+
 ## License
 
 MIT
